@@ -175,44 +175,80 @@ def _image_base_url(og_image_url: str) -> str:
     return re.sub(r'/\d+$', '', og_image_url)
 
 
-def fetch_ebird_page(ebird_code: str, base_url: str) -> dict:
-    """Fetch og:description and og:image from an eBird species page."""
-    url = base_url + quote(ebird_code)
+def _fetch_ebird_html(opener, url: str) -> str | None:
+    """Make a rate-limited request to eBird with retry on 429.
+
+    Returns HTML string on success, None on rate-limit exhaustion.
+    Raises HTTPError/URLError on other failures.
+    """
     req = Request(url, headers={
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": "en-US,en;q=0.9",
     })
-
-    opener = _get_opener()
-    html = None
     for attempt in range(4):
         _rate.acquire()
         try:
             with opener.open(req, timeout=30) as resp:
-                html = resp.read().decode("utf-8", errors="replace")
-            break
+                return resp.read().decode("utf-8", errors="replace")
         except HTTPError as e:
             if e.code == 429:
                 wait = min(2 ** attempt * 2, 60)
                 time.sleep(wait)
                 continue
+            raise
+    return None
+
+
+def _code_variants(ebird_code: str) -> list[str]:
+    """Generate fallback code variants for outdated versioned codes.
+
+    AviList sometimes has versioned codes (e.g. virrai2) that 404 on eBird.
+    Try: original -> strip version to base+1 -> base code.
+    """
+    variants = [ebird_code]
+    # If code ends with a digit ≥ 2, try version 1 and base
+    m = re.match(r'^([a-z]+?)(\d+)$', ebird_code)
+    if m:
+        base, version = m.group(1), int(m.group(2))
+        if version >= 2:
+            variants.append(f"{base}1")
+        variants.append(base)
+    return variants
+
+
+def fetch_ebird_page(ebird_code: str, base_url: str) -> dict:
+    """Fetch og:description and og:image from an eBird species page.
+
+    Falls back to alternative code variants on 404.
+    """
+    opener = _get_opener()
+
+    for code in _code_variants(ebird_code):
+        url = base_url + quote(code)
+        try:
+            html = _fetch_ebird_html(opener, url)
+        except HTTPError as e:
+            if e.code == 404:
+                continue  # try next variant
             return {"error": str(e)}
         except (URLError, TimeoutError) as e:
             return {"error": str(e)}
 
-    if html is None:
-        return {"error": "rate_limited_after_retries"}
+        if html is None:
+            return {"error": "rate_limited_after_retries"}
 
-    description = _extract_og_tag(html, "description")
-    image_url = _extract_og_tag(html, "image")
-    image_alt = _extract_og_tag(html, "image:alt")
+        description = _extract_og_tag(html, "description")
+        image_url = _extract_og_tag(html, "image")
+        image_alt = _extract_og_tag(html, "image:alt")
 
-    return {
-        "description": description,
-        "image_url": _image_base_url(image_url or ""),
-        "image_attribution": image_alt or "",
-    }
+        return {
+            "description": description,
+            "image_url": _image_base_url(image_url or ""),
+            "image_attribution": image_alt or "",
+        }
+
+    return {"error": f"404_all_variants({ebird_code})"}
 
 
 def main():

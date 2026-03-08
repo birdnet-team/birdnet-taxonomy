@@ -310,10 +310,12 @@ def main():
     print(f"  Already have Wikipedia data for {len(existing)} species")
 
     if args.refetch:
+        # Re-fetch species that have fewer than 2 locale extracts
+        # (i.e. only English or empty — likely fetched before locale support)
         to_fetch = [
             (sci, species[sci])
             for sci in existing
-            if sci in species and not existing[sci].get("extracts")
+            if sci in species and len(existing[sci].get("extracts", {})) < 2
         ]
     else:
         to_fetch = [(sci, url) for sci, url in species.items() if sci not in existing]
