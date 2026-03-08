@@ -5,6 +5,7 @@ FastAPI web server for browsing and querying species metadata.
 Provides:
   - HTML pages: home/search, species detail
   - REST API: /api/species, /api/species/{name}, /api/search, /api/stats
+  - Image proxy: /api/image/{scientific_name}/{size}  (WebP, cached)
   - Auto-generated docs at /docs (Swagger) and /redoc
 
 Usage:
@@ -15,23 +16,58 @@ Usage:
 """
 
 import argparse
+import hashlib
+import io
 import json
 import re
 import unicodedata
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request as FRequest
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from utils.config import LOCALE_NAMES, get_locales
+from utils.config import load_config
 
 ROOT = Path(__file__).resolve().parent
 TEMPLATES_DIR = ROOT / "templates"
-IMAGES_DIR = ROOT / "images"
+
+USER_AGENT = "BirdNET-SpeciesData/1.0"
+
+# ---------------------------------------------------------------------------
+# Known locale display names (for UI).  Dynamically extended at load time
+# from whatever locales appear in the data.
+# ---------------------------------------------------------------------------
+LOCALE_NAMES: dict[str, str] = {
+    "af": "Afrikaans", "ar": "Arabic", "bg": "Bulgarian", "bn": "Bengali",
+    "ca": "Catalan", "cs": "Czech", "da": "Danish", "de": "German",
+    "el": "Greek", "en": "English", "es": "Spanish",
+    "es_AR": "Spanish (Argentina)", "es_CL": "Spanish (Chile)",
+    "es_CR": "Spanish (Costa Rica)", "es_CU": "Spanish (Cuba)",
+    "es_DO": "Spanish (Dominican Republic)", "es_EC": "Spanish (Ecuador)",
+    "es_ES": "Spanish (Spain)", "es_MX": "Spanish (Mexico)",
+    "es_PA": "Spanish (Panama)", "es_PR": "Spanish (Puerto Rico)",
+    "et": "Estonian", "eu": "Basque", "fa": "Persian", "fi": "Finnish",
+    "fr": "French", "gl": "Galician", "gu": "Gujarati",
+    "he": "Hebrew", "hi": "Hindi", "hr": "Croatian", "hu": "Hungarian",
+    "hy": "Armenian", "id": "Indonesian", "is": "Icelandic", "it": "Italian",
+    "ja": "Japanese", "ka": "Georgian", "kk": "Kazakh", "kn": "Kannada",
+    "ko": "Korean", "lt": "Lithuanian", "lv": "Latvian",
+    "ml": "Malayalam", "mn": "Mongolian", "mr": "Marathi", "ms": "Malay",
+    "nl": "Dutch", "no": "Norwegian", "pl": "Polish",
+    "pt": "Portuguese", "pt_PT": "Portuguese (Portugal)",
+    "ro": "Romanian", "ru": "Russian",
+    "sk": "Slovak", "sl": "Slovenian", "sq": "Albanian", "sr": "Serbian",
+    "sv": "Swedish", "ta": "Tamil", "te": "Telugu", "th": "Thai",
+    "tr": "Turkish", "uk": "Ukrainian", "vi": "Vietnamese",
+    "zh": "Chinese (Simplified)", "zh_TRA": "Chinese (Traditional)",
+    "zu": "Zulu",
+}
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -41,11 +77,13 @@ _species_list: list[dict] = []
 _species_by_name: dict[str, dict] = {}
 _species_by_common: dict[str, dict] = {}
 _search_index: list[tuple[str, str, dict]] = []  # (lower_sci, lower_common, record)
+_all_locales: list[tuple[str, str]] = []  # (code, display_name) sorted
 
 
 def load_data(dev: bool = False):
     """Load species_metadata.json into memory."""
-    global _species_list, _species_by_name, _species_by_common, _search_index
+    global _species_list, _species_by_name, _species_by_common
+    global _search_index, _all_locales
 
     for d in (["dev", "dist"] if dev else ["dist", "dev"]):
         path = ROOT / d / "species_metadata.json"
@@ -62,6 +100,9 @@ def load_data(dev: bool = False):
     _species_by_common = {}
     _search_index = []
 
+    # Discover all locales from the data
+    locale_set: set[str] = set()
+
     for rec in _species_list:
         sci = rec.get("scientific_name", "")
         common = rec.get("common_name", "")
@@ -72,10 +113,18 @@ def load_data(dev: bool = False):
             _species_by_common[common.lower()] = rec
         # Build search index: normalised text for fuzzy matching
         search_text = _normalise(f"{sci} {common}")
-        # Also include all locale common names
         for name in rec.get("common_names", {}).values():
             search_text += " " + _normalise(name)
         _search_index.append((sci.lower(), search_text, rec))
+        locale_set.update(rec.get("common_names", {}).keys())
+
+    # Build sorted locale list for UI (exclude 'en' since it's default)
+    locale_set.discard("en")
+    _all_locales = sorted(
+        [(code, LOCALE_NAMES.get(code, code)) for code in locale_set],
+        key=lambda x: x[1],
+    )
+    print(f"  {len(_all_locales)} locales discovered from data")
 
 
 def _normalise(text: str) -> str:
@@ -87,6 +136,84 @@ def _normalise(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Image proxy helpers
+# ---------------------------------------------------------------------------
+
+_image_cache_dir: Path = ROOT / ".image_cache"
+_image_sizes: dict[str, tuple[int, int]] = {}
+_image_quality: int = 80
+
+
+def _init_image_config():
+    """Load image proxy settings from config."""
+    global _image_cache_dir, _image_sizes, _image_quality
+    cfg = load_config()
+    img = cfg.get("images", {})
+    _image_cache_dir = ROOT / img.get("cache_dir", ".image_cache")
+    _image_cache_dir.mkdir(parents=True, exist_ok=True)
+    _image_quality = img.get("quality", 80)
+    _image_sizes = {
+        "thumb": (img.get("thumb_width", 150), img.get("thumb_height", 100)),
+        "medium": (img.get("medium_width", 480), img.get("medium_height", 320)),
+        "large": (img.get("large_width", 1200), img.get("large_height", 800)),
+    }
+
+
+def _cache_key(url: str, size: str) -> str:
+    """Deterministic cache filename from URL + size."""
+    h = hashlib.sha256(url.encode()).hexdigest()[:16]
+    return f"{h}_{size}.webp"
+
+
+def _center_crop_3_2(img):
+    """Center-crop an image to 3:2 aspect ratio."""
+    w, h = img.size
+    target_ratio = 3 / 2
+    current_ratio = w / h
+    if abs(current_ratio - target_ratio) < 0.01:
+        return img
+    if current_ratio > target_ratio:
+        new_w = int(h * target_ratio)
+        left = (w - new_w) // 2
+        return img.crop((left, 0, left + new_w, h))
+    else:
+        new_h = int(w / target_ratio)
+        top = (h - new_h) // 2
+        return img.crop((0, top, w, top + new_h))
+
+
+def _fetch_and_convert(url: str, size: str) -> bytes | None:
+    """Fetch image from URL, crop, resize, convert to WebP."""
+    from PIL import Image
+
+    target = _image_sizes.get(size)
+    if not target:
+        return None
+
+    # Download
+    req = Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urlopen(req, timeout=30) as resp:
+            raw_bytes = resp.read()
+    except (HTTPError, URLError, TimeoutError):
+        return None
+
+    try:
+        img = Image.open(io.BytesIO(raw_bytes))
+        img = img.convert("RGB")
+    except Exception:
+        return None
+
+    # Center crop to 3:2, then resize
+    img = _center_crop_3_2(img)
+    img.thumbnail(target, Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, "WEBP", quality=_image_quality)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
@@ -94,6 +221,7 @@ def _normalise(text: str) -> str:
 async def lifespan(application: FastAPI):
     if not _species_list:
         load_data()
+    _init_image_config()
     yield
 
 
@@ -110,9 +238,57 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 STATIC_DIR = ROOT / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# Serve local images if directory exists
-if IMAGES_DIR.exists():
-    app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+
+# ---------------------------------------------------------------------------
+# Image proxy endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/image/{scientific_name:path}/{size}",
+         tags=["Images"],
+         responses={200: {"content": {"image/webp": {}}}})
+async def image_proxy(scientific_name: str, size: str):
+    """Serve a species image as WebP in the requested size.
+
+    Sizes: thumb (150×100), medium (480×320), large (1200×800).
+    Images are fetched from the original source, converted to WebP,
+    center-cropped to 3:2, and cached on disk.
+    """
+    if size not in _image_sizes:
+        raise HTTPException(400, f"Invalid size '{size}'. Use: thumb, medium, large")
+
+    rec = _species_by_name.get(scientific_name) or \
+          _species_by_name.get(scientific_name.lower())
+    if not rec:
+        raise HTTPException(404, "Species not found")
+
+    source_url = rec.get("image_url", "")
+    if not source_url:
+        raise HTTPException(404, "No image available for this species")
+
+    # Check disk cache
+    cache_file = _image_cache_dir / _cache_key(source_url, size)
+    if cache_file.exists():
+        return Response(
+            content=cache_file.read_bytes(),
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    # Fetch, convert, cache
+    webp_bytes = _fetch_and_convert(source_url, size)
+    if not webp_bytes:
+        raise HTTPException(502, "Failed to fetch or convert source image")
+
+    # Write to cache (atomic)
+    tmp = cache_file.with_suffix(".tmp")
+    tmp.write_bytes(webp_bytes)
+    tmp.replace(cache_file)
+
+    return Response(
+        content=webp_bytes,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +296,7 @@ if IMAGES_DIR.exists():
 # ---------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def home(request: Request, q: str = "", group: str = "",
+async def home(request: FRequest, q: str = "", group: str = "",
                lang: str = "", sort: str = "", page: int = 1, per_page: int = 50):
     """Home page with search and species listing."""
     results = _search(q, group)
@@ -144,11 +320,6 @@ async def home(request: Request, q: str = "", group: str = "",
     # Available groups
     groups = sorted(set(r.get("taxon_group", "") for r in _species_list if r.get("taxon_group")))
 
-    # Available locales from config (sorted by display name, exclude 'en')
-    config_locales = get_locales()
-    locales = [(code, LOCALE_NAMES.get(code, code)) for code in config_locales if code != "en"]
-    locales.sort(key=lambda x: x[1])
-
     return templates.TemplateResponse("home.html", {
         "request": request,
         "species": page_results,
@@ -156,7 +327,7 @@ async def home(request: Request, q: str = "", group: str = "",
         "group": group,
         "lang": lang,
         "sort": sort,
-        "locales": locales,
+        "locales": _all_locales,
         "groups": groups,
         "total": total,
         "page": page,
@@ -167,7 +338,7 @@ async def home(request: Request, q: str = "", group: str = "",
 
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
          include_in_schema=False)
-async def species_page(request: Request, scientific_name: str):
+async def species_page(request: FRequest, scientific_name: str):
     """Species detail page."""
     rec = _species_by_name.get(scientific_name) or _species_by_name.get(scientific_name.lower())
     if not rec:
@@ -191,10 +362,7 @@ async def api_stats():
     return {
         "total_species": len(_species_list),
         "groups": dict(sorted(groups.items())),
-        "locales": list(set(
-            loc for r in _species_list
-            for loc in r.get("common_names", {}).keys()
-        )),
+        "locales": [code for code, _ in _all_locales],
     }
 
 
@@ -314,6 +482,7 @@ def main():
     args = parser.parse_args()
 
     load_data(dev=args.dev)
+    _init_image_config()
     uvicorn.run(
         "server:app",
         host=args.host,

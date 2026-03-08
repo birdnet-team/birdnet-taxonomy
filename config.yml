@@ -76,11 +76,13 @@ claude:
   translation_max_tokens: 8192   # for batched multi-species translation
   request_delay: 0.5
 
-# Image download and conversion settings
+# Image proxy settings (served via /api/image endpoint)
 images:
   thumb_width: 150       # thumbnail max width
   thumb_height: 100      # thumbnail max height (3:2 at 150)
   medium_width: 480      # medium max width
   medium_height: 320     # medium max height (3:2 at 480)
+  large_width: 1200      # large max width
+  large_height: 800      # large max height (3:2 at 1200)
   quality: 80            # WebP quality (1-100)
-  request_delay: 0.3     # seconds between downloads
+  cache_dir: ".image_cache"  # local disk cache for converted images

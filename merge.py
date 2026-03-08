@@ -2,18 +2,19 @@
 """
 Merge all raw data into a single species metadata file.
 
-Reads the intermediate outputs from earlier pipeline steps and joins them
-into one record per species. Produces both JSON and CSV, compressed into
-a zip archive under dist/.
+Reads taxonomy.json (which already contains common names, images, and
+identifiers from iNat, eBird, AviList, and Wikidata) and enriches each
+species with a single description following the priority:
 
-This is intended to run as a release step — all raw data should already
-be collected before running this script.
+    Claude > Wikipedia > eBird
+
+Produces a streamlined JSON (and optionally CSV + zip) under dist/.
 
 Input files (all in raw_data/):
-  - inat_data.json     (step 2: taxonomy, common names, photos)
-  - ebird_data.json    (step 3: descriptions, images — birds only)
-  - wikipedia_data.json(step 4: summaries, locale URLs, locale extracts)
-  - claude_data.json   (step 5, optional: descriptions + translations)
+  - taxonomy.json       (built by utils/taxonomy.py — single source of truth)
+  - ebird_data.json     (descriptions — birds only)
+  - wikipedia_data.json (summaries, locale extracts)
+  - claude_data.json    (optional: descriptions + translations)
 
 Output:
   - dist/species_metadata.json
@@ -28,14 +29,15 @@ import argparse
 import csv
 import io
 import json
+import os
 import zipfile
+from collections import Counter
 from pathlib import Path
-
-from utils.config import load_config, get_locales
 
 ROOT = Path(__file__).resolve().parent
 RAW = ROOT / "raw_data"
-DIST = ROOT / "dist"
+
+TAXONOMY_FILE = RAW / "taxonomy.json"
 
 
 def load_json(path: Path) -> dict:
@@ -45,150 +47,59 @@ def load_json(path: Path) -> dict:
     return {}
 
 
-def _load_avilist_ebird_map() -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
-    """Load AviList CSV and build mapping dicts for eBird code matching.
+def build_master(taxonomy: dict, ebird: dict, wiki: dict,
+                 claude: dict) -> list[dict]:
+    """Build streamlined species records from taxonomy + raw data sources.
 
-    Returns:
-        - sci_to_code: {scientific_name: ebird_code}
-        - common_to_sci_code: {lower_common_name: (scientific_name, ebird_code)}
+    Each record contains:
+      - scientific_name, common_name, taxon_group
+      - common_names: {locale: name, ...}  (all available translations)
+      - description: best English description (Claude > Wikipedia > eBird)
+      - image_url, image_author, image_license, image_source
+      - inat_id, ebird_code, gbif_id, ncbi_id, avibase_id, birdlife_id
+      - observations_count
     """
-    avilist_csv = sorted(RAW.glob("AviList-*.csv"))
-    if not avilist_csv:
-        return {}, {}
-
-    sci_to_code: dict[str, str] = {}
-    common_to_sci_code: dict[str, tuple[str, str]] = {}
-
-    with open(avilist_csv[-1], encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter=";")
-        for row in reader:
-            sci = (row.get("Scientific_name") or "").strip()
-            code = (row.get("Species_code_Cornell_Lab") or "").strip()
-            en = (row.get("English_name_Clements_v2024") or "").strip()
-            if sci and code:
-                sci_to_code[sci] = code
-                if en:
-                    common_to_sci_code[en.lower()] = (sci, code)
-
-    return sci_to_code, common_to_sci_code
-
-
-def build_master(inat: dict, ebird: dict, wiki: dict, claude: dict,
-                 locales: list[str]) -> list[dict]:
-    """Join all sources into a flat list of species records."""
-
-    # Load AviList for eBird code matching
-    avilist_sci_to_code, avilist_common_to_sci_code = _load_avilist_ebird_map()
-
     records = []
-    matched_via_avilist = 0
-    matched_via_common = 0
+    desc_sources: dict[str, int] = Counter()
 
-    for sci_name, inat_rec in inat.items():
-        if inat_rec.get("inat_id") is None:
-            continue
-
-        # Common names from iNat (keyed by locale)
-        common_names = inat_rec.get("common_names", {})
-
-        # eBird data (birds only)
-        # Try direct match first, then AviList sci name, then common name
-        eb = ebird.get(sci_name, {})
-        ebird_code = eb.get("ebird_code", "")
-
-        if not ebird_code and inat_rec.get("taxon_group") == "Aves":
-            # Try AviList scientific name → eBird code
-            avi_code = avilist_sci_to_code.get(sci_name, "")
-            if avi_code:
-                ebird_code = avi_code
-                # Look up eBird data under the AviList sci name if different
-                for avi_sci, code in avilist_sci_to_code.items():
-                    if code == avi_code and avi_sci in ebird:
-                        eb = ebird[avi_sci]
-                        ebird_code = eb.get("ebird_code", avi_code)
-                        matched_via_avilist += 1
-                        break
-                else:
-                    matched_via_avilist += 1
-            else:
-                # Try matching via common name
-                cn = (inat_rec.get("preferred_common_name") or "").lower()
-                if cn and cn in avilist_common_to_sci_code:
-                    avi_sci, avi_code = avilist_common_to_sci_code[cn]
-                    ebird_code = avi_code
-                    if avi_sci in ebird:
-                        eb = ebird[avi_sci]
-                        ebird_code = eb.get("ebird_code", avi_code)
-                    matched_via_common += 1
-
-        ebird_desc = eb.get("description", "") or ""
-        ebird_image = eb.get("image_url", "") or ""
-        ebird_image_attr = eb.get("image_attribution", "") or ""
-
-        # Wikipedia data
-        wp = wiki.get(sci_name, {})
-        wiki_extract = wp.get("extract", "") or ""
-        wiki_urls = wp.get("wikipedia_urls", {})
-        wiki_extracts = wp.get("extracts", {})
-
-        # Claude descriptions (optional)
+    for sci_name, tax in taxonomy.items():
+        # Description priority: Claude > Wikipedia > eBird
         cl = claude.get(sci_name, {})
-        desc_en = cl.get("description_en", "") or ""
-        translations = cl.get("translations", {})
+        wp = wiki.get(sci_name, {})
+        eb = ebird.get(sci_name, {})
 
-        # Build per-locale description dict
-        # Priority: Claude > Wikipedia locale extract > English Wikipedia extract
-        descriptions = {}
-        descriptions["en"] = desc_en if desc_en else wiki_extract
-        for loc in locales:
-            if loc == "en":
-                continue
-            if loc in translations:
-                descriptions[loc] = translations[loc]
-            elif loc in wiki_extracts:
-                descriptions[loc] = wiki_extracts[loc]
-            elif wiki_extract:
-                descriptions[loc] = wiki_extract
-
-        # Wikipedia URLs: fill missing locales with English URL
-        en_wiki_url = wiki_urls.get("en", "")
-        if en_wiki_url:
-            for loc in locales:
-                if loc not in wiki_urls:
-                    wiki_urls[loc] = en_wiki_url
+        description = ""
+        if cl.get("description_en"):
+            description = cl["description_en"]
+            desc_sources["claude"] += 1
+        elif wp.get("extract"):
+            description = wp["extract"]
+            desc_sources["wikipedia"] += 1
+        elif eb.get("description"):
+            description = eb["description"]
+            desc_sources["ebird"] += 1
+        else:
+            desc_sources["none"] += 1
 
         record = {
             "scientific_name": sci_name,
-            "common_name": inat_rec.get("preferred_common_name", ""),
-            "taxon_group": inat_rec.get("taxon_group", ""),
-            "iconic_taxon_name": inat_rec.get("iconic_taxon_name", ""),
-            "inat_id": inat_rec.get("inat_id"),
-            "observations_count": inat_rec.get("observations_count", 0),
-            "common_names": common_names,
-            "image_url": inat_rec.get("image_url", ""),
-            "image_attribution": inat_rec.get("image_attribution", ""),
-            "image_license": inat_rec.get("image_license", ""),
-            "ebird_code": ebird_code,
-            "ebird_description": ebird_desc,
-            "ebird_image_url": ebird_image,
-            "ebird_image_attribution": ebird_image_attr,
-            "wikipedia_extract": wiki_extract,
-            "wikipedia_urls": wiki_urls,
-            "descriptions": descriptions,
+            "common_name": tax.get("preferred_common_name", ""),
+            "taxon_group": tax.get("taxon_group", ""),
+            "common_names": tax.get("common_names", {}),
+            "description": description,
+            "image_url": tax.get("image_url", ""),
+            "image_author": tax.get("image_author", ""),
+            "image_license": tax.get("image_license", ""),
+            "image_source": tax.get("image_source", ""),
+            "inat_id": tax.get("inat_id"),
+            "ebird_code": tax.get("ebird_code", ""),
+            "gbif_id": tax.get("gbif_id", ""),
+            "ncbi_id": tax.get("ncbi_id", ""),
+            "avibase_id": tax.get("avibase_id", ""),
+            "birdlife_id": tax.get("birdlife_id", ""),
+            "observations_count": tax.get("observations_count", 0),
         }
         records.append(record)
-
-    # Report eBird matching stats
-    birds = [r for r in records if r["taxon_group"] == "Aves"]
-    birds_with_code = sum(1 for r in birds if r["ebird_code"])
-    birds_without = len(birds) - birds_with_code
-    print(f"  eBird matching: {birds_with_code}/{len(birds)} birds have eBird code")
-    if matched_via_avilist:
-        print(f"    {matched_via_avilist} matched via AviList scientific name")
-    if matched_via_common:
-        print(f"    {matched_via_common} matched via common name")
-    if birds_without:
-        print(f"    {birds_without} birds still without eBird code")
 
     # Sort by taxon group, then observations count descending
     group_order = {"Aves": 0, "Mammalia": 1, "Reptilia": 2,
@@ -198,33 +109,50 @@ def build_master(inat: dict, ebird: dict, wiki: dict, claude: dict,
         -r["observations_count"],
     ))
 
+    # Stats
+    groups = Counter(r["taxon_group"] for r in records)
+    n_locales = len(set(
+        loc for r in records for loc in r.get("common_names", {}).keys()
+    ))
+    img_sources = Counter(r.get("image_source", "") or "none" for r in records)
+
+    print(f"  {len(records)} species")
+    for g, n in sorted(groups.items()):
+        print(f"    {g}: {n}")
+
+    print(f"\n  Common names: {n_locales} locales")
+
+    print(f"\n  Descriptions:")
+    for src, cnt in desc_sources.most_common():
+        print(f"    {src}: {cnt}")
+
+    print(f"\n  Images:")
+    for src, cnt in img_sources.most_common():
+        print(f"    {src}: {cnt}")
+
     return records
 
 
-def records_to_csv(records: list[dict], locales: list[str]) -> str:
+def records_to_csv(records: list[dict]) -> str:
     """Convert records to CSV string.
 
-    Flattens nested dicts: common_names become columns like
-    common_name_en, common_name_de, etc.  wikipedia_urls become
-    wikipedia_url_en, etc.  descriptions become description_en, etc.
+    Flattens common_names into separate columns for the most common locales
+    (top 30 by coverage).
     """
-    # Build column list
+    # Find the top locales by coverage
+    locale_counts: Counter[str] = Counter()
+    for r in records:
+        locale_counts.update(r.get("common_names", {}).keys())
+    top_locales = [loc for loc, _ in locale_counts.most_common(30)]
+
     base_cols = [
         "scientific_name", "common_name", "taxon_group",
-        "iconic_taxon_name", "inat_id", "observations_count",
-        "image_url", "image_attribution", "image_license",
-        "ebird_code", "ebird_description",
-        "ebird_image_url", "ebird_image_attribution",
-        "wikipedia_extract",
+        "description",
+        "image_url", "image_author", "image_license", "image_source",
+        "inat_id", "ebird_code", "gbif_id", "ncbi_id",
+        "avibase_id", "birdlife_id", "observations_count",
     ]
-    locale_cols = []
-    for loc in locales:
-        locale_cols.append(f"common_name_{loc}")
-    for loc in locales:
-        locale_cols.append(f"wikipedia_url_{loc}")
-    for loc in locales:
-        locale_cols.append(f"description_{loc}")
-
+    locale_cols = [f"common_name_{loc}" for loc in top_locales]
     fieldnames = base_cols + locale_cols
 
     buf = io.StringIO()
@@ -233,10 +161,8 @@ def records_to_csv(records: list[dict], locales: list[str]) -> str:
 
     for rec in records:
         row = {k: rec.get(k, "") for k in base_cols}
-        for loc in locales:
+        for loc in top_locales:
             row[f"common_name_{loc}"] = rec.get("common_names", {}).get(loc, "")
-            row[f"wikipedia_url_{loc}"] = rec.get("wikipedia_urls", {}).get(loc, "")
-            row[f"description_{loc}"] = rec.get("descriptions", {}).get(loc, "")
         writer.writerow(row)
 
     return buf.getvalue()
@@ -252,48 +178,47 @@ def main():
                         help="Write uncompressed files only, skip zip")
     args = parser.parse_args()
 
-    cfg = load_config()
-    locales = get_locales()
     out_dir = ROOT / ("dev" if args.dev else "dist")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading raw data...")
-    inat = load_json(RAW / "inat_data.json")
+    taxonomy = load_json(TAXONOMY_FILE)
     ebird = load_json(RAW / "ebird_data.json")
     wiki = load_json(RAW / "wikipedia_data.json")
     claude = load_json(RAW / "claude_data.json")
 
-    print(f"  iNat:      {len(inat):>8} species")
+    print(f"  Taxonomy:  {len(taxonomy):>8} species")
     print(f"  eBird:     {len(ebird):>8} species")
     print(f"  Wikipedia: {len(wiki):>8} species")
     print(f"  Claude:    {len(claude):>8} species")
 
-    if not inat:
-        print("ERROR: No iNat data found. Run the pipeline first.")
+    if not taxonomy:
+        print("ERROR: No taxonomy.json found. Run utils/taxonomy.py first.")
         raise SystemExit(1)
 
     print("\nMerging...")
-    records = build_master(inat, ebird, wiki, claude, locales)
-    print(f"  {len(records)} species in master taxonomy")
+    records = build_master(taxonomy, ebird, wiki, claude)
 
-    # Group stats
-    from collections import Counter
-    groups = Counter(r["taxon_group"] for r in records)
-    for g, n in sorted(groups.items()):
-        print(f"    {g}: {n}")
-
-    # Write JSON
+    # Write JSON (atomic)
     json_path = out_dir / "species_metadata.json"
-    with open(json_path, "w", encoding="utf-8") as f:
+    tmp = json_path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, json_path)
     json_size = json_path.stat().st_size
     print(f"\n  JSON: {json_path} ({json_size / 1024 / 1024:.1f} MB)")
 
-    # Write CSV
+    # Write CSV (atomic)
     csv_path = out_dir / "species_metadata.csv"
-    csv_text = records_to_csv(records, locales)
-    with open(csv_path, "w", encoding="utf-8") as f:
+    csv_text = records_to_csv(records)
+    tmp = csv_path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         f.write(csv_text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, csv_path)
     csv_size = csv_path.stat().st_size
     print(f"  CSV:  {csv_path} ({csv_size / 1024 / 1024:.1f} MB)")
 

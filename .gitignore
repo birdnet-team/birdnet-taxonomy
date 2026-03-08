@@ -211,3 +211,4 @@ raw_data/
 dev/
 dist/
 images/
+.image_cache/
