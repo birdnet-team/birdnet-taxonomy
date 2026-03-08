@@ -116,9 +116,15 @@ def extract_record(result: dict, group_name: str) -> dict:
 
 def fetch_group(group: dict, existing: dict, cfg: dict,
                 limit: int = 0, save_every: int = 500) -> int:
-    """Fetch all species for one taxon group. Returns count of new records."""
+    """Fetch species for one taxon group. Returns count of new records.
+
+    Results are sorted by observation count (descending) by the API.
+    The group's 'fraction' setting (0.0–1.0) controls what share of
+    species to fetch — e.g. 0.1 fetches the top 10% most-observed.
+    """
     group_name = group["name"]
     taxon_id = group["taxon_id"]
+    fraction = group.get("fraction", 1.0)
     inat_cfg = cfg.get("inat", {})
     base_url = inat_cfg.get("base_url", "https://api.inaturalist.org/v1/taxa")
     per_page = inat_cfg.get("per_page", 200)
@@ -126,7 +132,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
     delay = inat_cfg.get("request_delay", 1.1)
 
     print(f"\n{'='*60}")
-    print(f"Fetching {group_name} (taxon_id={taxon_id})...")
+    print(f"Fetching {group_name} (taxon_id={taxon_id}, fraction={fraction})...")
 
     # First request to get total
     data = fetch_page(base_url, taxon_id, page=1, per_page=per_page,
@@ -136,8 +142,13 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
         return 0
 
     total = data["total_results"]
+    # Apply fraction cap — only fetch top N% of species (sorted by obs count)
+    target = int(total * fraction) if fraction < 1.0 else total
+    target_pages = (target + per_page - 1) // per_page
     total_pages = (total + per_page - 1) // per_page
     print(f"  Total species on iNat: {total} ({total_pages} pages)")
+    if fraction < 1.0:
+        print(f"  Fraction {fraction} → fetching top {target} species")
 
     # Count how many we already have for this group
     existing_in_group = sum(
@@ -187,10 +198,10 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
         page_species = len(results)
         total_so_far = (page - 1) * per_page + page_species
         print(
-            f"  Page {page}/{total_pages} — "
+            f"  Page {page}/{target_pages} — "
             f"{page_species} species, "
             f"{new_count} new, {skipped} skipped, "
-            f"{total_so_far}/{total} total",
+            f"{total_so_far}/{target} total",
             flush=True,
         )
 
@@ -199,6 +210,11 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
 
         if limit and new_count >= limit:
             print(f"  Reached limit of {limit}")
+            break
+
+        if total_so_far >= target:
+            if fraction < 1.0:
+                print(f"  Reached fraction cap ({target}/{total} species)")
             break
 
         if page >= total_pages:
@@ -254,15 +270,18 @@ def main():
         base_url = inat_cfg.get("base_url", "https://api.inaturalist.org/v1/taxa")
         per_page = inat_cfg.get("per_page", 200)
         for g in groups:
+            frac = g.get("fraction", 1.0)
             data = fetch_page(base_url, g["taxon_id"], page=1, per_page=1,
                               all_names=False)
             total = data["total_results"] if data else "?"
+            target = int(total * frac) if isinstance(total, int) and frac < 1.0 else total
             existing_in_group = sum(
                 1 for v in existing.values()
                 if v.get("taxon_group") == g["name"]
                 and v.get("inat_id") is not None
             )
-            print(f"  {g['name']}: {total} on iNat, {existing_in_group} already fetched")
+            label = f" (top {frac:.0%})" if frac < 1.0 else ""
+            print(f"  {g['name']}: {total} on iNat{label} → target {target}, {existing_in_group} already fetched")
         return
 
     total_new = 0

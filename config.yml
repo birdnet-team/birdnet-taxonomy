@@ -27,14 +27,19 @@ locales:
 taxon_groups:
   - name: Aves
     taxon_id: 3
+    fraction: 1.0        # fetch all species
   - name: Mammalia
     taxon_id: 40151
+    fraction: 0.25       # top 25% by observation count
   - name: Insecta
     taxon_id: 47158
+    fraction: 0.1    
   - name: Reptilia
     taxon_id: 26036
+    fraction: 0.1
   - name: Amphibia
     taxon_id: 20978
+    fraction: 0.1
 
 # iNaturalist API settings
 inat:
