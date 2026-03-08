@@ -20,12 +20,28 @@ Requires ANTHROPIC_API_KEY in .env file.
 import argparse
 import json
 import os
+import re
+import signal
 import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
+from tqdm import tqdm
+
 from utils.config import load_config, get_locales, LOCALE_NAMES
+
+# Graceful shutdown flag
+_shutdown = False
+
+def _handle_sigint(sig, frame):
+    global _shutdown
+    if _shutdown:
+        raise SystemExit(1)
+    _shutdown = True
+    tqdm.write("\n⏎ Interrupt received — finishing current batch, then saving...")
+
+signal.signal(signal.SIGINT, _handle_sigint)
 
 # Paths
 ROOT = Path(__file__).resolve().parent.parent
@@ -298,20 +314,91 @@ def translate_batch_multi(
 
 
 def _parse_json_response(text: str) -> dict:
-    """Parse a JSON response from Claude, handling code fences."""
+    """Parse a JSON response from Claude, with repair for common LLM issues.
+
+    Handles: code fences, trailing commas, unescaped newlines in strings,
+    leading/trailing prose, truncated output, single quotes, etc.
+    """
+    if not text:
+        return {}
+
     cleaned = text.strip()
+
+    # Strip markdown code fences (```json ... ``` or ``` ... ```)
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[-1]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3].rstrip()
+
+    # Extract the outermost JSON object if surrounded by prose
+    brace_start = cleaned.find("{")
+    brace_end = cleaned.rfind("}")
+    if brace_start != -1 and brace_end > brace_start:
+        cleaned = cleaned[brace_start:brace_end + 1]
+    else:
+        tqdm.write(f"  WARN: No JSON object found in Claude response ({len(text)} chars)")
+        return {}
+
+    # Attempt 1: parse as-is
     try:
         result = json.loads(cleaned)
         if isinstance(result, dict):
             return result
     except json.JSONDecodeError:
-        print(f"  WARN: Could not parse Claude JSON response ({len(text)} chars)")
+        pass
+
+    # Attempt 2: fix common issues
+    repaired = cleaned
+    # Remove trailing commas before } or ]
+    repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+    # Replace unescaped literal newlines inside strings with \n
+    repaired = re.sub(r'(?<=": ")(.*?)(?="[,}\s])', _escape_newlines, repaired, flags=re.DOTALL)
+
+    try:
+        result = json.loads(repaired)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 3: handle truncated JSON (add missing closing braces)
+    truncated = repaired.rstrip()
+    # Strip a trailing incomplete value (e.g. truncated mid-string)
+    if truncated.count('"') % 2 != 0:
+        # Odd number of quotes — likely truncated mid-string
+        last_quote = truncated.rfind('"')
+        truncated = truncated[:last_quote + 1]
+    # Count brace imbalance
+    open_braces = truncated.count("{") - truncated.count("}")
+    if open_braces > 0:
+        # Strip trailing comma if present
+        truncated = truncated.rstrip().rstrip(",")
+        truncated += "}" * open_braces
+
+    try:
+        result = json.loads(truncated)
+        if isinstance(result, dict):
+            tqdm.write(f"  WARN: Repaired truncated JSON from Claude ({len(text)} chars)")
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 4: try to salvage individual key-value pairs with regex
+    salvaged = {}
+    # Match "key": "value" patterns
+    for m in re.finditer(r'"([^"]+)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*[,}]', cleaned):
+        salvaged[m.group(1)] = m.group(2).replace('\\"', '"').replace("\\n", "\n")
+    if salvaged:
+        tqdm.write(f"  WARN: Salvaged {len(salvaged)} entries from malformed Claude JSON")
+        return salvaged
+
+    tqdm.write(f"  WARN: Could not parse Claude JSON response ({len(text)} chars)")
     return {}
+
+
+def _escape_newlines(match: re.Match) -> str:
+    """Escape literal newlines inside a JSON string value."""
+    return match.group(0).replace("\n", "\\n").replace("\r", "\\r")
 
 
 # ---------------------------------------------------------------------------
@@ -333,9 +420,12 @@ def load_existing_data() -> dict:
 
 
 def save_data(data: dict):
+    """Save Claude data to disk (atomic write)."""
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    tmp = OUTPUT_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, OUTPUT_FILE)
 
 
 def main():
@@ -352,8 +442,6 @@ def main():
                         help="Max species to process (0 = all)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be processed without calling API")
-    parser.add_argument("--save-every", type=int, default=10,
-                        help="Save progress every N species")
     parser.add_argument("--skip-translate", action="store_true",
                         help="Only generate English descriptions, skip translations")
     parser.add_argument("--batch-size", type=int, default=default_batch,
@@ -374,17 +462,41 @@ def main():
     print(f"Already have Claude data for {len(existing)} species")
     print(f"Target locales: {', '.join(locales)}")
 
-    # Build list of species to process: need source text and not yet done
-    to_process = []
+    # Build list of species to process
+    target_non_en = [l for l in locales if l != "en"]
+    n_target = len(target_non_en)
+
+    # Separate incomplete existing entries for targeted re-processing
+    needs_description = []   # no description at all, or errored
+    needs_translation = []   # has description but missing/partial translations
+    needs_new = []           # not in existing at all
+
     for sci_name in inat:
-        if sci_name in existing and existing[sci_name].get("description_en"):
-            continue
         ebird_desc = ebird.get(sci_name, {}).get("description", "") or ""
         wiki_extract = wiki.get(sci_name, {}).get("extract", "") or ""
         if not ebird_desc and not wiki_extract:
             continue  # no source text available
+
         english_name = inat[sci_name].get("preferred_common_name", sci_name)
-        to_process.append((sci_name, english_name, ebird_desc, wiki_extract))
+        item = (sci_name, english_name, ebird_desc, wiki_extract)
+
+        if sci_name not in existing:
+            needs_new.append(item)
+        elif not existing[sci_name].get("description_en"):
+            needs_description.append(item)
+        elif not args.skip_translate:
+            trans = existing[sci_name].get("translations", {})
+            if len(trans) < n_target:
+                needs_translation.append(item)
+
+    n_retry = len(needs_description)
+    n_partial = len(needs_translation)
+    n_new = len(needs_new)
+    print(f"  New: {n_new}, needs retry (errored): {n_retry}, "
+          f"partial translations: {n_partial}")
+
+    # Process in order: retries first, then partial, then new
+    to_process = needs_description + needs_translation + needs_new
 
     if args.limit:
         to_process = to_process[:args.limit]
@@ -409,39 +521,53 @@ def main():
         return
 
     processed = 0
+    pbar = tqdm(total=len(to_process), desc="Claude", unit="sp")
+
     for batch_idx in range(n_batches):
+        if _shutdown:
+            break
+
         batch_start = batch_idx * batch_size
         batch = to_process[batch_start:batch_start + batch_size]
-        sci_names = [s[0] for s in batch]
 
-        print(f"\n  Batch {batch_idx + 1}/{n_batches} "
-              f"({len(batch)} species: {', '.join(s[1] for s in batch)})...",
-              flush=True)
+        pbar.set_postfix_str(
+            f"batch {batch_idx + 1}/{n_batches}", refresh=False
+        )
 
-        # --- Step 1: Generate descriptions ---
-        if len(batch) == 1:
-            # Single species — use simpler prompt
-            sci, en, eb, wi = batch[0]
-            desc = generate_description(sci, en, eb, wi)
-            descs = {sci: desc} if desc else {}
-        else:
-            descs = generate_descriptions_batch(batch)
+        # Split batch: species needing descriptions vs only translations
+        need_desc = [(s, e, eb, wi) for s, e, eb, wi in batch
+                     if not existing.get(s, {}).get("description_en")]
+        have_desc = [(s, e, eb, wi) for s, e, eb, wi in batch
+                     if existing.get(s, {}).get("description_en")]
 
-        time.sleep(delay)
+        # --- Step 1: Generate descriptions for species that need them ---
+        descs = {}
+        if need_desc:
+            if len(need_desc) == 1:
+                sci, en, eb, wi = need_desc[0]
+                desc = generate_description(sci, en, eb, wi)
+                descs = {sci: desc} if desc else {}
+            else:
+                descs = generate_descriptions_batch(need_desc)
+            time.sleep(delay)
+
+        # Carry forward existing descriptions for translation-only species
+        for sci, en, _, _ in have_desc:
+            descs[sci] = existing[sci]["description_en"]
 
         if not descs:
-            print(f"    WARN: No descriptions returned for this batch")
-            for sci, _, _, _ in batch:
+            tqdm.write(f"  WARN: No descriptions returned for batch {batch_idx + 1}")
+            for sci, _, _, _ in need_desc:
                 existing[sci] = {"description_en": None, "error": "no_response"}
             processed += len(batch)
+            pbar.update(len(batch))
+            save_data(existing)
             continue
 
-        for sci, en, _, _ in batch:
+        for sci, en, _, _ in need_desc:
             desc = descs.get(sci, "")
-            if desc:
-                print(f"    ✓ {sci}: {len(desc)} chars")
-            else:
-                print(f"    ✗ {sci}: no description")
+            if not desc:
+                tqdm.write(f"  ✗ {sci}: no description")
 
         # --- Step 2: Translate ---
         translations_all = {}
@@ -454,28 +580,28 @@ def main():
                 translations_all = translate_batch_multi(descs, locales)
             time.sleep(delay)
 
-            n_translated = sum(1 for t in translations_all.values() if t)
-            n_locales = sum(len(t) for t in translations_all.values())
-            print(f"    Translated {n_translated} species → {n_locales} total locale entries")
-
-        # --- Save records ---
+        # --- Save records (merge with existing translations) ---
         for sci, en, _, _ in batch:
             desc_en = descs.get(sci, "")
+            old = existing.get(sci, {})
             record = {"description_en": desc_en or None}
             if not desc_en:
                 record["error"] = "no_response"
+            # Merge: keep old translations, overlay new ones
+            merged_trans = dict(old.get("translations", {}))
             if sci in translations_all:
-                record["translations"] = translations_all[sci]
+                merged_trans.update(translations_all[sci])
+            if merged_trans:
+                record["translations"] = merged_trans
             existing[sci] = record
             processed += 1
 
-        if processed % args.save_every < batch_size:
-            save_data(existing)
-            print(f"  --- Saved progress ({processed}/{len(to_process)} processed) ---")
+        pbar.update(len(batch))
+        save_data(existing)
 
-    save_data(existing)
+    pbar.close()
     with_desc = sum(1 for v in existing.values() if v.get("description_en"))
-    print(f"\nDone! Processed {processed} species in {n_batches} batches.")
+    print(f"\nDone! Processed {processed} species in {batch_idx + 1} batches.")
     print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries ({with_desc} with descriptions)")
 
 

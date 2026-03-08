@@ -175,6 +175,18 @@ def _image_base_url(og_image_url: str) -> str:
     return re.sub(r'/\d+$', '', og_image_url)
 
 
+def _extract_asset_id(image_url: str) -> str:
+    """Extract the Macaulay Library asset ID from an eBird CDN image URL.
+
+    Input:  https://cdn.download.ams.birds.cornell.edu/api/v2/asset/244378051/900
+    Output: 244378051
+    """
+    if not image_url:
+        return ""
+    m = re.search(r'/asset/(\d+)', image_url)
+    return m.group(1) if m else ""
+
+
 def _fetch_ebird_html(opener, url: str) -> str | None:
     """Make a rate-limited request to eBird with retry on 429.
 
@@ -245,6 +257,7 @@ def fetch_ebird_page(ebird_code: str, base_url: str) -> dict:
         return {
             "description": description,
             "image_url": _image_base_url(image_url or ""),
+            "ml_asset_id": _extract_asset_id(image_url or ""),
             "image_attribution": image_alt or "",
         }
 
@@ -299,6 +312,7 @@ def main():
                 "ebird_code": ebird_code,
                 "description": None,
                 "image_url": "",
+                "ml_asset_id": "",
                 "image_attribution": "",
                 "error": result["error"],
             }
@@ -307,6 +321,7 @@ def main():
                 "ebird_code": ebird_code,
                 "description": result["description"],
                 "image_url": result["image_url"],
+                "ml_asset_id": result.get("ml_asset_id", ""),
                 "image_attribution": result["image_attribution"],
             }
         else:
@@ -314,6 +329,7 @@ def main():
                 "ebird_code": ebird_code,
                 "description": None,
                 "image_url": result.get("image_url", ""),
+                "ml_asset_id": result.get("ml_asset_id", ""),
                 "image_attribution": result.get("image_attribution", ""),
                 "error": "no_description",
             }
