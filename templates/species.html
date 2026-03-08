@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% block title %}{{ s.common_name or s.scientific_name }} — BirdNET{% endblock %}
+
+{% block extra_head %}
+<style>
+    .species-header {
+        display: flex;
+        gap: 2rem;
+        margin-bottom: 2rem;
+        flex-wrap: wrap;
+    }
+    .species-photo {
+        flex: 0 0 auto;
+        max-width: 420px;
+        width: 100%;
+    }
+    .species-photo img {
+        width: 100%;
+        border-radius: var(--radius);
+        aspect-ratio: 3/2;
+        object-fit: cover;
+    }
+    .species-photo .attribution {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-top: 0.3rem;
+    }
+    .species-info { flex: 1; min-width: 250px; }
+    .species-info h1 {
+        font-size: 1.8rem;
+        font-style: italic;
+        color: var(--accent);
+        margin-bottom: 0.2rem;
+    }
+    .species-info h2 {
+        font-size: 1.2rem;
+        font-weight: 400;
+        margin-bottom: 1rem;
+    }
+
+    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+    .info-table td {
+        padding: 0.4rem 0.6rem;
+        border-bottom: 1px solid var(--border);
+        font-size: 0.9rem;
+    }
+    .info-table td:first-child {
+        font-weight: 500;
+        color: var(--muted);
+        white-space: nowrap;
+        width: 140px;
+    }
+
+    .description { margin-bottom: 2rem; }
+    .description h3 { margin-bottom: 0.5rem; font-size: 1.1rem; }
+    .description p {
+        line-height: 1.7;
+        max-width: 700px;
+    }
+
+    .section { margin-bottom: 2rem; }
+    .section h3 { margin-bottom: 0.8rem; font-size: 1.1rem; }
+
+    .names-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 0.3rem 1.5rem;
+    }
+    .names-grid .name-entry {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.3rem 0;
+        font-size: 0.9rem;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .names-grid .locale-code {
+        color: var(--muted);
+        font-weight: 500;
+        text-transform: uppercase;
+        font-size: 0.8rem;
+    }
+
+    .wiki-links { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .wiki-links a {
+        display: inline-block;
+        padding: 0.2rem 0.6rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        font-size: 0.85rem;
+    }
+    .wiki-links a:hover { background: var(--bg); }
+
+    .translations details {
+        margin-bottom: 0.5rem;
+    }
+    .translations summary {
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 500;
+        padding: 0.3rem 0;
+    }
+    .translations .trans-text {
+        font-size: 0.9rem;
+        line-height: 1.6;
+        padding: 0.5rem 0 0.5rem 1rem;
+        border-left: 2px solid var(--border);
+        margin: 0.3rem 0;
+    }
+
+    .json-link {
+        display: inline-block;
+        padding: 0.3rem 0.8rem;
+        background: #e9ecef;
+        border-radius: var(--radius);
+        font-size: 0.85rem;
+        color: var(--muted);
+    }
+    .json-link:hover { background: #dee2e6; text-decoration: none; }
+
+    .ebird-section { margin-top: 1.5rem; }
+    .ebird-section img {
+        max-width: 360px;
+        width: 100%;
+        border-radius: var(--radius);
+        margin-top: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<p style="margin-bottom: 1rem;"><a href="/">&larr; Back to browse</a></p>
+
+<div class="species-header">
+    <div class="species-photo">
+        {% if s.image_url %}
+        <img src="{{ s.image_url }}" alt="{{ s.common_name or s.scientific_name }}">
+        {% if s.image_attribution %}
+        <div class="attribution">{{ s.image_attribution }}{% if s.image_license %} ({{ s.image_license }}){% endif %}</div>
+        {% endif %}
+        {% else %}
+        <div class="no-img" style="height:280px; border-radius: var(--radius);">No image available</div>
+        {% endif %}
+    </div>
+
+    <div class="species-info">
+        <h1>{{ s.scientific_name }}</h1>
+        {% if s.common_name %}
+        <h2>{{ s.common_name }}</h2>
+        {% endif %}
+
+        <table class="info-table">
+            <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
+            {% if s.iconic_taxon_name and s.iconic_taxon_name != s.taxon_group %}
+            <tr><td>Iconic taxon</td><td>{{ s.iconic_taxon_name }}</td></tr>
+            {% endif %}
+            {% if s.inat_id %}
+            <tr><td>iNaturalist</td><td><a href="https://www.inaturalist.org/taxa/{{ s.inat_id }}" target="_blank">#{{ s.inat_id }}</a></td></tr>
+            {% endif %}
+            {% if s.ebird_code %}
+            <tr><td>eBird</td><td><a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank">{{ s.ebird_code }}</a></td></tr>
+            {% endif %}
+            {% if s.observations_count %}
+            <tr><td>Observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
+            {% endif %}
+        </table>
+
+        <a class="json-link" href="/api/species/{{ s.scientific_name }}">View JSON &rarr;</a>
+    </div>
+</div>
+
+{% if s.descriptions and s.descriptions.get('en') %}
+<div class="description">
+    <h3>Description</h3>
+    <p>{{ s.descriptions['en'] }}</p>
+</div>
+{% endif %}
+
+{% if s.wikipedia_extract and (not s.descriptions or not s.descriptions.get('en') or s.descriptions.get('en') != s.wikipedia_extract) %}
+<div class="description">
+    <h3>Wikipedia Summary</h3>
+    <p>{{ s.wikipedia_extract }}</p>
+</div>
+{% endif %}
+
+{% if s.ebird_description or s.ebird_image_url %}
+<div class="section ebird-section">
+    <h3>eBird</h3>
+    {% if s.ebird_description %}
+    <p style="max-width:700px;">{{ s.ebird_description }}</p>
+    {% endif %}
+    {% if s.ebird_image_url %}
+    <img src="{{ s.ebird_image_url }}/640" alt="{{ s.common_name }}" loading="lazy">
+    {% if s.ebird_image_attribution %}
+    <div class="attribution" style="font-size:0.8rem;color:var(--muted);margin-top:0.3rem;">{{ s.ebird_image_attribution }}</div>
+    {% endif %}
+    {% endif %}
+</div>
+{% endif %}
+
+{% set cn = s.common_names or {} %}
+{% if cn|length > 1 %}
+<div class="section">
+    <h3>Common Names ({{ cn|length }} locales)</h3>
+    <div class="names-grid">
+        {% for locale, name in cn|dictsort %}
+        <div class="name-entry">
+            <span class="locale-code">{{ locale }}</span>
+            <span>{{ name }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% set wiki_urls = s.wikipedia_urls or {} %}
+{% if wiki_urls %}
+<div class="section">
+    <h3>Wikipedia ({{ wiki_urls|length }} languages)</h3>
+    <div class="wiki-links">
+        {% for locale, url in wiki_urls|dictsort %}
+        <a href="{{ url }}" target="_blank">{{ locale }}</a>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% set desc = s.descriptions or {} %}
+{% set trans = {k: v for k, v in desc.items() if k != 'en' and v} %}
+{% if trans %}
+<div class="section translations">
+    <h3>Translations ({{ trans|length }} languages)</h3>
+    {% for locale, text in trans|dictsort %}
+    <details>
+        <summary>{{ locale }}</summary>
+        <div class="trans-text">{{ text }}</div>
+    </details>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}

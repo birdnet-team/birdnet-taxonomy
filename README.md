@@ -58,6 +58,32 @@ python -m utils.images --dry-run
 
 Images are saved to `images/` (gitignored). Filename format: `<sci_name>_<common_name>_<author>_<thumb|medium>.webp`.
 
+### Web Server
+
+Browse and search the merged dataset through a web UI and REST API:
+
+```bash
+python server.py           # serve from dist/species_metadata.json
+python server.py --dev     # serve from dev/species_metadata.json
+```
+
+Or with hot-reload during development:
+
+```bash
+uvicorn server:app --reload
+```
+
+| Route | Description |
+|-------|-------------|
+| `/` | Home page — search, browse, filter by taxon group |
+| `/species/{name}` | Species detail page (HTML) |
+| `/api/species` | List species (JSON), supports `?q=`, `?group=`, `?page=` |
+| `/api/species/{name}` | Single species detail (JSON) |
+| `/api/search?q=` | Search species by name |
+| `/api/groups` | List taxon groups with counts |
+| `/api/stats` | Dataset statistics |
+| `/docs` | Interactive API docs (Swagger UI) |
+
 ## Data Sources
 
 - **[iNaturalist](https://www.inaturalist.org)** — Taxonomy, common names, observation counts, and photos via the public API. Data licensed under various Creative Commons licenses by individual contributors.

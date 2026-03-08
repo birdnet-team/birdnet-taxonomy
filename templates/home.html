@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Species — BirdNET{% endblock %}
+
+{% block content %}
+<form class="search-bar" method="get" action="/">
+    <input type="text" name="q" value="{{ query }}" placeholder="Search by scientific or common name..." autofocus>
+    <select name="group">
+        <option value="">All groups</option>
+        {% for g in groups %}
+        <option value="{{ g }}" {% if g == group %}selected{% endif %}>{{ g }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit">Search</button>
+</form>
+
+<p class="stats">
+    {% if query or group %}
+        {{ total }} result{{ 's' if total != 1 else '' }}
+        {% if query %}for "<strong>{{ query }}</strong>"{% endif %}
+        {% if group %}in <strong>{{ group }}</strong>{% endif %}
+    {% else %}
+        {{ total }} species in database
+    {% endif %}
+</p>
+
+{% if species %}
+<div class="species-grid">
+    {% for s in species %}
+    <div class="species-card">
+        <a href="/species/{{ s.scientific_name }}">
+            {% if s.image_url %}
+            <img src="{{ s.image_url }}" alt="{{ s.common_name or s.scientific_name }}" loading="lazy">
+            {% else %}
+            <div class="no-img">No image</div>
+            {% endif %}
+            <div class="card-body">
+                <div class="sci-name">{{ s.scientific_name }}</div>
+                {% if s.common_name %}
+                <div class="common-name">{{ s.common_name }}</div>
+                {% endif %}
+                <div class="meta">
+                    <span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span>
+                    {% if s.observations_count %}
+                    &middot; {{ "{:,}".format(s.observations_count) }} obs
+                    {% endif %}
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="?q={{ query }}&group={{ group }}&page={{ page - 1 }}">&laquo; Prev</a>
+    {% endif %}
+    {% for p in range(1, total_pages + 1) %}
+        {% if p == page %}
+        <span class="active">{{ p }}</span>
+        {% elif p <= 3 or p > total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
+        <a href="?q={{ query }}&group={{ group }}&page={{ p }}">{{ p }}</a>
+        {% elif p == 4 or p == total_pages - 2 %}
+        <span>&hellip;</span>
+        {% endif %}
+    {% endfor %}
+    {% if page < total_pages %}
+    <a href="?q={{ query }}&group={{ group }}&page={{ page + 1 }}">Next &raquo;</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<p style="text-align:center; color: var(--muted); padding: 3rem 0;">
+    {% if query or group %}No species found.{% else %}No data loaded. Run <code>python merge.py</code> first.{% endif %}
+</p>
+{% endif %}
+{% endblock %}
