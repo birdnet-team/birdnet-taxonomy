@@ -78,7 +78,7 @@ _rate = RateLimiter(50)  # default; overwritten in main()
 
 
 def _wiki_request(url: str, accept: str = "application/json") -> bytes | None:
-    """Make a rate-limited HTTP request with retry on 429."""
+    """Make a rate-limited HTTP request with retry on transient errors."""
     req = Request(url, headers={
         "User-Agent": USER_AGENT,
         "Accept": accept,
@@ -89,11 +89,16 @@ def _wiki_request(url: str, accept: str = "application/json") -> bytes | None:
             with urlopen(req, timeout=30) as resp:
                 return resp.read()
         except HTTPError as e:
-            if e.code == 429:
+            if e.code == 429 or e.code >= 500:
                 wait = min(2 ** attempt, 30)
                 time.sleep(wait)
                 continue
             raise
+        except (URLError, TimeoutError, OSError):
+            if attempt < 3:
+                time.sleep(min(2 ** attempt, 10))
+                continue
+            return None
     return None  # exhausted retries
 
 
@@ -153,15 +158,35 @@ def _strip_html(text: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
 
 
-def fetch_summary(title: str) -> dict | None:
-    """Fetch Wikipedia summary via REST API (includes main image if present)."""
+def _search_wikipedia(query: str) -> str | None:
+    """Search Wikipedia for an article title matching the query.
+
+    Useful as a fallback when the direct title lookup returns 404
+    (e.g. due to article renames or taxonomic reclassifications).
+    """
+    url = (
+        f"https://en.wikipedia.org/w/api.php?action=query&list=search"
+        f"&srsearch={quote(query, safe='')}&srlimit=1&format=json"
+    )
+    try:
+        raw = _wiki_request(url)
+    except (HTTPError, URLError, TimeoutError):
+        return None
+    if raw is None:
+        return None
+
+    data = json.loads(raw.decode("utf-8"))
+    results = data.get("query", {}).get("search", [])
+    return results[0]["title"] if results else None
+
+
+def _fetch_summary_for_title(title: str) -> dict | None:
+    """Fetch Wikipedia summary for an exact title (no fallback)."""
     url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(title, safe='')}"
 
     try:
         raw = _wiki_request(url)
-    except HTTPError as e:
-        if e.code == 404:
-            return None
+    except HTTPError:
         return None
     except (URLError, TimeoutError):
         return None
@@ -182,6 +207,28 @@ def fetch_summary(title: str) -> dict | None:
         result["image_url"] = orig["source"]
 
     return result
+
+
+def fetch_summary(title: str, sci_name: str = "") -> dict | None:
+    """Fetch Wikipedia summary via REST API (includes main image if present).
+
+    Falls back to Wikipedia search if the direct title returns 404.
+    """
+    result = _fetch_summary_for_title(title)
+    if result is not None:
+        return result
+
+    # Fallback: search Wikipedia by scientific name, then by original title
+    for query in (sci_name, title.replace("_", " ")):
+        if not query:
+            continue
+        found_title = _search_wikipedia(query)
+        if found_title and found_title.replace(" ", "_") != title:
+            result = _fetch_summary_for_title(found_title)
+            if result is not None:
+                return result
+
+    return None
 
 
 def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, dict]:
@@ -288,7 +335,7 @@ def fetch_species_wikipedia(sci_name: str, wiki_url: str,
         return sci_name, {"error": "bad_url", "wikipedia_url": wiki_url}
 
     # Fetch English summary
-    summary = fetch_summary(title)
+    summary = fetch_summary(title, sci_name=sci_name)
     resolved_title = summary["title"] if summary else title
 
     # Fetch langlinks
