@@ -113,8 +113,11 @@ def fetch_summary(title: str) -> dict | None:
     }
 
 
-def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, str]:
-    """Fetch localized Wikipedia article URLs via langlinks API."""
+def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, dict]:
+    """Fetch localized Wikipedia article URLs and titles via langlinks API.
+
+    Returns dict of lang -> {"url": ..., "title": ...} for target locales.
+    """
     target_set = set(l for l in target_locales if l != "en")
     url = (
         f"https://en.wikipedia.org/w/api.php"
@@ -142,15 +145,37 @@ def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, str]:
         lang = ll.get("lang", "")
         article_title = ll.get("*", "")
         if lang and article_title and lang in target_set:
-            result[lang] = f"https://{lang}.wikipedia.org/wiki/{quote(article_title, safe='/:@!$&\'()*+,;=')}"
+            result[lang] = {
+                "url": f"https://{lang}.wikipedia.org/wiki/{quote(article_title, safe='/:@!$&\'()*+,;=')}",
+                "title": article_title,
+            }
 
     return result
+
+
+def fetch_locale_extract(lang: str, title: str) -> str | None:
+    """Fetch Wikipedia summary extract for a specific language edition."""
+    url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(title, safe='')}"
+    req = Request(url, headers={
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+    })
+
+    try:
+        with urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError):
+        return None
+
+    return data.get("extract", "") or None
 
 
 def main():
     parser = argparse.ArgumentParser(description="Fetch Wikipedia data for species")
     parser.add_argument("--limit", type=int, default=0, help="Max species to fetch (0 = all)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be fetched without fetching")
+    parser.add_argument("--refetch", action="store_true",
+                        help="Re-fetch species that are missing localized extracts")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -165,7 +190,15 @@ def main():
     existing = load_existing_data()
     print(f"  Already have Wikipedia data for {len(existing)} species")
 
-    to_fetch = [(sci, url) for sci, url in species.items() if sci not in existing]
+    if args.refetch:
+        # Re-fetch species missing extracts
+        to_fetch = [
+            (sci, species[sci])
+            for sci in existing
+            if sci in species and not existing[sci].get("extracts")
+        ]
+    else:
+        to_fetch = [(sci, url) for sci, url in species.items() if sci not in existing]
     if args.limit:
         to_fetch = to_fetch[:args.limit]
 
@@ -200,8 +233,17 @@ def main():
         resolved_title = summary["title"] if summary else title
 
         # Fetch langlinks
-        locale_urls = fetch_langlinks(resolved_title, target_locales)
+        locale_links = fetch_langlinks(resolved_title, target_locales)
         time.sleep(delay)
+
+        # Build URLs dict and fetch localized extracts
+        locale_urls = {lang: info["url"] for lang, info in locale_links.items()}
+        locale_extracts = {}
+        for lang, info in locale_links.items():
+            ext = fetch_locale_extract(lang, info["title"])
+            if ext:
+                locale_extracts[lang] = ext
+            time.sleep(delay)
 
         if summary:
             record = {
@@ -209,8 +251,10 @@ def main():
                 "extract": summary["extract"],
                 "description": summary["description"],
                 "wikipedia_urls": {"en": summary["page_url"] or wiki_url},
+                "extracts": {"en": summary["extract"]} if summary["extract"] else {},
             }
             record["wikipedia_urls"].update(locale_urls)
+            record["extracts"].update(locale_extracts)
             existing[sci_name] = record
             success += 1
         else:
@@ -218,10 +262,13 @@ def main():
                 "error": "not_found",
                 "wikipedia_url": wiki_url,
                 "wikipedia_urls": {},
+                "extracts": {},
             }
             # Even without summary, we might have langlinks
             if locale_urls:
                 existing[sci_name]["wikipedia_urls"] = locale_urls
+            if locale_extracts:
+                existing[sci_name]["extracts"] = locale_extracts
             tqdm.write(f"  NO SUMMARY {sci_name}")
 
         fetched += 1

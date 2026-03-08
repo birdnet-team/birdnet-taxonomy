@@ -12,8 +12,8 @@ be collected before running this script.
 Input files (all in raw_data/):
   - inat_data.json     (step 2: taxonomy, common names, photos)
   - ebird_data.json    (step 3: descriptions, images — birds only)
-  - wikipedia_data.json(step 4: summaries, locale URLs)
-  - claude_data.json   (step 5: descriptions + translations)
+  - wikipedia_data.json(step 4: summaries, locale URLs, locale extracts)
+  - claude_data.json   (step 5, optional: descriptions + translations)
 
 Output:
   - dist/species_metadata.json
@@ -68,18 +68,33 @@ def build_master(inat: dict, ebird: dict, wiki: dict, claude: dict,
         wp = wiki.get(sci_name, {})
         wiki_extract = wp.get("extract", "") or ""
         wiki_urls = wp.get("wikipedia_urls", {})
+        wiki_extracts = wp.get("extracts", {})
 
-        # Claude descriptions
+        # Claude descriptions (optional)
         cl = claude.get(sci_name, {})
         desc_en = cl.get("description_en", "") or ""
         translations = cl.get("translations", {})
 
-        # Build per-locale description dict (fall back to Wikipedia extract)
+        # Build per-locale description dict
+        # Priority: Claude > Wikipedia locale extract > English Wikipedia extract
         descriptions = {}
         descriptions["en"] = desc_en if desc_en else wiki_extract
         for loc in locales:
-            if loc != "en" and loc in translations:
+            if loc == "en":
+                continue
+            if loc in translations:
                 descriptions[loc] = translations[loc]
+            elif loc in wiki_extracts:
+                descriptions[loc] = wiki_extracts[loc]
+            elif wiki_extract:
+                descriptions[loc] = wiki_extract
+
+        # Wikipedia URLs: fill missing locales with English URL
+        en_wiki_url = wiki_urls.get("en", "")
+        if en_wiki_url:
+            for loc in locales:
+                if loc not in wiki_urls:
+                    wiki_urls[loc] = en_wiki_url
 
         record = {
             "scientific_name": sci_name,

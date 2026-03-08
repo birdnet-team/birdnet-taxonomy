@@ -30,9 +30,9 @@ Each step has its own script. Run them in order — later steps depend on earlie
 | 2. iNaturalist | `python -m utils.inat` | `raw_data/inat_data.json` |
 | 3. eBird | `python -m utils.ebird` | `raw_data/ebird_data.json` |
 | 4. Wikipedia | `python -m utils.wikipedia` | `raw_data/wikipedia_data.json` |
-| 5. Claude | `python -m utils.claude` | `raw_data/claude_data.json` |
+| 5. Claude (optional) | `python -m utils.claude` | `raw_data/claude_data.json` |
 
-Steps 1–4 collect raw data from external sources. Step 5 uses Claude to generate English descriptions and translate them to all configured locales. All scripts are incremental — rerunning skips already-processed species. Use `--limit N` to cap the number of new items per run, or `--dry-run` to preview without writing.
+Steps 1–4 collect raw data from external sources. Step 5 optionally uses Claude to generate polished English descriptions and translate them to all configured locales. Without step 5, merge uses Wikipedia extracts (per-locale where available, English as fallback). All scripts are incremental — rerunning skips already-processed species. Use `--limit N` to cap the number of new items per run, or `--dry-run` to preview without writing.
 
 ### Merge & Release
 
