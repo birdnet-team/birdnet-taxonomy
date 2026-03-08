@@ -127,7 +127,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
     fraction = group.get("fraction", 1.0)
     inat_cfg = cfg.get("inat", {})
     base_url = inat_cfg.get("base_url", "https://api.inaturalist.org/v1/taxa")
-    per_page = inat_cfg.get("per_page", 200)
+    per_page = min(inat_cfg.get("per_page", 200), 200)  # iNat API caps at 200
     all_names = inat_cfg.get("all_names", True)
     delay = inat_cfg.get("request_delay", 1.1)
 
@@ -142,11 +142,16 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
         return 0
 
     total = data["total_results"]
+    # Detect actual per_page returned by API (it may silently cap)
+    actual_per_page = len(data.get("results", []))
+    if actual_per_page and actual_per_page < per_page:
+        per_page = actual_per_page
+
     # Apply fraction cap — only fetch top N% of species (sorted by obs count)
     target = int(total * fraction) if fraction < 1.0 else total
     target_pages = (target + per_page - 1) // per_page
     total_pages = (total + per_page - 1) // per_page
-    print(f"  Total species on iNat: {total} ({total_pages} pages)")
+    print(f"  Total species on iNat: {total} (target: {target}, ~{target_pages} pages of {per_page})")
     if fraction < 1.0:
         print(f"  Fraction {fraction} → fetching top {target} species")
 
@@ -159,6 +164,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
 
     new_count = 0
     skipped = 0
+    seen_total = 0  # actual species seen across all pages
     page = 1
 
     while True:
@@ -195,13 +201,12 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
             if limit and new_count >= limit:
                 break
 
-        page_species = len(results)
-        total_so_far = (page - 1) * per_page + page_species
+        seen_total += len(results)
         print(
             f"  Page {page}/{target_pages} — "
-            f"{page_species} species, "
+            f"{len(results)} species, "
             f"{new_count} new, {skipped} skipped, "
-            f"{total_so_far}/{target} total",
+            f"{seen_total}/{target} seen",
             flush=True,
         )
 
@@ -212,7 +217,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
             print(f"  Reached limit of {limit}")
             break
 
-        if total_so_far >= target:
+        if seen_total >= target:
             if fraction < 1.0:
                 print(f"  Reached fraction cap ({target}/{total} species)")
             break

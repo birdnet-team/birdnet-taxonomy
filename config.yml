@@ -44,8 +44,8 @@ taxon_groups:
 # iNaturalist API settings
 inat:
   base_url: "https://api.inaturalist.org/v1/taxa"
-  per_page: 1000         # max results per page
-  request_delay: 2.0     # seconds between requests (iNat asks ≤1 req/sec)
+  per_page: 200          # iNat API caps at 200
+  request_delay: 1.1     # seconds between requests (iNat asks ≤1 req/sec)
   all_names: true        # fetch all common name translations
 
 # eBird settings
