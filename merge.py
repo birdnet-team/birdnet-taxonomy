@@ -45,10 +45,44 @@ def load_json(path: Path) -> dict:
     return {}
 
 
+def _load_avilist_ebird_map() -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+    """Load AviList CSV and build mapping dicts for eBird code matching.
+
+    Returns:
+        - sci_to_code: {scientific_name: ebird_code}
+        - common_to_sci_code: {lower_common_name: (scientific_name, ebird_code)}
+    """
+    avilist_csv = sorted(RAW.glob("AviList-*.csv"))
+    if not avilist_csv:
+        return {}, {}
+
+    sci_to_code: dict[str, str] = {}
+    common_to_sci_code: dict[str, tuple[str, str]] = {}
+
+    with open(avilist_csv[-1], encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        for row in reader:
+            sci = (row.get("Scientific_name") or "").strip()
+            code = (row.get("Species_code_Cornell_Lab") or "").strip()
+            en = (row.get("English_name_Clements_v2024") or "").strip()
+            if sci and code:
+                sci_to_code[sci] = code
+                if en:
+                    common_to_sci_code[en.lower()] = (sci, code)
+
+    return sci_to_code, common_to_sci_code
+
+
 def build_master(inat: dict, ebird: dict, wiki: dict, claude: dict,
                  locales: list[str]) -> list[dict]:
     """Join all sources into a flat list of species records."""
+
+    # Load AviList for eBird code matching
+    avilist_sci_to_code, avilist_common_to_sci_code = _load_avilist_ebird_map()
+
     records = []
+    matched_via_avilist = 0
+    matched_via_common = 0
 
     for sci_name, inat_rec in inat.items():
         if inat_rec.get("inat_id") is None:
@@ -58,8 +92,35 @@ def build_master(inat: dict, ebird: dict, wiki: dict, claude: dict,
         common_names = inat_rec.get("common_names", {})
 
         # eBird data (birds only)
+        # Try direct match first, then AviList sci name, then common name
         eb = ebird.get(sci_name, {})
         ebird_code = eb.get("ebird_code", "")
+
+        if not ebird_code and inat_rec.get("taxon_group") == "Aves":
+            # Try AviList scientific name → eBird code
+            avi_code = avilist_sci_to_code.get(sci_name, "")
+            if avi_code:
+                ebird_code = avi_code
+                # Look up eBird data under the AviList sci name if different
+                for avi_sci, code in avilist_sci_to_code.items():
+                    if code == avi_code and avi_sci in ebird:
+                        eb = ebird[avi_sci]
+                        ebird_code = eb.get("ebird_code", avi_code)
+                        matched_via_avilist += 1
+                        break
+                else:
+                    matched_via_avilist += 1
+            else:
+                # Try matching via common name
+                cn = (inat_rec.get("preferred_common_name") or "").lower()
+                if cn and cn in avilist_common_to_sci_code:
+                    avi_sci, avi_code = avilist_common_to_sci_code[cn]
+                    ebird_code = avi_code
+                    if avi_sci in ebird:
+                        eb = ebird[avi_sci]
+                        ebird_code = eb.get("ebird_code", avi_code)
+                    matched_via_common += 1
+
         ebird_desc = eb.get("description", "") or ""
         ebird_image = eb.get("image_url", "") or ""
         ebird_image_attr = eb.get("image_attribution", "") or ""
@@ -116,6 +177,18 @@ def build_master(inat: dict, ebird: dict, wiki: dict, claude: dict,
             "descriptions": descriptions,
         }
         records.append(record)
+
+    # Report eBird matching stats
+    birds = [r for r in records if r["taxon_group"] == "Aves"]
+    birds_with_code = sum(1 for r in birds if r["ebird_code"])
+    birds_without = len(birds) - birds_with_code
+    print(f"  eBird matching: {birds_with_code}/{len(birds)} birds have eBird code")
+    if matched_via_avilist:
+        print(f"    {matched_via_avilist} matched via AviList scientific name")
+    if matched_via_common:
+        print(f"    {matched_via_common} matched via common name")
+    if birds_without:
+        print(f"    {birds_without} birds still without eBird code")
 
     # Sort by taxon group, then observations count descending
     group_order = {"Aves": 0, "Mammalia": 1, "Reptilia": 2,
