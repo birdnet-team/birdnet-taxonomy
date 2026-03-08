@@ -21,7 +21,9 @@ eBird image URL pattern:
 import argparse
 import csv
 import json
+import os
 import re
+import signal
 import time
 from http.cookiejar import CookieJar
 from pathlib import Path
@@ -42,6 +44,18 @@ OUTPUT_FILE = ROOT / "raw_data" / "ebird_data.json"
 # Reusable opener with cookie support
 _cookie_jar = CookieJar()
 _opener = build_opener(HTTPCookieProcessor(_cookie_jar))
+
+# Graceful shutdown flag
+_shutdown = False
+
+def _handle_sigint(sig, frame):
+    global _shutdown
+    if _shutdown:
+        raise SystemExit(1)
+    _shutdown = True
+    tqdm.write("\n⏎ Interrupt received — finishing current request and saving...")
+
+signal.signal(signal.SIGINT, _handle_sigint)
 
 
 def load_species_with_ebird_codes() -> dict[str, str]:
@@ -96,9 +110,11 @@ def load_existing_data() -> dict:
 
 
 def save_data(data: dict):
-    """Save eBird data to disk."""
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    """Save eBird data to disk (atomic write)."""
+    tmp = OUTPUT_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, OUTPUT_FILE)
 
 
 def _extract_og_tag(html: str, tag: str) -> str | None:
@@ -190,6 +206,8 @@ def main():
     success = 0
     pbar = tqdm(to_fetch, desc="eBird", unit="sp")
     for sci_name, ebird_code in pbar:
+        if _shutdown:
+            break
         pbar.set_postfix_str(sci_name, refresh=False)
 
         result = fetch_ebird_page(ebird_code, base_url)

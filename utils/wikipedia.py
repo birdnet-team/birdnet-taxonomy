@@ -20,6 +20,8 @@ Wikipedia APIs used:
 
 import argparse
 import json
+import os
+import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -38,6 +40,18 @@ from tqdm import tqdm
 from utils.config import load_config
 
 USER_AGENT = "species-data-collector/1.0 (https://github.com/birdnet-team/species-data)"
+
+# Graceful shutdown flag
+_shutdown = False
+
+def _handle_sigint(sig, frame):
+    global _shutdown
+    if _shutdown:
+        raise SystemExit(1)
+    _shutdown = True
+    tqdm.write("\n⏎ Interrupt received — waiting for in-flight requests, then saving...")
+
+signal.signal(signal.SIGINT, _handle_sigint)
 
 # ---------------------------------------------------------------------------
 # Rate limiter — caps requests/second across all threads
@@ -113,9 +127,11 @@ def load_existing_data() -> dict:
 
 
 def save_data(data: dict):
-    """Save Wikipedia data to disk."""
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    """Save Wikipedia data to disk (atomic write)."""
+    tmp = OUTPUT_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, OUTPUT_FILE)
 
 
 def wiki_title_from_url(url: str) -> str:
@@ -314,10 +330,12 @@ def main():
     pbar = tqdm(total=len(to_fetch), desc="Wikipedia", unit="sp")
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futures = {
-            pool.submit(fetch_species_wikipedia, sci, url, target_locales): sci
-            for sci, url in to_fetch
-        }
+        futures = {}
+        for sci, url in to_fetch:
+            if _shutdown:
+                break
+            futures[pool.submit(fetch_species_wikipedia, sci, url, target_locales)] = sci
+
         for future in as_completed(futures):
             sci_name = futures[future]
             try:
@@ -334,6 +352,12 @@ def main():
                 existing[sci_name] = {"error": str(exc)}
             pbar.update(1)
             save_data(existing)
+
+            if _shutdown:
+                # Cancel remaining futures
+                for f in futures:
+                    f.cancel()
+                break
 
     pbar.close()
     print(f"\nDone! Fetched {len(to_fetch)} species, {success} with summaries.")

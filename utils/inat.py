@@ -19,6 +19,8 @@ iNat API: https://api.inaturalist.org/v1/taxa
 
 import argparse
 import json
+import os
+import signal
 import time
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -32,6 +34,18 @@ OUTPUT_FILE = ROOT / "raw_data" / "inat_data.json"
 
 USER_AGENT = "species-data-collector/1.0 (https://github.com/birdnet-team/species-data)"
 
+# Graceful shutdown flag
+_shutdown = False
+
+def _handle_sigint(sig, frame):
+    global _shutdown
+    if _shutdown:
+        raise SystemExit(1)  # second Ctrl+C forces exit
+    _shutdown = True
+    print("\n⏎ Interrupt received — finishing current work and saving...")
+
+signal.signal(signal.SIGINT, _handle_sigint)
+
 
 def load_existing_data() -> dict:
     """Load already-fetched iNat data."""
@@ -42,9 +56,11 @@ def load_existing_data() -> dict:
 
 
 def save_data(data: dict):
-    """Save iNat data to disk."""
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    """Save iNat data to disk (atomic write)."""
+    tmp = OUTPUT_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, OUTPUT_FILE)
 
 
 def photo_url_large(url: str) -> str:
@@ -167,7 +183,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
     seen_total = 0  # actual species seen across all pages
     page = 1
 
-    while True:
+    while not _shutdown:
         if page > 1:
             data = fetch_page(base_url, taxon_id, page=page, per_page=per_page,
                               all_names=all_names)
@@ -213,8 +229,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
         if new_count > 0 and new_count % save_every < per_page:
             save_data(existing)
 
-        if limit and new_count >= limit:
-            print(f"  Reached limit of {limit}")
+        if (limit and new_count >= limit) or _shutdown:
             break
 
         if seen_total >= target:
@@ -291,6 +306,8 @@ def main():
 
     total_new = 0
     for group in groups:
+        if _shutdown:
+            break
         new = fetch_group(group, existing, cfg, limit=args.limit,
                           save_every=args.save_every)
         total_new += new
