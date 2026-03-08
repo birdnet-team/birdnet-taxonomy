@@ -20,7 +20,9 @@ Wikipedia APIs used:
 
 import argparse
 import json
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
@@ -36,6 +38,47 @@ from tqdm import tqdm
 from utils.config import load_config
 
 USER_AGENT = "species-data-collector/1.0 (https://github.com/birdnet-team/species-data)"
+
+# ---------------------------------------------------------------------------
+# Rate limiter — caps requests/second across all threads
+# ---------------------------------------------------------------------------
+
+class RateLimiter:
+    """Token-bucket rate limiter (thread-safe)."""
+
+    def __init__(self, rps: float):
+        self._interval = 1.0 / rps
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def acquire(self):
+        with self._lock:
+            now = time.monotonic()
+            if now < self._next:
+                time.sleep(self._next - now)
+            self._next = max(now, self._next) + self._interval
+
+_rate = RateLimiter(50)  # default; overwritten in main()
+
+
+def _wiki_request(url: str, accept: str = "application/json") -> bytes | None:
+    """Make a rate-limited HTTP request with retry on 429."""
+    req = Request(url, headers={
+        "User-Agent": USER_AGENT,
+        "Accept": accept,
+    })
+    for attempt in range(4):
+        _rate.acquire()
+        try:
+            with urlopen(req, timeout=30) as resp:
+                return resp.read()
+        except HTTPError as e:
+            if e.code == 429:
+                wait = min(2 ** attempt, 30)
+                time.sleep(wait)
+                continue
+            raise
+    return None  # exhausted retries
 
 
 def load_species_with_wikipedia() -> dict[str, str]:
@@ -88,23 +131,19 @@ def wiki_title_from_url(url: str) -> str:
 def fetch_summary(title: str) -> dict | None:
     """Fetch Wikipedia summary via REST API."""
     url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(title, safe='')}"
-    req = Request(url, headers={
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json",
-    })
 
     try:
-        with urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        raw = _wiki_request(url)
     except HTTPError as e:
         if e.code == 404:
             return None
-        print(f"  ERROR fetching summary: {e}")
         return None
-    except (URLError, TimeoutError) as e:
-        print(f"  ERROR fetching summary: {e}")
+    except (URLError, TimeoutError):
+        return None
+    if raw is None:
         return None
 
+    data = json.loads(raw.decode("utf-8"))
     return {
         "title": data.get("title", ""),
         "extract": data.get("extract", ""),
@@ -124,15 +163,15 @@ def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, dict]:
         f"?action=query&titles={quote(title, safe='')}"
         f"&prop=langlinks&lllimit=500&redirects=1&format=json"
     )
-    req = Request(url, headers={"User-Agent": USER_AGENT})
 
     try:
-        with urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError) as e:
-        print(f"  ERROR fetching langlinks: {e}")
+        raw = _wiki_request(url)
+    except (HTTPError, URLError, TimeoutError):
+        return {}
+    if raw is None:
         return {}
 
+    data = json.loads(raw.decode("utf-8"))
     pages = data.get("query", {}).get("pages", {})
     if not pages:
         return {}
@@ -156,18 +195,72 @@ def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, dict]:
 def fetch_locale_extract(lang: str, title: str) -> str | None:
     """Fetch Wikipedia summary extract for a specific language edition."""
     url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(title, safe='')}"
-    req = Request(url, headers={
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json",
-    })
 
     try:
-        with urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        raw = _wiki_request(url)
     except (HTTPError, URLError, TimeoutError):
         return None
+    if raw is None:
+        return None
 
+    data = json.loads(raw.decode("utf-8"))
     return data.get("extract", "") or None
+
+
+def fetch_species_wikipedia(sci_name: str, wiki_url: str,
+                            target_locales: list[str]) -> tuple[str, dict]:
+    """Fetch all Wikipedia data for one species (summary + langlinks + locale extracts).
+
+    Returns (sci_name, record_dict).
+    """
+    title = wiki_title_from_url(wiki_url)
+    if not title:
+        return sci_name, {"error": "bad_url", "wikipedia_url": wiki_url}
+
+    # Fetch English summary
+    summary = fetch_summary(title)
+    resolved_title = summary["title"] if summary else title
+
+    # Fetch langlinks
+    locale_links = fetch_langlinks(resolved_title, target_locales)
+
+    # Fetch all locale extracts in parallel
+    locale_urls = {lang: info["url"] for lang, info in locale_links.items()}
+    locale_extracts = {}
+
+    def _fetch_one(lang_info):
+        lang, info = lang_info
+        ext = fetch_locale_extract(lang, info["title"])
+        return lang, ext
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for lang, ext in pool.map(_fetch_one, locale_links.items()):
+            if ext:
+                locale_extracts[lang] = ext
+
+    if summary:
+        record = {
+            "title": summary["title"],
+            "extract": summary["extract"],
+            "description": summary["description"],
+            "wikipedia_urls": {"en": summary["page_url"] or wiki_url},
+            "extracts": {"en": summary["extract"]} if summary["extract"] else {},
+        }
+        record["wikipedia_urls"].update(locale_urls)
+        record["extracts"].update(locale_extracts)
+    else:
+        record = {
+            "error": "not_found",
+            "wikipedia_url": wiki_url,
+            "wikipedia_urls": {},
+            "extracts": {},
+        }
+        if locale_urls:
+            record["wikipedia_urls"] = locale_urls
+        if locale_extracts:
+            record["extracts"] = locale_extracts
+
+    return sci_name, record
 
 
 def main():
@@ -176,12 +269,18 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Show what would be fetched without fetching")
     parser.add_argument("--refetch", action="store_true",
                         help="Re-fetch species that are missing localized extracts")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Number of parallel species to fetch (default: 4)")
+    parser.add_argument("--rps", type=float, default=50,
+                        help="Max requests per second across all threads (default: 50)")
     args = parser.parse_args()
+
+    # Set global rate limiter
+    global _rate
+    _rate = RateLimiter(args.rps)
 
     cfg = load_config()
     target_locales = cfg.get("locales", ["en"])
-    wiki_cfg = cfg.get("wikipedia", {})
-    delay = wiki_cfg.get("request_delay", 0.5)
 
     print("Loading species with Wikipedia URLs...")
     species = load_species_with_wikipedia()
@@ -191,7 +290,6 @@ def main():
     print(f"  Already have Wikipedia data for {len(existing)} species")
 
     if args.refetch:
-        # Re-fetch species missing extracts
         to_fetch = [
             (sci, species[sci])
             for sci in existing
@@ -202,7 +300,7 @@ def main():
     if args.limit:
         to_fetch = to_fetch[:args.limit]
 
-    print(f"  Will fetch {len(to_fetch)} species from Wikipedia")
+    print(f"  Will fetch {len(to_fetch)} species from Wikipedia ({args.workers} workers)")
     print(f"  Target locales: {', '.join(target_locales)}")
 
     if args.dry_run:
@@ -212,70 +310,33 @@ def main():
             print(f"    ... and {len(to_fetch) - 20} more")
         return
 
-    fetched = 0
     success = 0
-    pbar = tqdm(to_fetch, desc="Wikipedia", unit="sp")
-    for sci_name, wiki_url in pbar:
-        title = wiki_title_from_url(wiki_url)
-        if not title:
-            tqdm.write(f"  BAD URL {sci_name}: {wiki_url}")
-            existing[sci_name] = {"error": "bad_url", "wikipedia_url": wiki_url}
-            fetched += 1
-            continue
+    pbar = tqdm(total=len(to_fetch), desc="Wikipedia", unit="sp")
 
-        pbar.set_postfix_str(sci_name, refresh=False)
-
-        # Fetch summary
-        summary = fetch_summary(title)
-        time.sleep(delay)
-
-        # Use resolved title from summary (follows redirects) for langlinks
-        resolved_title = summary["title"] if summary else title
-
-        # Fetch langlinks
-        locale_links = fetch_langlinks(resolved_title, target_locales)
-        time.sleep(delay)
-
-        # Build URLs dict and fetch localized extracts
-        locale_urls = {lang: info["url"] for lang, info in locale_links.items()}
-        locale_extracts = {}
-        for lang, info in locale_links.items():
-            ext = fetch_locale_extract(lang, info["title"])
-            if ext:
-                locale_extracts[lang] = ext
-            time.sleep(delay)
-
-        if summary:
-            record = {
-                "title": summary["title"],
-                "extract": summary["extract"],
-                "description": summary["description"],
-                "wikipedia_urls": {"en": summary["page_url"] or wiki_url},
-                "extracts": {"en": summary["extract"]} if summary["extract"] else {},
-            }
-            record["wikipedia_urls"].update(locale_urls)
-            record["extracts"].update(locale_extracts)
-            existing[sci_name] = record
-            success += 1
-        else:
-            existing[sci_name] = {
-                "error": "not_found",
-                "wikipedia_url": wiki_url,
-                "wikipedia_urls": {},
-                "extracts": {},
-            }
-            # Even without summary, we might have langlinks
-            if locale_urls:
-                existing[sci_name]["wikipedia_urls"] = locale_urls
-            if locale_extracts:
-                existing[sci_name]["extracts"] = locale_extracts
-            tqdm.write(f"  NO SUMMARY {sci_name}")
-
-        fetched += 1
-        save_data(existing)
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = {
+            pool.submit(fetch_species_wikipedia, sci, url, target_locales): sci
+            for sci, url in to_fetch
+        }
+        for future in as_completed(futures):
+            sci_name = futures[future]
+            try:
+                _, record = future.result()
+                existing[sci_name] = record
+                if "error" not in record:
+                    success += 1
+                    n_ext = len(record.get("extracts", {}))
+                    pbar.set_postfix_str(f"{sci_name} ({n_ext} loc)", refresh=False)
+                else:
+                    tqdm.write(f"  {record.get('error', '').upper()} {sci_name}")
+            except Exception as exc:
+                tqdm.write(f"  EXCEPTION {sci_name}: {exc}")
+                existing[sci_name] = {"error": str(exc)}
+            pbar.update(1)
+            save_data(existing)
 
     pbar.close()
-    print(f"\nDone! Fetched {fetched} species, {success} with summaries.")
+    print(f"\nDone! Fetched {len(to_fetch)} species, {success} with summaries.")
     print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries")
 
 
