@@ -1,8 +1,8 @@
-# BirdNET Species Metadata
+<p align="center">
+  <img src="birdnet-logo-circle.png" width="250" alt="BirdNET Logo">
+</p>
 
-Species metadata and taxonomy for BirdNET models and apps.
-
-## Overview
+<h1 align="center">BirdNET Species Metadata</h1>
 
 Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
 
@@ -53,3 +53,20 @@ The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archive
 - **[Wikipedia](https://www.wikipedia.org)** — English summaries and localized article links via the REST and MediaWiki APIs. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2025). AviList Core Team, 2025. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2025](https://doi.org/10.2173/avilist.v2025).
 - **[Claude](https://www.anthropic.com/claude)** (Anthropic) — AI-generated species descriptions and translations.
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Funding
+
+Our work in the K. Lisa Yang Center for Conservation Bioacoustics is made possible by the generosity of K. Lisa Yang to advance innovative conservation technologies to inspire and inform the conservation of wildlife and habitats.
+
+The development of BirdNET is supported by the German Federal Ministry of Research, Technology and Space (FKZ 01|S22072), the German Federal Ministry for the Environment, Climate Action, Nature Conservation and Nuclear Safety (FKZ 67KI31040E), the German Federal Ministry of Economic Affairs and Energy (FKZ 16KN095550), the Deutsche Bundesstiftung Umwelt (project 39263/01) and the European Social Fund.
+
+## Partners
+
+BirdNET is a joint effort of partners from academia and industry.
+Without these partnerships, this project would not have been possible.
+Thank you!
+
+![Logos of all partners](https://tuc.cloud/index.php/s/KSdWfX5CnSRpRgQ/download/box_logos.png)
