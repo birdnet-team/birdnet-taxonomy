@@ -67,6 +67,8 @@ avilist:
 # Claude API settings (API key is in .env, not here)
 claude:
   model: "claude-sonnet-4-20250514"
-  description_max_tokens: 300
-  translation_max_tokens: 4096
+  batch_size: 5           # species per API call (describe + translate)
+  max_source_chars: 500   # truncate source text per species to save tokens
+  description_max_tokens: 2048   # for batched description generation
+  translation_max_tokens: 8192   # for batched multi-species translation
   request_delay: 0.5

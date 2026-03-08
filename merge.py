@@ -74,10 +74,9 @@ def build_master(inat: dict, ebird: dict, wiki: dict, claude: dict,
         desc_en = cl.get("description_en", "") or ""
         translations = cl.get("translations", {})
 
-        # Build per-locale description dict
+        # Build per-locale description dict (fall back to Wikipedia extract)
         descriptions = {}
-        if desc_en:
-            descriptions["en"] = desc_en
+        descriptions["en"] = desc_en if desc_en else wiki_extract
         for loc in locales:
             if loc != "en" and loc in translations:
                 descriptions[loc] = translations[loc]

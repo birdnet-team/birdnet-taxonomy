@@ -3,13 +3,16 @@
 Generate and translate species descriptions using the Claude API.
 
 Step 5 in the pipeline. Reads source text from ebird_data.json and
-wikipedia_data.json, generates a ~100-word English description for each
-species, then batch-translates to all configured locales.
+wikipedia_data.json, generates ~100-word English descriptions for batches
+of species, then batch-translates to all configured locales.
+
+Batching: multiple species per API call to minimise request count.
+Source text is truncated to max_source_chars (config) to save input tokens.
 
 Output: raw_data/claude_data.json (incremental, resumable)
 
 Usage:
-    python -m utils.claude [--limit N] [--dry-run]
+    python -m utils.claude [--limit N] [--dry-run] [--batch-size N]
 
 Requires ANTHROPIC_API_KEY in .env file.
 """
@@ -96,19 +99,29 @@ def _call_claude(system_prompt: str, user_message: str, max_tokens: int = 1024) 
     return None
 
 
+def _truncate(text: str, max_chars: int) -> str:
+    """Truncate text to max_chars, breaking at a sentence boundary if possible."""
+    if not text or len(text) <= max_chars:
+        return text
+    # Try to break at last sentence end within limit
+    truncated = text[:max_chars]
+    for sep in (". ", ".\n", "! ", "? "):
+        idx = truncated.rfind(sep)
+        if idx > max_chars // 2:
+            return truncated[:idx + 1]
+    return truncated.rsplit(" ", 1)[0] + "…"
+
+
 def generate_description(
     scientific_name: str,
     english_name: str,
     ebird_description: str = "",
     wikipedia_summary: str = "",
 ) -> str | None:
-    """Generate a ~100-word species description using Claude.
-
-    Combines eBird and Wikipedia source text to produce a concise description
-    covering: appearance, habitat, range, and an interesting fact.
-    """
+    """Generate a ~100-word species description using Claude (single species)."""
     claude_cfg = _get_claude_config()
-    max_tokens = claude_cfg.get("description_max_tokens", 300)
+    max_tokens = claude_cfg.get("description_max_tokens", 2048)
+    max_src = claude_cfg.get("max_source_chars", 500)
 
     system_prompt = (
         "You are a concise natural history writer. Write exactly around 100 words. "
@@ -118,9 +131,9 @@ def generate_description(
 
     source_text = ""
     if ebird_description:
-        source_text += f"eBird description:\n{ebird_description}\n\n"
+        source_text += f"eBird description:\n{_truncate(ebird_description, max_src)}\n\n"
     if wikipedia_summary:
-        source_text += f"Wikipedia summary:\n{wikipedia_summary}\n\n"
+        source_text += f"Wikipedia summary:\n{_truncate(wikipedia_summary, max_src)}\n\n"
 
     if not source_text.strip():
         return None
@@ -134,6 +147,46 @@ def generate_description(
     )
 
     return _call_claude(system_prompt, user_message, max_tokens=max_tokens)
+
+
+def generate_descriptions_batch(
+    species_list: list[tuple[str, str, str, str]],
+) -> dict[str, str]:
+    """Generate ~100-word descriptions for multiple species in one API call.
+
+    species_list: list of (scientific_name, english_name, ebird_desc, wiki_extract)
+    Returns: {scientific_name: description}
+    """
+    claude_cfg = _get_claude_config()
+    max_tokens = claude_cfg.get("description_max_tokens", 2048)
+    max_src = claude_cfg.get("max_source_chars", 500)
+
+    system_prompt = (
+        "You are a concise natural history writer. For each species below, "
+        "write exactly around 100 words covering: appearance, habitat, geographic range, "
+        "and one interesting fact. Write a single flowing paragraph per species. "
+        "Do not start with the species name. Do not use markdown.\n\n"
+        "Return ONLY valid JSON: {\"Scientific name\": \"description\", ...}\n"
+        "No markdown, no code fences, no extra text."
+    )
+
+    entries = []
+    for sci, en, eb, wi in species_list:
+        source = ""
+        if eb:
+            source += f"eBird: {_truncate(eb, max_src)} "
+        if wi:
+            source += f"Wikipedia: {_truncate(wi, max_src)}"
+        entries.append(f"- {en} ({sci}): {source.strip()}")
+
+    user_message = (
+        f"Write ~100-word descriptions for these {len(species_list)} species:\n\n"
+        + "\n".join(entries)
+        + "\n\nReturn JSON: {\"Scientific name\": \"description\", ...}"
+    )
+
+    result = _call_claude(system_prompt, user_message, max_tokens=max_tokens)
+    return _parse_json_response(result) if result else {}
 
 
 def translate_description(
@@ -162,13 +215,13 @@ def translate_batch(
     target_locales: list[str],
     species_name: str = "",
 ) -> dict[str, str]:
-    """Translate a description to multiple locales in a single API call."""
+    """Translate one description to multiple locales in a single API call."""
     locales_to_translate = [l for l in target_locales if l != "en" and l in LOCALE_NAMES]
     if not locales_to_translate:
         return {}
 
     claude_cfg = _get_claude_config()
-    max_tokens = claude_cfg.get("translation_max_tokens", 4096)
+    max_tokens = claude_cfg.get("translation_max_tokens", 8192)
 
     lang_list = ", ".join(f"{l} ({LOCALE_NAMES[l]})" for l in locales_to_translate)
 
@@ -190,22 +243,74 @@ def translate_batch(
     if not result:
         return {}
 
-    # Parse JSON response
+    parsed = _parse_json_response(result)
+    return {k: v for k, v in parsed.items() if k in locales_to_translate}
+
+
+def translate_batch_multi(
+    descriptions: dict[str, str],
+    target_locales: list[str],
+) -> dict[str, dict[str, str]]:
+    """Translate multiple species descriptions to all target locales in one call.
+
+    descriptions: {scientific_name: english_description}
+    Returns: {scientific_name: {locale: translation}}
+    """
+    locales_to_translate = [l for l in target_locales if l != "en" and l in LOCALE_NAMES]
+    if not locales_to_translate or not descriptions:
+        return {}
+
+    claude_cfg = _get_claude_config()
+    max_tokens = claude_cfg.get("translation_max_tokens", 8192)
+    lang_list = ", ".join(f"{l} ({LOCALE_NAMES[l]})" for l in locales_to_translate)
+
+    system_prompt = (
+        "You are a professional translator specializing in natural history texts. "
+        "Translate each species description to all requested languages. "
+        "Preserve the meaning, tone, and approximate length.\n\n"
+        "Return ONLY valid JSON:\n"
+        "{\"Scientific name\": {\"de\": \"...\", \"fr\": \"...\", ...}, ...}\n"
+        "No markdown, no code fences, no extra text."
+    )
+
+    entries = []
+    for sci, desc in descriptions.items():
+        entries.append(f"- {sci}: {desc}")
+
+    user_message = (
+        f"Translate these {len(descriptions)} species descriptions "
+        f"to these languages: {lang_list}\n\n"
+        + "\n".join(entries)
+        + f"\n\nReturn JSON: {{\"Scientific name\": {{\"de\": \"...\", ...}}, ...}}"
+    )
+
+    result = _call_claude(system_prompt, user_message, max_tokens=max_tokens)
+    if not result:
+        return {}
+
+    parsed = _parse_json_response(result)
+    # Validate structure: {str: {str: str}}
+    out = {}
+    for sci, trans in parsed.items():
+        if isinstance(trans, dict):
+            out[sci] = {k: v for k, v in trans.items() if k in locales_to_translate}
+    return out
+
+
+def _parse_json_response(text: str) -> dict:
+    """Parse a JSON response from Claude, handling code fences."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
     try:
-        # Handle potential markdown code fences
-        cleaned = result.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[-1]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-
-        translations = json.loads(cleaned)
-        if isinstance(translations, dict):
-            return {k: v for k, v in translations.items() if k in locales_to_translate}
+        result = json.loads(cleaned)
+        if isinstance(result, dict):
+            return result
     except json.JSONDecodeError:
-        print(f"  WARN: Could not parse Claude translation response")
-
+        print(f"  WARN: Could not parse Claude JSON response ({len(text)} chars)")
     return {}
 
 
@@ -238,6 +343,7 @@ def main():
     locales = get_locales()
     claude_cfg = cfg.get("claude", {})
     delay = claude_cfg.get("request_delay", 0.5)
+    default_batch = claude_cfg.get("batch_size", 5)
 
     parser = argparse.ArgumentParser(
         description="Generate and translate species descriptions via Claude"
@@ -250,6 +356,8 @@ def main():
                         help="Save progress every N species")
     parser.add_argument("--skip-translate", action="store_true",
                         help="Only generate English descriptions, skip translations")
+    parser.add_argument("--batch-size", type=int, default=default_batch,
+                        help=f"Species per API call (default: {default_batch})")
     args = parser.parse_args()
 
     # Load source data
@@ -281,7 +389,12 @@ def main():
     if args.limit:
         to_process = to_process[:args.limit]
 
-    print(f"Will process {len(to_process)} species")
+    batch_size = max(1, args.batch_size)
+    n_batches = (len(to_process) + batch_size - 1) // batch_size
+    api_calls = n_batches * (1 if args.skip_translate else 2)
+
+    print(f"Will process {len(to_process)} species in {n_batches} batches of {batch_size}")
+    print(f"Estimated API calls: {api_calls} (vs {len(to_process) * 2} without batching)")
 
     if args.dry_run:
         for sci, en, eb, wi in to_process[:20]:
@@ -296,45 +409,74 @@ def main():
         return
 
     processed = 0
-    for i, (sci_name, english_name, ebird_desc, wiki_extract) in enumerate(to_process):
-        print(f"  [{i+1}/{len(to_process)}] {sci_name} ({english_name})...", flush=True)
+    for batch_idx in range(n_batches):
+        batch_start = batch_idx * batch_size
+        batch = to_process[batch_start:batch_start + batch_size]
+        sci_names = [s[0] for s in batch]
 
-        # Generate English description
-        desc_en = generate_description(
-            sci_name, english_name,
-            ebird_description=ebird_desc,
-            wikipedia_summary=wiki_extract,
-        )
+        print(f"\n  Batch {batch_idx + 1}/{n_batches} "
+              f"({len(batch)} species: {', '.join(s[1] for s in batch)})...",
+              flush=True)
+
+        # --- Step 1: Generate descriptions ---
+        if len(batch) == 1:
+            # Single species — use simpler prompt
+            sci, en, eb, wi = batch[0]
+            desc = generate_description(sci, en, eb, wi)
+            descs = {sci: desc} if desc else {}
+        else:
+            descs = generate_descriptions_batch(batch)
+
         time.sleep(delay)
 
-        if not desc_en:
-            print(f"    SKIP: Claude returned no description")
-            existing[sci_name] = {"description_en": None, "error": "no_response"}
-            processed += 1
+        if not descs:
+            print(f"    WARN: No descriptions returned for this batch")
+            for sci, _, _, _ in batch:
+                existing[sci] = {"description_en": None, "error": "no_response"}
+            processed += len(batch)
             continue
 
-        record = {"description_en": desc_en}
-        print(f"    EN: {len(desc_en)} chars", end="", flush=True)
+        for sci, en, _, _ in batch:
+            desc = descs.get(sci, "")
+            if desc:
+                print(f"    ✓ {sci}: {len(desc)} chars")
+            else:
+                print(f"    ✗ {sci}: no description")
 
-        # Translate to other locales
-        if not args.skip_translate:
-            translations = translate_batch(desc_en, locales, species_name=sci_name)
+        # --- Step 2: Translate ---
+        translations_all = {}
+        if not args.skip_translate and descs:
+            if len(descs) == 1:
+                sci = next(iter(descs))
+                trans = translate_batch(descs[sci], locales)
+                translations_all = {sci: trans} if trans else {}
+            else:
+                translations_all = translate_batch_multi(descs, locales)
             time.sleep(delay)
-            record["translations"] = translations
-            print(f", translated to {len(translations)} locales")
-        else:
-            print()
 
-        existing[sci_name] = record
-        processed += 1
+            n_translated = sum(1 for t in translations_all.values() if t)
+            n_locales = sum(len(t) for t in translations_all.values())
+            print(f"    Translated {n_translated} species → {n_locales} total locale entries")
 
-        if processed % args.save_every == 0:
+        # --- Save records ---
+        for sci, en, _, _ in batch:
+            desc_en = descs.get(sci, "")
+            record = {"description_en": desc_en or None}
+            if not desc_en:
+                record["error"] = "no_response"
+            if sci in translations_all:
+                record["translations"] = translations_all[sci]
+            existing[sci] = record
+            processed += 1
+
+        if processed % args.save_every < batch_size:
             save_data(existing)
-            print(f"  --- Saved progress ({processed} processed) ---")
+            print(f"  --- Saved progress ({processed}/{len(to_process)} processed) ---")
 
     save_data(existing)
-    print(f"\nDone! Processed {processed} species.")
-    print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries")
+    with_desc = sum(1 for v in existing.values() if v.get("description_en"))
+    print(f"\nDone! Processed {processed} species in {n_batches} batches.")
+    print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries ({with_desc} with descriptions)")
 
 
 if __name__ == "__main__":
