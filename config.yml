@@ -9,19 +9,19 @@ locales:
   - en
   - de
   - fr
-#  - es
-#  - pt
-#  - it
-#  - nl
-#  - pl
-#  - sv
-#  - da
-#  - "no"   # quoted because YAML treats bare 'no' as boolean false
-#  - fi
-#  - cs
-#  - ru
-#  - ja
-#  - zh
+  - es
+  - pt
+  - it
+  - nl
+  - pl
+  - sv
+  - da
+  - "no"   # quoted because YAML treats bare 'no' as boolean false
+  - fi
+  - cs
+  - ru
+  - ja
+  - zh
 
 # iNaturalist iconic taxon groups to fetch.
 # Each entry has a name and the iNat taxon_id used for filtering.
