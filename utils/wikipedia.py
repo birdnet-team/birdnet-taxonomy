@@ -19,8 +19,10 @@ Wikipedia APIs used:
 """
 
 import argparse
+import html
 import json
 import os
+import re
 import signal
 import threading
 import time
@@ -146,8 +148,13 @@ def wiki_title_from_url(url: str) -> str:
     return ""
 
 
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and decode entities."""
+    return html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
+
+
 def fetch_summary(title: str) -> dict | None:
-    """Fetch Wikipedia summary via REST API."""
+    """Fetch Wikipedia summary via REST API (includes main image if present)."""
     url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(title, safe='')}"
 
     try:
@@ -162,12 +169,19 @@ def fetch_summary(title: str) -> dict | None:
         return None
 
     data = json.loads(raw.decode("utf-8"))
-    return {
+    result = {
         "title": data.get("title", ""),
         "extract": data.get("extract", ""),
         "description": data.get("description", ""),
         "page_url": data.get("content_urls", {}).get("desktop", {}).get("page", ""),
     }
+
+    # Extract image URL from the summary response (no extra API call)
+    orig = data.get("originalimage", {})
+    if orig.get("source"):
+        result["image_url"] = orig["source"]
+
+    return result
 
 
 def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, dict]:
@@ -208,6 +222,44 @@ def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, dict]:
             }
 
     return result
+
+
+def fetch_image_license(image_url: str) -> dict:
+    """Fetch license and attribution info from Wikimedia Commons for an image.
+
+    Queries the Commons API for the image's extmetadata (artist, license).
+    Returns dict with artist, license_short, license_url (all may be empty).
+    """
+    filename = unquote(image_url.split("/")[-1])
+    if not filename:
+        return {}
+
+    api_url = (
+        f"https://commons.wikimedia.org/w/api.php?action=query"
+        f"&titles=File:{quote(filename, safe='')}"
+        f"&prop=imageinfo&iiprop=extmetadata&format=json"
+    )
+    try:
+        raw = _wiki_request(api_url)
+    except (HTTPError, URLError, TimeoutError):
+        return {}
+    if raw is None:
+        return {}
+
+    data = json.loads(raw.decode("utf-8"))
+    pages = data.get("query", {}).get("pages", {})
+    if not pages:
+        return {}
+
+    page = next(iter(pages.values()))
+    meta = page.get("imageinfo", [{}])[0].get("extmetadata", {})
+
+    artist_html = meta.get("Artist", {}).get("value", "")
+    return {
+        "artist": _strip_html(artist_html),
+        "license_short": meta.get("LicenseShortName", {}).get("value", ""),
+        "license_url": meta.get("LicenseUrl", {}).get("value", ""),
+    }
 
 
 def fetch_locale_extract(lang: str, title: str) -> str | None:
@@ -266,6 +318,16 @@ def fetch_species_wikipedia(sci_name: str, wiki_url: str,
         }
         record["wikipedia_urls"].update(locale_urls)
         record["extracts"].update(locale_extracts)
+
+        # Fetch image + license from Wikimedia Commons
+        img_url = summary.get("image_url", "")
+        if img_url:
+            record["image_url"] = img_url
+            license_info = fetch_image_license(img_url)
+            if license_info:
+                record["image_artist"] = license_info.get("artist", "")
+                record["image_license"] = license_info.get("license_short", "")
+                record["image_license_url"] = license_info.get("license_url", "")
     else:
         record = {
             "error": "not_found",
