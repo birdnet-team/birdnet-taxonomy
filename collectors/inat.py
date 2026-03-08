@@ -9,7 +9,7 @@ Results are stored per-group and merged into a single output file.
 Output: raw_data/inat_data.json (incremental, resumable)
 
 Usage:
-    python -m utils.inat [--group NAME] [--limit N] [--dry-run]
+    python -m collectors.inat [--group NAME] [--limit N] [--dry-run]
 
 iNat API: https://api.inaturalist.org/v1/taxa
   ?is_active=true&rank=species&all_names=true
@@ -19,48 +19,19 @@ iNat API: https://api.inaturalist.org/v1/taxa
 
 import argparse
 import json
-import os
-import signal
 import time
-from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-from utils.config import load_config
+from config import load_config
+from collectors._common import (
+    RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
+    load_json, save_json,
+)
 
-# Paths
-ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_FILE = ROOT / "raw_data" / "inat_data.json"
+OUTPUT_FILE = RAW_DIR / "inat_data.json"
 
-USER_AGENT = "species-data-collector/1.0 (https://github.com/birdnet-team/species-data)"
-
-# Graceful shutdown flag
-_shutdown = False
-
-def _handle_sigint(sig, frame):
-    global _shutdown
-    if _shutdown:
-        raise SystemExit(1)  # second Ctrl+C forces exit
-    _shutdown = True
-    print("\n⏎ Interrupt received — finishing current work and saving...")
-
-signal.signal(signal.SIGINT, _handle_sigint)
-
-
-def load_existing_data() -> dict:
-    """Load already-fetched iNat data."""
-    if OUTPUT_FILE.exists():
-        with open(OUTPUT_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_data(data: dict):
-    """Save iNat data to disk (atomic write)."""
-    tmp = OUTPUT_FILE.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, OUTPUT_FILE)
+_shutdown = setup_shutdown()
 
 
 def photo_url_large(url: str) -> str:
@@ -183,7 +154,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
     seen_total = 0  # actual species seen across all pages
     page = 1
 
-    while not _shutdown:
+    while not is_shutting_down():
         if page > 1:
             data = fetch_page(base_url, taxon_id, page=page, per_page=per_page,
                               all_names=all_names)
@@ -227,9 +198,9 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
         )
 
         if new_count > 0 and new_count % save_every < per_page:
-            save_data(existing)
+            save_json(existing, OUTPUT_FILE)
 
-        if (limit and new_count >= limit) or _shutdown:
+        if (limit and new_count >= limit) or is_shutting_down():
             break
 
         if seen_total >= target:
@@ -243,7 +214,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
         page += 1
         time.sleep(delay)
 
-    save_data(existing)
+    save_json(existing, OUTPUT_FILE)
     print(f"  Done {group_name}: {new_count} new species added")
     return new_count
 
@@ -281,7 +252,7 @@ def main():
             print(f"ERROR: Unknown group '{args.group}'. Available: {', '.join(group_names)}")
             raise SystemExit(1)
 
-    existing = load_existing_data()
+    existing = load_json(OUTPUT_FILE)
     print(f"Loaded {len(existing)} existing species records")
     print(f"Groups to fetch: {', '.join(g['name'] for g in groups)}")
 
@@ -306,7 +277,7 @@ def main():
 
     total_new = 0
     for group in groups:
-        if _shutdown:
+        if is_shutting_down():
             break
         new = fetch_group(group, existing, cfg, limit=args.limit,
                           save_every=args.save_every)

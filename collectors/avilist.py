@@ -8,7 +8,7 @@ and converts it to CSV for use by the rest of the pipeline.
 Output: raw_data/AviList-v2025-11Jun-extended.csv
 
 Usage:
-    python -m utils.avilist [--force]
+    python -m collectors.avilist [--force]
 
 Requires: openpyxl (pip install openpyxl)
 """
@@ -21,12 +21,10 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-from utils.config import load_config
+from config import load_config
+from collectors._common import ROOT, RAW_DIR, USER_AGENT
 
-ROOT = Path(__file__).resolve().parent.parent
-RAW_DATA = ROOT / "raw_data"
-
-USER_AGENT = "species-data-collector/1.0 (https://github.com/birdnet-team/species-data)"
+RAW_DATA = RAW_DIR
 
 
 def download_xlsx(url: str) -> bytes:

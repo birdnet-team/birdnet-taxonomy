@@ -20,65 +20,79 @@ For Claude-generated descriptions, add your API key to a `.env` file:
 ANTHROPIC_API_KEY=...
 ```
 
+## Project Structure
+
+```
+config.py               # Configuration loader (reads config.yml)
+config.yml              # All settings: locales, taxon groups, API params
+collectors/
+    _common.py          # Shared utilities (rate limiter, JSON I/O, shutdown)
+    avilist.py          # Download AviList checklist (XLSX → CSV)
+    inat.py             # iNaturalist taxa paginator
+    ebird.py            # eBird page scraper (descriptions, images)
+    wikipedia.py        # Wikipedia summaries, langlinks, image licenses
+    claude.py           # Claude API (descriptions + translations)
+build/
+    metadata.py         # Cross-reference all sources → final metadata
+web/
+    server.py           # FastAPI server (HTML + REST API + image proxy)
+    templates/          # Jinja2 templates (home, species detail, base)
+    static/             # Logo and static assets
+```
+
 ## Pipeline
 
-Each step has its own script. Run them in order — later steps depend on earlier output.
+Run collectors in order — later steps depend on earlier output. All scripts are incremental (rerunning skips already-processed species). Use `--limit N` to cap new items per run, or `--dry-run` to preview.
 
 | Step | Command | Output |
 |------|---------|--------|
-| 1. AviList | `python -m utils.avilist` | `raw_data/AviList-*.csv` |
-| 2. iNaturalist | `python -m utils.inat` | `raw_data/inat_data.json` |
-| 3. Taxonomy | `python -m utils.taxonomy` | `raw_data/taxonomy.json` |
-| 4. eBird | `python -m utils.ebird` | `raw_data/ebird_data.json` |
-| 5. Wikipedia | `python -m utils.wikipedia` | `raw_data/wikipedia_data.json` |
-| 6. Claude (optional) | `python -m utils.claude` | `raw_data/claude_data.json` |
+| 1. AviList | `python -m collectors.avilist` | `raw_data/AviList-*.csv` |
+| 2. iNaturalist | `python -m collectors.inat` | `raw_data/inat_data.json` |
+| 3. eBird | `python -m collectors.ebird` | `raw_data/ebird_data.json` |
+| 4. Wikipedia | `python -m collectors.wikipedia` | `raw_data/wikipedia_data.json` |
+| 5. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
 
-Steps 1–2 collect raw source data. Step 3 cross-references iNaturalist and AviList to build a unified taxonomy with eBird codes — matching by scientific name, common name, and Wikidata lookup (SPARQL). Steps 4–5 collect additional data from external sources. Step 6 optionally uses Claude to generate polished English descriptions and translate them to all configured locales. Without step 6, merge uses Wikipedia extracts (per-locale where available, English as fallback). All scripts are incremental — rerunning skips already-processed species. Use `--limit N` to cap the number of new items per run, or `--dry-run` to preview without writing.
+Steps 1–2 collect source taxonomy data. Steps 3–5 enrich species with descriptions, images, and translations. Step 5 optionally uses Claude to generate polished English descriptions and translate them to configured locales.
 
-### Merge & Release
+### Build
 
-Once raw data is collected, merge everything into the final artifact:
+Once raw data is collected, build the final metadata file. This runs two phases:
 
-```bash
-python merge.py            # → dist/species_metadata.{json,csv,zip}
-python merge.py --dev      # → dev/  (for local iteration, no zip needed)
-python merge.py --no-zip   # write json + csv without zipping
-```
-
-The `raw_data/`, `dev/`, `dist/`, and `images/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
-
-### Images (optional)
-
-Download species images, convert to WebP thumbnails and medium-size crops (3:2 aspect ratio, center-cropped):
+1. **Taxonomy** — cross-references iNaturalist, AviList, and Wikidata to build a canonical species list with eBird codes, common names (60+ locales via eBird + Wikidata), external identifiers (GBIF, NCBI, Avibase, BirdLife), and default images (iNat → Wikimedia Commons → eBird).
+2. **Merge** — enriches each species with a single description (Claude > Wikipedia > eBird priority) and writes the final output.
 
 ```bash
-python -m utils.images             # download all, both iNat + eBird sources
-python -m utils.images --source inat --limit 100
-python -m utils.images --dry-run
+python -m build.metadata              # full rebuild → dist/species_metadata.{json,csv,zip}
+python -m build.metadata --merge-only # skip taxonomy, re-merge only
+python -m build.metadata --dev        # write to dev/ instead of dist/
+python -m build.metadata --no-zip     # skip zip archive
+python -m build.metadata --dry-run    # show stats without writing
 ```
 
-Images are saved to `images/` (gitignored). Filename format: `<sci_name>_<common_name>_<author>_<thumb|medium>.webp`.
+The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
 
 ### Web Server
 
-Browse and search the merged dataset through a web UI and REST API:
+Browse and search the dataset through a web UI and REST API. Species images are served through a built-in proxy that fetches from the original source, converts to WebP, center-crops to 3:2, and caches on disk.
 
 ```bash
-python server.py           # serve from dist/species_metadata.json
-python server.py --dev     # serve from dev/species_metadata.json
+python -m web.server              # serve from dist/species_metadata.json
+python -m web.server --dev        # serve from dev/species_metadata.json
+python -m web.server --port 3000  # custom port
 ```
 
 Or with hot-reload during development:
 
 ```bash
-uvicorn server:app --reload
+uvicorn web.server:app --reload
 ```
 
 | Route | Description |
 |-------|-------------|
 | `/` | Home page — search, browse, filter by taxon group |
 | `/species/{name}` | Species detail page (HTML) |
-| `/api/species` | List species (JSON), supports `?q=`, `?group=`, `?page=` |
+| `/api/image/{name}/{size}` | Image proxy — `thumb`, `medium`, `large` (WebP) |
+| `/api/species` | List species (JSON), supports `?group=`, `?page=` |
 | `/api/species/{name}` | Single species detail (JSON) |
 | `/api/search?q=` | Search species by name |
 | `/api/groups` | List taxon groups with counts |

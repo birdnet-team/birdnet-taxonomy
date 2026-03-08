@@ -12,43 +12,32 @@ Source text is truncated to max_source_chars (config) to save input tokens.
 Output: raw_data/claude_data.json (incremental, resumable)
 
 Usage:
-    python -m utils.claude [--limit N] [--dry-run] [--batch-size N]
+    python -m collectors.claude [--limit N] [--dry-run] [--batch-size N]
 
 Requires ANTHROPIC_API_KEY in .env file.
 """
 
 import argparse
 import json
-import os
 import re
-import signal
 import time
-from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from tqdm import tqdm
 
-from utils.config import load_config, get_locales, LOCALE_NAMES
+from config import load_config, get_locales, LOCALE_NAMES
+from collectors._common import (
+    ROOT, RAW_DIR, setup_shutdown, is_shutting_down,
+    load_json, save_json,
+)
 
-# Graceful shutdown flag
-_shutdown = False
+setup_shutdown()
 
-def _handle_sigint(sig, frame):
-    global _shutdown
-    if _shutdown:
-        raise SystemExit(1)
-    _shutdown = True
-    tqdm.write("\n⏎ Interrupt received — finishing current batch, then saving...")
-
-signal.signal(signal.SIGINT, _handle_sigint)
-
-# Paths
-ROOT = Path(__file__).resolve().parent.parent
-INAT_DATA = ROOT / "raw_data" / "inat_data.json"
-EBIRD_DATA = ROOT / "raw_data" / "ebird_data.json"
-WIKI_DATA = ROOT / "raw_data" / "wikipedia_data.json"
-OUTPUT_FILE = ROOT / "raw_data" / "claude_data.json"
+INAT_DATA = RAW_DIR / "inat_data.json"
+EBIRD_DATA = RAW_DIR / "ebird_data.json"
+WIKI_DATA = RAW_DIR / "wikipedia_data.json"
+OUTPUT_FILE = RAW_DIR / "claude_data.json"
 
 _api_key = None
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
@@ -405,27 +394,7 @@ def _escape_newlines(match: re.Match) -> str:
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
-def _load_json(path: Path) -> dict:
-    if path.exists():
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
 
-
-def load_existing_data() -> dict:
-    if OUTPUT_FILE.exists():
-        with open(OUTPUT_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_data(data: dict):
-    """Save Claude data to disk (atomic write)."""
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = OUTPUT_FILE.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, OUTPUT_FILE)
 
 
 def main():
@@ -449,15 +418,15 @@ def main():
     args = parser.parse_args()
 
     # Load source data
-    inat = _load_json(INAT_DATA)
-    ebird = _load_json(EBIRD_DATA)
-    wiki = _load_json(WIKI_DATA)
+    inat = load_json(INAT_DATA)
+    ebird = load_json(EBIRD_DATA)
+    wiki = load_json(WIKI_DATA)
 
     if not inat:
         print("ERROR: inat_data.json not found. Run utils/inat.py first.")
         raise SystemExit(1)
 
-    existing = load_existing_data()
+    existing = load_json(OUTPUT_FILE)
     print(f"Loaded {len(inat)} species from iNat, {len(ebird)} from eBird, {len(wiki)} from Wikipedia")
     print(f"Already have Claude data for {len(existing)} species")
     print(f"Target locales: {', '.join(locales)}")
@@ -524,7 +493,7 @@ def main():
     pbar = tqdm(total=len(to_process), desc="Claude", unit="sp")
 
     for batch_idx in range(n_batches):
-        if _shutdown:
+        if is_shutting_down():
             break
 
         batch_start = batch_idx * batch_size
@@ -561,7 +530,7 @@ def main():
                 existing[sci] = {"description_en": None, "error": "no_response"}
             processed += len(batch)
             pbar.update(len(batch))
-            save_data(existing)
+            save_json(existing, OUTPUT_FILE)
             continue
 
         for sci, en, _, _ in need_desc:
@@ -597,7 +566,7 @@ def main():
             processed += 1
 
         pbar.update(len(batch))
-        save_data(existing)
+        save_json(existing, OUTPUT_FILE)
 
     pbar.close()
     with_desc = sum(1 for v in existing.values() if v.get("description_en"))

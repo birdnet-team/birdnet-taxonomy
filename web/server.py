@@ -9,10 +9,10 @@ Provides:
   - Auto-generated docs at /docs (Swagger) and /redoc
 
 Usage:
-    python server.py                    # start on port 8000
-    python server.py --port 3000        # custom port
-    python server.py --dev              # load from dev/ instead of dist/
-    uvicorn server:app --reload         # development with auto-reload
+    python -m web.server                   # start on port 8000
+    python -m web.server --port 3000       # custom port
+    python -m web.server --dev             # load from dev/ instead of dist/
+    uvicorn web.server:app --reload        # development with auto-reload
 """
 
 import argparse
@@ -32,10 +32,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from utils.config import load_config
+from config import load_config
 
-ROOT = Path(__file__).resolve().parent
-TEMPLATES_DIR = ROOT / "templates"
+ROOT = Path(__file__).resolve().parent.parent
+WEB_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = WEB_DIR / "templates"
+STATIC_DIR = WEB_DIR / "static"
 
 USER_AGENT = "BirdNET-SpeciesData/1.0"
 
@@ -93,14 +95,14 @@ def load_data(dev: bool = False):
             print(f"Loaded {len(_species_list)} species from {path}")
             break
     else:
-        print("WARNING: No species_metadata.json found. Run merge.py first.")
+        print("WARNING: No species_metadata.json found. "
+              "Run: python -m build.metadata")
         _species_list = []
 
     _species_by_name = {}
     _species_by_common = {}
     _search_index = []
 
-    # Discover all locales from the data
     locale_set: set[str] = set()
 
     for rec in _species_list:
@@ -111,14 +113,12 @@ def load_data(dev: bool = False):
             _species_by_name[sci.lower()] = rec
         if common:
             _species_by_common[common.lower()] = rec
-        # Build search index: normalised text for fuzzy matching
         search_text = _normalise(f"{sci} {common}")
         for name in rec.get("common_names", {}).values():
             search_text += " " + _normalise(name)
         _search_index.append((sci.lower(), search_text, rec))
         locale_set.update(rec.get("common_names", {}).keys())
 
-    # Build sorted locale list for UI (exclude 'en' since it's default)
     locale_set.discard("en")
     _all_locales = sorted(
         [(code, LOCALE_NAMES.get(code, code)) for code in locale_set],
@@ -160,7 +160,6 @@ def _init_image_config():
 
 
 def _cache_key(url: str, size: str) -> str:
-    """Deterministic cache filename from URL + size."""
     h = hashlib.sha256(url.encode()).hexdigest()[:16]
     return f"{h}_{size}.webp"
 
@@ -190,7 +189,6 @@ def _fetch_and_convert(url: str, size: str) -> bytes | None:
     if not target:
         return None
 
-    # Download
     req = Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urlopen(req, timeout=30) as resp:
@@ -204,7 +202,6 @@ def _fetch_and_convert(url: str, size: str) -> bytes | None:
     except Exception:
         return None
 
-    # Center crop to 3:2, then resize
     img = _center_crop_3_2(img)
     img.thumbnail(target, Image.LANCZOS)
 
@@ -233,9 +230,6 @@ app = FastAPI(
 )
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-
-# Serve static assets (logo, etc.)
-STATIC_DIR = ROOT / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -249,7 +243,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 async def image_proxy(scientific_name: str, size: str):
     """Serve a species image as WebP in the requested size.
 
-    Sizes: thumb (150×100), medium (480×320), large (1200×800).
+    Sizes: thumb (150x100), medium (480x320), large (1200x800).
     Images are fetched from the original source, converted to WebP,
     center-cropped to 3:2, and cached on disk.
     """
@@ -265,7 +259,6 @@ async def image_proxy(scientific_name: str, size: str):
     if not source_url:
         raise HTTPException(404, "No image available for this species")
 
-    # Check disk cache
     cache_file = _image_cache_dir / _cache_key(source_url, size)
     if cache_file.exists():
         return Response(
@@ -274,12 +267,10 @@ async def image_proxy(scientific_name: str, size: str):
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    # Fetch, convert, cache
     webp_bytes = _fetch_and_convert(source_url, size)
     if not webp_bytes:
         raise HTTPException(502, "Failed to fetch or convert source image")
 
-    # Write to cache (atomic)
     tmp = cache_file.with_suffix(".tmp")
     tmp.write_bytes(webp_bytes)
     tmp.replace(cache_file)
@@ -301,7 +292,6 @@ async def home(request: FRequest, q: str = "", group: str = "",
     """Home page with search and species listing."""
     results = _search(q, group)
 
-    # Sort results
     if sort == "a-z":
         results = sorted(results, key=lambda r: (r.get("common_name") or r.get("scientific_name", "")).lower())
     elif sort == "z-a":
@@ -310,14 +300,11 @@ async def home(request: FRequest, q: str = "", group: str = "",
         results = sorted(results, key=lambda r: r.get("observations_count", 0) or 0, reverse=True)
 
     total = len(results)
-
-    # Pagination
     start = (page - 1) * per_page
     end = start + per_page
     page_results = results[start:end]
     total_pages = max(1, (total + per_page - 1) // per_page)
 
-    # Available groups
     groups = sorted(set(r.get("taxon_group", "") for r in _species_list if r.get("taxon_group")))
 
     return templates.TemplateResponse("home.html", {
@@ -340,7 +327,8 @@ async def home(request: FRequest, q: str = "", group: str = "",
          include_in_schema=False)
 async def species_page(request: FRequest, scientific_name: str):
     """Species detail page."""
-    rec = _species_by_name.get(scientific_name) or _species_by_name.get(scientific_name.lower())
+    rec = _species_by_name.get(scientific_name) or \
+          _species_by_name.get(scientific_name.lower())
     if not rec:
         raise HTTPException(status_code=404, detail="Species not found")
 
@@ -418,7 +406,8 @@ async def api_species_list(
 @app.get("/api/species/{scientific_name:path}", tags=["API"])
 async def api_species_detail(scientific_name: str):
     """Get full metadata for one species by scientific name."""
-    rec = _species_by_name.get(scientific_name) or _species_by_name.get(scientific_name.lower())
+    rec = _species_by_name.get(scientific_name) or \
+          _species_by_name.get(scientific_name.lower())
     if not rec:
         raise HTTPException(status_code=404, detail="Species not found")
     return rec
@@ -433,7 +422,8 @@ def _search(q: str, group: str = "") -> list[dict]:
     results = _species_list
 
     if group:
-        results = [r for r in results if r.get("taxon_group", "").lower() == group.lower()]
+        results = [r for r in results
+                   if r.get("taxon_group", "").lower() == group.lower()]
 
     if not q:
         return results
@@ -445,9 +435,7 @@ def _search(q: str, group: str = "") -> list[dict]:
     for sci_lower, search_text, rec in _search_index:
         if group and rec.get("taxon_group", "").lower() != group.lower():
             continue
-        # All terms must appear somewhere
         if all(t in search_text for t in terms):
-            # Score: exact matches rank higher
             score = 0
             if q_norm == sci_lower:
                 score = 100
@@ -457,7 +445,6 @@ def _search(q: str, group: str = "") -> list[dict]:
                 score = 60
             else:
                 score = 40
-            # Boost by observation count
             score += min(rec.get("observations_count", 0) / 1_000_000, 10)
             scored.append((score, rec))
 
@@ -484,7 +471,7 @@ def main():
     load_data(dev=args.dev)
     _init_image_config()
     uvicorn.run(
-        "server:app",
+        "web.server:app",
         host=args.host,
         port=args.port,
         reload=args.reload,

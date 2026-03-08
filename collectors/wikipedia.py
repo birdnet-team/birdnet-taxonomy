@@ -11,7 +11,7 @@ Requires inat_data.json (which provides the English Wikipedia URL).
 Output: raw_data/wikipedia_data.json (incremental, resumable)
 
 Usage:
-    python -m utils.wikipedia [--limit N] [--dry-run]
+    python -m collectors.wikipedia [--limit N] [--dry-run]
 
 Wikipedia APIs used:
   - REST: https://en.wikipedia.org/api/rest_v1/page/summary/{title}
@@ -21,9 +21,7 @@ Wikipedia APIs used:
 import argparse
 import html
 import json
-import os
 import re
-import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -32,47 +30,18 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-# Paths
-ROOT = Path(__file__).resolve().parent.parent
-INAT_DATA = ROOT / "raw_data" / "inat_data.json"
-OUTPUT_FILE = ROOT / "raw_data" / "wikipedia_data.json"
-
 from tqdm import tqdm
 
-from utils.config import load_config
+from config import load_config
+from collectors._common import (
+    RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
+    RateLimiter, load_json, save_json,
+)
 
-USER_AGENT = "species-data-collector/1.0 (https://github.com/birdnet-team/species-data)"
+INAT_DATA = RAW_DIR / "inat_data.json"
+OUTPUT_FILE = RAW_DIR / "wikipedia_data.json"
 
-# Graceful shutdown flag
-_shutdown = False
-
-def _handle_sigint(sig, frame):
-    global _shutdown
-    if _shutdown:
-        raise SystemExit(1)
-    _shutdown = True
-    tqdm.write("\n⏎ Interrupt received — waiting for in-flight requests, then saving...")
-
-signal.signal(signal.SIGINT, _handle_sigint)
-
-# ---------------------------------------------------------------------------
-# Rate limiter — caps requests/second across all threads
-# ---------------------------------------------------------------------------
-
-class RateLimiter:
-    """Token-bucket rate limiter (thread-safe)."""
-
-    def __init__(self, rps: float):
-        self._interval = 1.0 / rps
-        self._lock = threading.Lock()
-        self._next = 0.0
-
-    def acquire(self):
-        with self._lock:
-            now = time.monotonic()
-            if now < self._next:
-                time.sleep(self._next - now)
-            self._next = max(now, self._next) + self._interval
+setup_shutdown()
 
 _rate = RateLimiter(50)  # default; overwritten in main()
 
@@ -123,24 +92,6 @@ def load_species_with_wikipedia() -> dict[str, str]:
             species[sci_name] = wiki_url
 
     return species
-
-
-def load_existing_data() -> dict:
-    """Load already-fetched Wikipedia data."""
-    if OUTPUT_FILE.exists():
-        with open(OUTPUT_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_data(data: dict):
-    """Save Wikipedia data to disk (atomic write)."""
-    tmp = OUTPUT_FILE.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, OUTPUT_FILE)
 
 
 def wiki_title_from_url(url: str) -> str:
@@ -417,7 +368,7 @@ def main():
     species = load_species_with_wikipedia()
     print(f"  Found {len(species)} species with Wikipedia URLs")
 
-    existing = load_existing_data()
+    existing = load_json(OUTPUT_FILE)
     print(f"  Already have Wikipedia data for {len(existing)} species")
 
     if args.refetch:
@@ -453,7 +404,7 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {}
         for sci, url in to_fetch:
-            if _shutdown:
+            if is_shutting_down():
                 break
             futures[pool.submit(fetch_species_wikipedia, sci, url, target_locales)] = sci
 
@@ -472,9 +423,9 @@ def main():
                 tqdm.write(f"  EXCEPTION {sci_name}: {exc}")
                 existing[sci_name] = {"error": str(exc)}
             pbar.update(1)
-            save_data(existing)
+            save_json(existing, OUTPUT_FILE)
 
-            if _shutdown:
+            if is_shutting_down():
                 # Cancel remaining futures
                 for f in futures:
                     f.cancel()

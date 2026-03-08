@@ -9,7 +9,7 @@ cross-referenced via inat_data.json).
 Output: raw_data/ebird_data.json (incremental, resumable)
 
 Usage:
-    python -m utils.ebird [--limit N] [--dry-run]
+    python -m collectors.ebird [--limit N] [--dry-run]
 
 eBird image URL pattern:
   https://cdn.download.ams.birds.cornell.edu/api/v2/asset/{id}/{size}
@@ -21,27 +21,25 @@ eBird image URL pattern:
 import argparse
 import csv
 import json
-import os
 import re
-import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.cookiejar import CookieJar
-from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, build_opener, HTTPCookieProcessor
 from urllib.error import HTTPError, URLError
 
 from tqdm import tqdm
 
-from utils.config import load_config
+from config import load_config
+from collectors._common import (
+    RAW_DIR, setup_shutdown, is_shutting_down,
+    RateLimiter, load_json, save_json,
+)
 
-# Paths
-ROOT = Path(__file__).resolve().parent.parent
-INAT_DATA = ROOT / "raw_data" / "inat_data.json"
-AVILIST_CSV = ROOT / "raw_data"  # dir; filename from config
-OUTPUT_FILE = ROOT / "raw_data" / "ebird_data.json"
+INAT_DATA = RAW_DIR / "inat_data.json"
+OUTPUT_FILE = RAW_DIR / "ebird_data.json"
 
 # Reusable opener with cookie support (thread-local for safety)
 _local = threading.local()
@@ -53,37 +51,7 @@ def _get_opener():
         _local.opener = build_opener(HTTPCookieProcessor(jar))
     return _local.opener
 
-# Graceful shutdown flag
-_shutdown = False
-
-def _handle_sigint(sig, frame):
-    global _shutdown
-    if _shutdown:
-        raise SystemExit(1)
-    _shutdown = True
-    tqdm.write("\n⏎ Interrupt received — finishing current request and saving...")
-
-signal.signal(signal.SIGINT, _handle_sigint)
-
-
-# ---------------------------------------------------------------------------
-# Rate limiter
-# ---------------------------------------------------------------------------
-
-class RateLimiter:
-    """Token-bucket rate limiter (thread-safe)."""
-
-    def __init__(self, rps: float):
-        self._interval = 1.0 / rps
-        self._lock = threading.Lock()
-        self._next = 0.0
-
-    def acquire(self):
-        with self._lock:
-            now = time.monotonic()
-            if now < self._next:
-                time.sleep(self._next - now)
-            self._next = max(now, self._next) + self._interval
+setup_shutdown()
 
 _rate = RateLimiter(5)  # default; overwritten in main()
 
@@ -112,7 +80,7 @@ def load_species_with_ebird_codes() -> dict[str, str]:
     # Also try AviList CSV for any codes not in inat_data
     cfg = load_config()
     csv_name = cfg.get("avilist", {}).get("csv_file", "")
-    csv_path = ROOT / "raw_data" / csv_name if csv_name else None
+    csv_path = RAW_DIR / csv_name if csv_name else None
     if csv_path and csv_path.exists():
         with open(csv_path, encoding="utf-8") as f:
             reader = csv.DictReader(f, delimiter=";")
@@ -125,26 +93,10 @@ def load_species_with_ebird_codes() -> dict[str, str]:
                     species[sci] = code
 
     if not species:
-        print("ERROR: No eBird codes found. Run utils/inat.py first or ensure AviList CSV exists.")
+        print("ERROR: No eBird codes found. Run collectors/inat.py first or ensure AviList CSV exists.")
         raise SystemExit(1)
 
     return species
-
-
-def load_existing_data() -> dict:
-    """Load already-fetched eBird data."""
-    if OUTPUT_FILE.exists():
-        with open(OUTPUT_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_data(data: dict):
-    """Save eBird data to disk (atomic write)."""
-    tmp = OUTPUT_FILE.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, OUTPUT_FILE)
 
 
 def _extract_og_tag(html: str, tag: str) -> str | None:
@@ -288,7 +240,7 @@ def main():
     species = load_species_with_ebird_codes()
     print(f"  Found {len(species)} species with eBird codes")
 
-    existing = load_existing_data()
+    existing = load_json(OUTPUT_FILE)
     print(f"  Already have eBird data for {len(existing)} species")
 
     to_fetch = [(sci, code) for sci, code in species.items() if sci not in existing]
@@ -340,7 +292,7 @@ def main():
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {}
         for item in to_fetch:
-            if _shutdown:
+            if is_shutting_down():
                 break
             futures[pool.submit(_fetch_one, item)] = item[0]
 
@@ -360,9 +312,9 @@ def main():
                 tqdm.write(f"  EXCEPTION {sci_name}: {exc}")
                 existing[sci_name] = {"error": str(exc)}
             pbar.update(1)
-            save_data(existing)
+            save_json(existing, OUTPUT_FILE)
 
-            if _shutdown:
+            if is_shutting_down():
                 for f in futures:
                     f.cancel()
                 break

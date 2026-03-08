@@ -197,9 +197,9 @@
 <div class="species-header">
     <div class="species-photo">
         {% if s.image_url %}
-        <img src="{{ s.image_url }}" alt="{{ s.common_name or s.scientific_name }}">
-        {% if s.image_attribution %}
-        <div class="attribution">{{ s.image_attribution }}{% if s.image_license %} ({{ s.image_license }}){% endif %}</div>
+        <img src="/api/image/{{ s.scientific_name }}/large" alt="{{ s.common_name or s.scientific_name }}">
+        {% if s.image_author %}
+        <div class="attribution">{{ s.image_author }}{% if s.image_license %} ({{ s.image_license }}){% endif %}</div>
         {% endif %}
         {% else %}
         <div class="no-img" style="height:280px; border-radius: var(--radius);">No image available</div>
@@ -214,9 +214,6 @@
 
         <table class="info-table">
             <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
-            {% if s.iconic_taxon_name and s.iconic_taxon_name != s.taxon_group %}
-            <tr><td>Iconic taxon</td><td>{{ s.iconic_taxon_name }}</td></tr>
-            {% endif %}
             {% if s.inat_id %}
             <tr><td>iNaturalist</td><td><a href="https://www.inaturalist.org/taxa/{{ s.inat_id }}" target="_blank">#{{ s.inat_id }}</a></td></tr>
             {% endif %}
@@ -244,32 +241,10 @@
     </div>
 </div>
 
-{% if s.descriptions and s.descriptions.get('en') %}
+{% if s.description %}
 <div class="description">
     <h3>Description</h3>
-    <p>{{ s.descriptions['en'] }}</p>
-</div>
-{% endif %}
-
-{% if s.wikipedia_extract and (not s.descriptions or not s.descriptions.get('en') or s.descriptions.get('en') != s.wikipedia_extract) %}
-<div class="description">
-    <h3>Wikipedia Summary</h3>
-    <p>{{ s.wikipedia_extract }}</p>
-</div>
-{% endif %}
-
-{% if s.ebird_description or s.ebird_image_url %}
-<div class="section ebird-section">
-    <h3>eBird</h3>
-    {% if s.ebird_description %}
-    <p style="max-width:700px;">{{ s.ebird_description }}</p>
-    {% endif %}
-    {% if s.ebird_image_url %}
-    <img src="{{ s.ebird_image_url }}/640" alt="{{ s.common_name }}" loading="lazy">
-    {% if s.ebird_image_attribution %}
-    <div class="attribution" style="font-size:0.8rem;color:var(--muted);margin-top:0.3rem;">{{ s.ebird_image_attribution }}</div>
-    {% endif %}
-    {% endif %}
+    <p>{{ s.description }}</p>
 </div>
 {% endif %}
 
@@ -288,33 +263,23 @@
 </div>
 {% endif %}
 
-{% set wiki_urls = s.wikipedia_urls or {} %}
-{% if wiki_urls %}
+{% if s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id %}
 <div class="section">
-    <h3>Wikipedia ({{ wiki_urls|length }} languages)</h3>
-    <div class="wiki-links">
-        {% for locale, url in wiki_urls|dictsort %}
-        <a href="{{ url }}" target="_blank">{{ locale }}</a>
-        {% endfor %}
-    </div>
-</div>
-{% endif %}
-
-{% set desc = s.descriptions or {} %}
-{% set trans = namespace(items=[], count=0) %}
-{% for k, v in desc.items() if k != 'en' and v %}
-    {% set trans.items = trans.items + [(k, v)] %}
-    {% set trans.count = trans.count + 1 %}
-{% endfor %}
-{% if trans.count %}
-<div class="section translations">
-    <h3>Translations ({{ trans.count }} languages)</h3>
-    {% for locale, text in trans.items|sort %}
-    <details>
-        <summary>{{ locale }}</summary>
-        <div class="trans-text">{{ text }}</div>
-    </details>
-    {% endfor %}
+    <h3>External Identifiers</h3>
+    <table class="info-table">
+        {% if s.gbif_id %}
+        <tr><td>GBIF</td><td><a href="https://www.gbif.org/species/{{ s.gbif_id }}" target="_blank">{{ s.gbif_id }}</a></td></tr>
+        {% endif %}
+        {% if s.ncbi_id %}
+        <tr><td>NCBI</td><td><a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id={{ s.ncbi_id }}" target="_blank">{{ s.ncbi_id }}</a></td></tr>
+        {% endif %}
+        {% if s.avibase_id %}
+        <tr><td>Avibase</td><td><a href="https://avibase.bsc-eoc.org/species.jsp?avibaseid={{ s.avibase_id }}" target="_blank">{{ s.avibase_id }}</a></td></tr>
+        {% endif %}
+        {% if s.birdlife_id %}
+        <tr><td>BirdLife</td><td><a href="http://datazone.birdlife.org/species/factsheet/{{ s.birdlife_id }}" target="_blank">{{ s.birdlife_id }}</a></td></tr>
+        {% endif %}
+    </table>
 </div>
 {% endif %}
 

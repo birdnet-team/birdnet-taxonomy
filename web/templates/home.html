@@ -43,7 +43,7 @@
         <a href="/species/{{ s.scientific_name }}">
             {% set display_name = s.common_names.get(lang, s.common_name) if lang and s.common_names else s.common_name %}
             {% if s.image_url %}
-            <img src="{{ s.image_url }}" alt="{{ display_name or s.scientific_name }}" loading="lazy">
+            <img src="/api/image/{{ s.scientific_name }}/medium" alt="{{ display_name or s.scientific_name }}" loading="lazy">
             {% else %}
             <div class="no-img">No image</div>
             {% endif %}
@@ -86,7 +86,7 @@
 
 {% else %}
 <p style="text-align:center; color: var(--muted); padding: 3rem 0;">
-    {% if query or group %}No species found.{% else %}No data loaded. Run <code>python merge.py</code> first.{% endif %}
+    {% if query or group %}No species found.{% else %}No data loaded. Run <code>python -m build.metadata</code> first.{% endif %}
 </p>
 {% endif %}
 {% endblock %}
