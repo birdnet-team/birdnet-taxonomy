@@ -4,14 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}BirdNET Species Metadata{% endblock %}</title>
+    <link rel="icon" type="image/png" href="/static/logo.png">
     <style>
         :root {
             --bg: #f8f9fa;
             --card: #ffffff;
             --text: #212529;
             --muted: #6c757d;
-            --accent: #2d6a4f;
-            --accent-light: #40916c;
+            --accent: #1a5276;
+            --accent-light: #2980b9;
             --border: #dee2e6;
             --radius: 8px;
         }
@@ -33,7 +34,8 @@
             padding: 1rem 0;
             margin-bottom: 1.5rem;
         }
-        header .container { display: flex; align-items: center; gap: 1.5rem; }
+        header .container { display: flex; align-items: center; gap: 1rem; }
+        header .logo { height: 32px; width: 32px; border-radius: 50%; }
         header h1 { font-size: 1.4rem; font-weight: 600; }
         header a { color: white; }
         header nav { display: flex; gap: 1rem; font-size: 0.9rem; }
@@ -92,20 +94,20 @@
         .species-card a:hover { text-decoration: none; }
         .species-card img {
             width: 100%;
-            height: 180px;
+            aspect-ratio: 3/2;
             object-fit: cover;
             background: #e9ecef;
         }
         .species-card .card-body { padding: 0.8rem 1rem; }
+        .species-card .common-name {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text);
+        }
         .species-card .sci-name {
             font-style: italic;
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--accent);
-        }
-        .species-card .common-name {
-            font-size: 0.95rem;
-            color: var(--text);
+            font-size: 0.85rem;
+            color: var(--muted);
         }
         .species-card .meta {
             font-size: 0.8rem;
@@ -148,7 +150,7 @@
 
         .no-img {
             width: 100%;
-            height: 180px;
+            aspect-ratio: 3/2;
             background: #e9ecef;
             display: flex;
             align-items: center;
@@ -171,6 +173,7 @@
 <body>
     <header>
         <div class="container">
+            <a href="/"><img class="logo" src="/static/logo.png" alt="BirdNET"></a>
             <h1><a href="/">BirdNET Species Metadata</a></h1>
             <nav>
                 <a href="/">Browse</a>

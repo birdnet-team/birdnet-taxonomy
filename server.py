@@ -27,6 +27,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from utils.config import LOCALE_NAMES, get_locales
+
 ROOT = Path(__file__).resolve().parent
 TEMPLATES_DIR = ROOT / "templates"
 IMAGES_DIR = ROOT / "images"
@@ -104,6 +106,9 @@ app = FastAPI(
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+# Serve static assets (logo, etc.)
+STATIC_DIR = ROOT / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Serve local images if directory exists
 if IMAGES_DIR.exists():
@@ -116,9 +121,18 @@ if IMAGES_DIR.exists():
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def home(request: Request, q: str = "", group: str = "",
-               page: int = 1, per_page: int = 50):
+               lang: str = "", sort: str = "", page: int = 1, per_page: int = 50):
     """Home page with search and species listing."""
     results = _search(q, group)
+
+    # Sort results
+    if sort == "a-z":
+        results = sorted(results, key=lambda r: (r.get("common_name") or r.get("scientific_name", "")).lower())
+    elif sort == "z-a":
+        results = sorted(results, key=lambda r: (r.get("common_name") or r.get("scientific_name", "")).lower(), reverse=True)
+    elif sort == "obs":
+        results = sorted(results, key=lambda r: r.get("observations_count", 0) or 0, reverse=True)
+
     total = len(results)
 
     # Pagination
@@ -130,11 +144,19 @@ async def home(request: Request, q: str = "", group: str = "",
     # Available groups
     groups = sorted(set(r.get("taxon_group", "") for r in _species_list if r.get("taxon_group")))
 
+    # Available locales from config (sorted by display name, exclude 'en')
+    config_locales = get_locales()
+    locales = [(code, LOCALE_NAMES.get(code, code)) for code in config_locales if code != "en"]
+    locales.sort(key=lambda x: x[1])
+
     return templates.TemplateResponse("home.html", {
         "request": request,
         "species": page_results,
         "query": q,
         "group": group,
+        "lang": lang,
+        "sort": sort,
+        "locales": locales,
         "groups": groups,
         "total": total,
         "page": page,

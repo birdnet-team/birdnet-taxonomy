@@ -115,8 +115,71 @@
         border-radius: var(--radius);
         font-size: 0.85rem;
         color: var(--muted);
+        border: none;
+        cursor: pointer;
+        font-family: inherit;
     }
     .json-link:hover { background: #dee2e6; text-decoration: none; }
+
+    .json-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(0,0,0,0.55);
+        justify-content: center;
+        align-items: center;
+        padding: 2rem;
+    }
+    .json-overlay.active { display: flex; }
+    .json-modal {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        border-radius: 10px;
+        max-width: 760px;
+        width: 100%;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    .json-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.7rem 1rem;
+        border-bottom: 1px solid #333;
+        font-size: 0.85rem;
+        color: #999;
+    }
+    .json-modal-header button {
+        background: none;
+        border: none;
+        color: #999;
+        font-size: 1.3rem;
+        cursor: pointer;
+        padding: 0 0.3rem;
+        line-height: 1;
+    }
+    .json-modal-header button:hover { color: #fff; }
+    .json-modal-body {
+        overflow: auto;
+        padding: 1rem;
+    }
+    .json-modal-body pre {
+        margin: 0;
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        font-size: 0.82rem;
+        line-height: 1.5;
+        white-space: pre;
+        tab-size: 2;
+    }
+    /* Syntax colors */
+    .json-key { color: #9cdcfe; }
+    .json-string { color: #ce9178; }
+    .json-number { color: #b5cea8; }
+    .json-bool { color: #569cd6; }
+    .json-null { color: #569cd6; }
 
     .ebird-section { margin-top: 1.5rem; }
     .ebird-section img {
@@ -165,7 +228,19 @@
             {% endif %}
         </table>
 
-        <a class="json-link" href="/api/species/{{ s.scientific_name }}">View JSON &rarr;</a>
+        <button class="json-link" onclick="showJson()">View JSON &rarr;</button>
+    </div>
+</div>
+
+<div class="json-overlay" id="jsonOverlay" onclick="if(event.target===this)hideJson()">
+    <div class="json-modal">
+        <div class="json-modal-header">
+            <span>/api/species/{{ s.scientific_name }}</span>
+            <button onclick="hideJson()">&times;</button>
+        </div>
+        <div class="json-modal-body">
+            <pre id="jsonContent">Loading&hellip;</pre>
+        </div>
     </div>
 </div>
 
@@ -226,11 +301,15 @@
 {% endif %}
 
 {% set desc = s.descriptions or {} %}
-{% set trans = {k: v for k, v in desc.items() if k != 'en' and v} %}
-{% if trans %}
+{% set trans = namespace(items=[], count=0) %}
+{% for k, v in desc.items() if k != 'en' and v %}
+    {% set trans.items = trans.items + [(k, v)] %}
+    {% set trans.count = trans.count + 1 %}
+{% endfor %}
+{% if trans.count %}
 <div class="section translations">
-    <h3>Translations ({{ trans|length }} languages)</h3>
-    {% for locale, text in trans|dictsort %}
+    <h3>Translations ({{ trans.count }} languages)</h3>
+    {% for locale, text in trans.items|sort %}
     <details>
         <summary>{{ locale }}</summary>
         <div class="trans-text">{{ text }}</div>
@@ -239,4 +318,43 @@
 </div>
 {% endif %}
 
+<script>
+function syntaxHighlight(json) {
+    json = json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return json.replace(
+        /("(?:\\.|[^"\\])*")\s*:|"(?:\\.|[^"\\])*"|\b(?:true|false)\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g,
+        function(m) {
+            if (/^"/.test(m)) {
+                if (/:$/.test(m)) return '<span class="json-key">' + m.slice(0,-1) + '</span>:';
+                return '<span class="json-string">' + m + '</span>';
+            }
+            if (/true|false/.test(m)) return '<span class="json-bool">' + m + '</span>';
+            if (/null/.test(m)) return '<span class="json-null">' + m + '</span>';
+            return '<span class="json-number">' + m + '</span>';
+        }
+    );
+}
+let jsonLoaded = false;
+function showJson() {
+    document.getElementById('jsonOverlay').classList.add('active');
+    document.body.style.overflow = 'hidden';
+    if (!jsonLoaded) {
+        fetch('/api/species/{{ s.scientific_name }}')
+            .then(r => r.json())
+            .then(data => {
+                const pretty = JSON.stringify(data, null, 2);
+                document.getElementById('jsonContent').innerHTML = syntaxHighlight(pretty);
+                jsonLoaded = true;
+            })
+            .catch(() => {
+                document.getElementById('jsonContent').textContent = 'Failed to load JSON';
+            });
+    }
+}
+function hideJson() {
+    document.getElementById('jsonOverlay').classList.remove('active');
+    document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') hideJson(); });
+</script>
 {% endblock %}
