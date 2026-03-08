@@ -1,0 +1,67 @@
+# Species Data Pipeline Configuration
+# ====================================
+# Central configuration for all scripts. Edit this file to change
+# locales, taxon groups, API settings, etc.
+
+# Target locales for translations, Wikipedia links, and common names.
+# Add new locale codes here to extend coverage across the entire pipeline.
+locales:
+  - en
+  - de
+  - fr
+  - es
+  - pt
+  - it
+  - nl
+  - pl
+  - sv
+  - da
+  - "no"   # quoted because YAML treats bare 'no' as boolean false
+  - fi
+  - cs
+  - ja
+  - zh
+
+# iNaturalist iconic taxon groups to fetch.
+# Each entry has a name and the iNat taxon_id used for filtering.
+taxon_groups:
+  - name: Aves
+    taxon_id: 3
+  - name: Mammalia
+    taxon_id: 40151
+  - name: Insecta
+    taxon_id: 47158
+  - name: Reptilia
+    taxon_id: 26036
+  - name: Amphibia
+    taxon_id: 20978
+
+# iNaturalist API settings
+inat:
+  base_url: "https://api.inaturalist.org/v1/taxa"
+  per_page: 1000         # max results per page
+  request_delay: 2.0     # seconds between requests (iNat asks ≤1 req/sec)
+  all_names: true        # fetch all common name translations
+
+# eBird settings
+ebird:
+  base_url: "https://ebird.org/species/"
+  request_delay: 2.0     # seconds between requests
+
+# Wikipedia settings
+wikipedia:
+  summary_api: "https://en.wikipedia.org/api/rest_v1/page/summary/"
+  langlinks_api: "https://en.wikipedia.org/w/api.php"
+  request_delay: 0.5
+
+# AviList checklist download
+avilist:
+  url: "https://www.avilist.org/wp-content/uploads/2025/06/AviList-v2025-11Jun-extended.xlsx"
+  csv_file: "AviList-v2025-11Jun-extended.csv"   # converted from xlsx
+
+# Claude API settings (API key is in .env, not here)
+claude:
+  model: "claude-sonnet-4-20250514"
+  description_max_tokens: 300
+  translation_max_tokens: 4096
+  request_delay: 0.5
