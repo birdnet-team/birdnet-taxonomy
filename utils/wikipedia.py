@@ -131,6 +131,8 @@ def save_data(data: dict):
     tmp = OUTPUT_FILE.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, OUTPUT_FILE)
 
 
@@ -318,7 +320,11 @@ def main():
             if sci in species and len(existing[sci].get("extracts", {})) < 2
         ]
     else:
-        to_fetch = [(sci, url) for sci, url in species.items() if sci not in existing]
+        # Fetch species not yet processed, plus any that errored previously
+        to_fetch = [
+            (sci, url) for sci, url in species.items()
+            if sci not in existing or existing[sci].get("error")
+        ]
     if args.limit:
         to_fetch = to_fetch[:args.limit]
 
