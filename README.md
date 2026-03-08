@@ -44,7 +44,19 @@ python merge.py --dev      # → dev/  (for local iteration, no zip needed)
 python merge.py --no-zip   # write json + csv without zipping
 ```
 
-The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
+The `raw_data/`, `dev/`, `dist/`, and `images/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
+
+### Images (optional)
+
+Download species images, convert to WebP thumbnails and medium-size crops (3:2 aspect ratio, center-cropped):
+
+```bash
+python -m utils.images             # download all, both iNat + eBird sources
+python -m utils.images --source inat --limit 100
+python -m utils.images --dry-run
+```
+
+Images are saved to `images/` (gitignored). Filename format: `<sci_name>_<common_name>_<author>_<thumb|medium>.webp`.
 
 ## Data Sources
 

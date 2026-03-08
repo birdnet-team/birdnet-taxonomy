@@ -33,13 +33,13 @@ taxon_groups:
     fraction: 0.25       # top 25% by observation count
   - name: Insecta
     taxon_id: 47158
-    fraction: 0.1    
+    fraction: 0.01    
   - name: Reptilia
     taxon_id: 26036
     fraction: 0.1
   - name: Amphibia
     taxon_id: 20978
-    fraction: 0.1
+    fraction: 0.25
 
 # iNaturalist API settings
 inat:
@@ -72,3 +72,12 @@ claude:
   description_max_tokens: 2048   # for batched description generation
   translation_max_tokens: 8192   # for batched multi-species translation
   request_delay: 0.5
+
+# Image download and conversion settings
+images:
+  thumb_width: 150       # thumbnail max width
+  thumb_height: 100      # thumbnail max height (3:2 at 150)
+  medium_width: 480      # medium max width
+  medium_height: 320     # medium max height (3:2 at 480)
+  quality: 80            # WebP quality (1-100)
+  request_delay: 0.3     # seconds between downloads
