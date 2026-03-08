@@ -3,26 +3,6 @@
 # Central configuration for all scripts. Edit this file to change
 # locales, taxon groups, API settings, etc.
 
-# Target locales for translations, Wikipedia links, and common names.
-# Add new locale codes here to extend coverage across the entire pipeline.
-locales:
-  - en
-  - de
-  - fr
-  - es
-  - pt
-  - it
-  - nl
-  - pl
-  - sv
-  - da
-  - "no"   # quoted because YAML treats bare 'no' as boolean false
-  - fi
-  - cs
-  - ru
-  - ja
-  - zh
-
 # iNaturalist iconic taxon groups to fetch.
 # Each entry has a name and the iNat taxon_id used for filtering.
 taxon_groups:
@@ -68,8 +48,28 @@ avilist:
   csv_file: "AviList-v2025-11Jun-extended.csv"   # converted from xlsx
 
 # Claude API settings (API key is in .env, not here)
+# Locales listed here are the target languages for Claude-generated
+# translations. All other locales (common names, eBird, Wikidata) are
+# auto-discovered from the data sources.
 claude:
   model: "claude-sonnet-4-20250514"
+  locales:
+    - en
+    - de
+    - fr
+    - es
+    - pt
+    - it
+    - nl
+    - pl
+    - sv
+    - da
+    - "no"
+    - fi
+    - cs
+    - ru
+    - ja
+    - zh
   batch_size: 5           # species per API call (describe + translate)
   max_source_chars: 500   # truncate source text per species to save tokens
   description_max_tokens: 2048   # for batched description generation
