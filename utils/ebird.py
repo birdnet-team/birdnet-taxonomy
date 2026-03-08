@@ -24,7 +24,9 @@ import json
 import os
 import re
 import signal
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.cookiejar import CookieJar
 from pathlib import Path
 from urllib.parse import quote
@@ -41,9 +43,15 @@ INAT_DATA = ROOT / "raw_data" / "inat_data.json"
 AVILIST_CSV = ROOT / "raw_data"  # dir; filename from config
 OUTPUT_FILE = ROOT / "raw_data" / "ebird_data.json"
 
-# Reusable opener with cookie support
-_cookie_jar = CookieJar()
-_opener = build_opener(HTTPCookieProcessor(_cookie_jar))
+# Reusable opener with cookie support (thread-local for safety)
+_local = threading.local()
+
+def _get_opener():
+    """Get a thread-local HTTP opener with cookie support."""
+    if not hasattr(_local, "opener"):
+        jar = CookieJar()
+        _local.opener = build_opener(HTTPCookieProcessor(jar))
+    return _local.opener
 
 # Graceful shutdown flag
 _shutdown = False
@@ -56,6 +64,28 @@ def _handle_sigint(sig, frame):
     tqdm.write("\n⏎ Interrupt received — finishing current request and saving...")
 
 signal.signal(signal.SIGINT, _handle_sigint)
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter
+# ---------------------------------------------------------------------------
+
+class RateLimiter:
+    """Token-bucket rate limiter (thread-safe)."""
+
+    def __init__(self, rps: float):
+        self._interval = 1.0 / rps
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def acquire(self):
+        with self._lock:
+            now = time.monotonic()
+            if now < self._next:
+                time.sleep(self._next - now)
+            self._next = max(now, self._next) + self._interval
+
+_rate = RateLimiter(5)  # default; overwritten in main()
 
 
 def load_species_with_ebird_codes() -> dict[str, str]:
@@ -154,11 +184,25 @@ def fetch_ebird_page(ebird_code: str, base_url: str) -> dict:
         "Accept-Language": "en-US,en;q=0.9",
     })
 
-    try:
-        with _opener.open(req, timeout=30) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-    except (HTTPError, URLError, TimeoutError) as e:
-        return {"error": str(e)}
+    opener = _get_opener()
+    html = None
+    for attempt in range(4):
+        _rate.acquire()
+        try:
+            with opener.open(req, timeout=30) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+            break
+        except HTTPError as e:
+            if e.code == 429:
+                wait = min(2 ** attempt * 2, 60)
+                time.sleep(wait)
+                continue
+            return {"error": str(e)}
+        except (URLError, TimeoutError) as e:
+            return {"error": str(e)}
+
+    if html is None:
+        return {"error": "rate_limited_after_retries"}
 
     description = _extract_og_tag(html, "description")
     image_url = _extract_og_tag(html, "image")
@@ -175,12 +219,21 @@ def main():
     cfg = load_config()
     ebird_cfg = cfg.get("ebird", {})
     base_url = ebird_cfg.get("base_url", "https://ebird.org/species/")
-    delay = ebird_cfg.get("request_delay", 2.0)
+    default_workers = ebird_cfg.get("workers", 4)
+    default_rps = ebird_cfg.get("rps", 5)
 
     parser = argparse.ArgumentParser(description="Fetch eBird species descriptions and images")
     parser.add_argument("--limit", type=int, default=0, help="Max species to fetch (0 = all)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be fetched without fetching")
+    parser.add_argument("--workers", type=int, default=default_workers,
+                        help=f"Number of parallel fetchers (default: {default_workers})")
+    parser.add_argument("--rps", type=float, default=default_rps,
+                        help=f"Max requests per second (default: {default_rps})")
     args = parser.parse_args()
+
+    # Set global rate limiter
+    global _rate
+    _rate = RateLimiter(args.rps)
 
     print("Loading species with eBird codes...")
     species = load_species_with_ebird_codes()
@@ -193,7 +246,7 @@ def main():
     if args.limit:
         to_fetch = to_fetch[:args.limit]
 
-    print(f"  Will fetch {len(to_fetch)} species from eBird")
+    print(f"  Will fetch {len(to_fetch)} species from eBird ({args.workers} workers, {args.rps} rps)")
 
     if args.dry_run:
         for sci, code in to_fetch[:20]:
@@ -202,49 +255,68 @@ def main():
             print(f"    ... and {len(to_fetch) - 20} more")
         return
 
-    fetched = 0
-    success = 0
-    pbar = tqdm(to_fetch, desc="eBird", unit="sp")
-    for sci_name, ebird_code in pbar:
-        if _shutdown:
-            break
-        pbar.set_postfix_str(sci_name, refresh=False)
-
+    def _fetch_one(item):
+        sci_name, ebird_code = item
         result = fetch_ebird_page(ebird_code, base_url)
         if result.get("error"):
-            existing[sci_name] = {
+            return sci_name, {
                 "ebird_code": ebird_code,
                 "description": None,
                 "image_url": "",
                 "image_attribution": "",
                 "error": result["error"],
             }
-            tqdm.write(f"  ERROR {sci_name}: {result['error']}")
         elif result.get("description"):
-            existing[sci_name] = {
+            return sci_name, {
                 "ebird_code": ebird_code,
                 "description": result["description"],
                 "image_url": result["image_url"],
                 "image_attribution": result["image_attribution"],
             }
-            success += 1
         else:
-            existing[sci_name] = {
+            return sci_name, {
                 "ebird_code": ebird_code,
                 "description": None,
                 "image_url": result.get("image_url", ""),
                 "image_attribution": result.get("image_attribution", ""),
                 "error": "no_description",
             }
-            tqdm.write(f"  NO DESC {sci_name}")
 
-        fetched += 1
-        save_data(existing)
+    success = 0
+    pbar = tqdm(total=len(to_fetch), desc="eBird", unit="sp")
 
-        time.sleep(delay)
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = {}
+        for item in to_fetch:
+            if _shutdown:
+                break
+            futures[pool.submit(_fetch_one, item)] = item[0]
+
+        for future in as_completed(futures):
+            sci_name = futures[future]
+            try:
+                _, record = future.result()
+                existing[sci_name] = record
+                if "error" not in record:
+                    success += 1
+                    pbar.set_postfix_str(sci_name, refresh=False)
+                else:
+                    err = record.get("error", "")
+                    if err != "no_description":
+                        tqdm.write(f"  ERROR {sci_name}: {err}")
+            except Exception as exc:
+                tqdm.write(f"  EXCEPTION {sci_name}: {exc}")
+                existing[sci_name] = {"error": str(exc)}
+            pbar.update(1)
+            save_data(existing)
+
+            if _shutdown:
+                for f in futures:
+                    f.cancel()
+                break
 
     pbar.close()
-    print(f"\nDone! Fetched {fetched} species, {success} with descriptions.")
+    print(f"\nDone! Fetched {pbar.n} species, {success} with descriptions.")
     print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries")
 
 

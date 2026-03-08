@@ -280,22 +280,26 @@ def fetch_species_wikipedia(sci_name: str, wiki_url: str,
 
 
 def main():
+    cfg = load_config()
+    wiki_cfg = cfg.get("wikipedia", {})
+    default_workers = wiki_cfg.get("workers", 4)
+    default_rps = wiki_cfg.get("rps", 50)
+
     parser = argparse.ArgumentParser(description="Fetch Wikipedia data for species")
     parser.add_argument("--limit", type=int, default=0, help="Max species to fetch (0 = all)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be fetched without fetching")
     parser.add_argument("--refetch", action="store_true",
                         help="Re-fetch species that are missing localized extracts")
-    parser.add_argument("--workers", type=int, default=4,
-                        help="Number of parallel species to fetch (default: 4)")
-    parser.add_argument("--rps", type=float, default=50,
-                        help="Max requests per second across all threads (default: 50)")
+    parser.add_argument("--workers", type=int, default=default_workers,
+                        help=f"Number of parallel species to fetch (default: {default_workers})")
+    parser.add_argument("--rps", type=float, default=default_rps,
+                        help=f"Max requests per second across all threads (default: {default_rps})")
     args = parser.parse_args()
 
     # Set global rate limiter
     global _rate
     _rate = RateLimiter(args.rps)
 
-    cfg = load_config()
     target_locales = cfg.get("locales", ["en"])
 
     print("Loading species with Wikipedia URLs...")

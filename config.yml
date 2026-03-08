@@ -51,13 +51,15 @@ inat:
 # eBird settings
 ebird:
   base_url: "https://ebird.org/species/"
-  request_delay: 2.0     # seconds between requests
+  workers: 4             # parallel fetchers (--workers override)
+  rps: 5                 # max requests per second (--rps override)
 
 # Wikipedia settings
 wikipedia:
   summary_api: "https://en.wikipedia.org/api/rest_v1/page/summary/"
   langlinks_api: "https://en.wikipedia.org/w/api.php"
-  request_delay: 0.5
+  workers: 4             # parallel species fetchers (--workers override)
+  rps: 50                # max requests per second (--rps override)
 
 # AviList checklist download
 avilist:
