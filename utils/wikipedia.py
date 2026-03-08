@@ -31,6 +31,8 @@ ROOT = Path(__file__).resolve().parent.parent
 INAT_DATA = ROOT / "raw_data" / "inat_data.json"
 OUTPUT_FILE = ROOT / "raw_data" / "wikipedia_data.json"
 
+from tqdm import tqdm
+
 from utils.config import load_config
 
 USER_AGENT = "species-data-collector/1.0 (https://github.com/birdnet-team/species-data)"
@@ -52,7 +54,7 @@ def load_species_with_wikipedia() -> dict[str, str]:
     for sci_name, record in inat_data.items():
         if record.get("inat_id") is None:
             continue
-        wiki_url = record.get("wikipedia_url", "").strip()
+        wiki_url = (record.get("wikipedia_url") or "").strip()
         if wiki_url:
             species[sci_name] = wiki_url
 
@@ -113,12 +115,11 @@ def fetch_summary(title: str) -> dict | None:
 
 def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, str]:
     """Fetch localized Wikipedia article URLs via langlinks API."""
-    # Filter to just the locales we need (excluding 'en' which we already have)
-    langs = "|".join(l for l in target_locales if l != "en")
+    target_set = set(l for l in target_locales if l != "en")
     url = (
         f"https://en.wikipedia.org/w/api.php"
         f"?action=query&titles={quote(title, safe='')}"
-        f"&prop=langlinks&lllimit=500&lllang={langs}&format=json"
+        f"&prop=langlinks&lllimit=500&redirects=1&format=json"
     )
     req = Request(url, headers={"User-Agent": USER_AGENT})
 
@@ -140,7 +141,7 @@ def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, str]:
     for ll in langlinks:
         lang = ll.get("lang", "")
         article_title = ll.get("*", "")
-        if lang and article_title:
+        if lang and article_title and lang in target_set:
             result[lang] = f"https://{lang}.wikipedia.org/wiki/{quote(article_title, safe='/:@!$&\'()*+,;=')}"
 
     return result
@@ -150,7 +151,6 @@ def main():
     parser = argparse.ArgumentParser(description="Fetch Wikipedia data for species")
     parser.add_argument("--limit", type=int, default=0, help="Max species to fetch (0 = all)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be fetched without fetching")
-    parser.add_argument("--save-every", type=int, default=50, help="Save progress every N species")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -181,22 +181,26 @@ def main():
 
     fetched = 0
     success = 0
-    for i, (sci_name, wiki_url) in enumerate(to_fetch):
+    pbar = tqdm(to_fetch, desc="Wikipedia", unit="sp")
+    for sci_name, wiki_url in pbar:
         title = wiki_title_from_url(wiki_url)
         if not title:
-            print(f"  [{i+1}/{len(to_fetch)}] {sci_name}: Could not parse title from {wiki_url}")
+            tqdm.write(f"  BAD URL {sci_name}: {wiki_url}")
             existing[sci_name] = {"error": "bad_url", "wikipedia_url": wiki_url}
             fetched += 1
             continue
 
-        print(f"  [{i+1}/{len(to_fetch)}] {sci_name} ({title})...", end=" ", flush=True)
+        pbar.set_postfix_str(sci_name, refresh=False)
 
         # Fetch summary
         summary = fetch_summary(title)
         time.sleep(delay)
 
+        # Use resolved title from summary (follows redirects) for langlinks
+        resolved_title = summary["title"] if summary else title
+
         # Fetch langlinks
-        locale_urls = fetch_langlinks(title, target_locales)
+        locale_urls = fetch_langlinks(resolved_title, target_locales)
         time.sleep(delay)
 
         if summary:
@@ -209,8 +213,6 @@ def main():
             record["wikipedia_urls"].update(locale_urls)
             existing[sci_name] = record
             success += 1
-            n_locales = len(record["wikipedia_urls"])
-            print(f"OK ({len(summary['extract'])} chars, {n_locales} locales)")
         else:
             existing[sci_name] = {
                 "error": "not_found",
@@ -220,14 +222,12 @@ def main():
             # Even without summary, we might have langlinks
             if locale_urls:
                 existing[sci_name]["wikipedia_urls"] = locale_urls
-            print("NO SUMMARY")
+            tqdm.write(f"  NO SUMMARY {sci_name}")
 
         fetched += 1
-        if fetched % args.save_every == 0:
-            save_data(existing)
-            print(f"  --- Saved progress ({fetched} fetched, {success} with summaries) ---")
+        save_data(existing)
 
-    save_data(existing)
+    pbar.close()
     print(f"\nDone! Fetched {fetched} species, {success} with summaries.")
     print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries")
 

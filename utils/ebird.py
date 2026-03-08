@@ -29,6 +29,8 @@ from urllib.parse import quote
 from urllib.request import Request, build_opener, HTTPCookieProcessor
 from urllib.error import HTTPError, URLError
 
+from tqdm import tqdm
+
 from utils.config import load_config
 
 # Paths
@@ -162,7 +164,6 @@ def main():
     parser = argparse.ArgumentParser(description="Fetch eBird species descriptions and images")
     parser.add_argument("--limit", type=int, default=0, help="Max species to fetch (0 = all)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be fetched without fetching")
-    parser.add_argument("--save-every", type=int, default=25, help="Save progress every N species")
     args = parser.parse_args()
 
     print("Loading species with eBird codes...")
@@ -187,8 +188,9 @@ def main():
 
     fetched = 0
     success = 0
-    for i, (sci_name, ebird_code) in enumerate(to_fetch):
-        print(f"  [{i+1}/{len(to_fetch)}] {sci_name} ({ebird_code})...", end=" ", flush=True)
+    pbar = tqdm(to_fetch, desc="eBird", unit="sp")
+    for sci_name, ebird_code in pbar:
+        pbar.set_postfix_str(sci_name, refresh=False)
 
         result = fetch_ebird_page(ebird_code, base_url)
         if result.get("error"):
@@ -199,7 +201,7 @@ def main():
                 "image_attribution": "",
                 "error": result["error"],
             }
-            print(f"ERROR: {result['error']}")
+            tqdm.write(f"  ERROR {sci_name}: {result['error']}")
         elif result.get("description"):
             existing[sci_name] = {
                 "ebird_code": ebird_code,
@@ -208,7 +210,6 @@ def main():
                 "image_attribution": result["image_attribution"],
             }
             success += 1
-            print(f"OK ({len(result['description'])} chars, img: {'yes' if result['image_url'] else 'no'})")
         else:
             existing[sci_name] = {
                 "ebird_code": ebird_code,
@@ -217,16 +218,14 @@ def main():
                 "image_attribution": result.get("image_attribution", ""),
                 "error": "no_description",
             }
-            print("NO DESCRIPTION")
+            tqdm.write(f"  NO DESC {sci_name}")
 
         fetched += 1
-        if fetched % args.save_every == 0:
-            save_data(existing)
-            print(f"  --- Saved progress ({fetched} fetched, {success} with descriptions) ---")
+        save_data(existing)
 
         time.sleep(delay)
 
-    save_data(existing)
+    pbar.close()
     print(f"\nDone! Fetched {fetched} species, {success} with descriptions.")
     print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries")
 

@@ -1,6 +1,7 @@
 openpyxl>=3.1
 pyyaml>=6.0
 Pillow>=10.0
+tqdm>=4.60
 fastapi>=0.100
 uvicorn>=0.20
 jinja2>=3.1
