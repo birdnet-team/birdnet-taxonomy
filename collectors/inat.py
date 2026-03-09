@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import time
+from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -31,6 +32,7 @@ from collectors._common import (
 )
 
 OUTPUT_FILE = RAW_DIR / "inat_data.json"
+CACHE_DIR = RAW_DIR / "cache"
 SPECIES_COUNTS_URL = "https://api.inaturalist.org/v1/observations/species_counts"
 TAXA_URL = "https://api.inaturalist.org/v1/taxa"
 COUNTS_PER_PAGE = 500  # max for species_counts endpoint
@@ -55,6 +57,55 @@ def photo_url_large(url: str) -> str:
     if not url:
         return ""
     return url.replace("/square.", "/large.").replace("/medium.", "/large.")
+
+
+# ── Cache helpers ──────────────────────────────────────────────────────
+
+def _cache_path(kind: str, taxon_id: int) -> 'Path':
+    """Return path for a cache file, e.g. raw_data/cache/sound_counts_3.json."""
+    return CACHE_DIR / f"{kind}_{taxon_id}.json"
+
+
+def _cache_age_str(timestamp: str) -> str:
+    """Human-readable age from an ISO timestamp."""
+    try:
+        ts = datetime.fromisoformat(timestamp)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - ts
+        hours = delta.total_seconds() / 3600
+        if hours < 1:
+            return f"{int(delta.total_seconds() / 60)}m ago"
+        if hours < 24:
+            return f"{hours:.1f}h ago"
+        return f"{delta.days}d ago"
+    except Exception:
+        return "unknown age"
+
+
+def _load_cache(kind: str, taxon_id: int) -> tuple[list | None, str]:
+    """Load cached Phase 1 data. Returns (data_list, timestamp) or (None, "")."""
+    path = _cache_path(kind, taxon_id)
+    if not path.exists():
+        return None, ""
+    try:
+        with open(path, encoding="utf-8") as f:
+            cached = json.load(f)
+        return cached.get("data"), cached.get("timestamp", "")
+    except Exception:
+        return None, ""
+
+
+def _save_cache(kind: str, taxon_id: int, data: list, **meta):
+    """Save Phase 1 data to cache with timestamp and optional metadata."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "taxon_id": taxon_id,
+        **meta,
+        "data": data,
+    }
+    save_json(payload, _cache_path(kind, taxon_id))
 
 
 # ── Phase 1: sound observation counts ──────────────────────────────────
@@ -234,13 +285,16 @@ def fetch_all_species(taxon_id: int, per_page: int, all_names: bool,
 
 
 def fetch_group(group: dict, existing: dict, cfg: dict,
-                limit: int = 0, save_every: int = 500) -> int:
+                limit: int = 0, save_every: int = 500,
+                refresh: bool = False) -> int:
     """Fetch species for one taxon group. Returns count of new records.
 
     If sounds_only is true: bulk-query species_counts for species with sounds,
     then batch-fetch full taxon details.
     If sounds_only is false: paginate all species via taxa API, then enrich
     with sound counts.
+
+    Set refresh=True to bypass cached Phase 1 data.
     """
     group_name = group["name"]
     taxon_id = group["taxon_id"]
@@ -254,22 +308,45 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
 
     if sounds_only:
         return _fetch_sounds_only(group_name, taxon_id, min_obs,
-                                  all_names, delay, existing, limit, save_every)
+                                  all_names, delay, existing, limit,
+                                  save_every, refresh)
     else:
         return _fetch_all_species(group_name, taxon_id,
-                                  all_names, delay, existing, limit, save_every)
+                                  all_names, delay, existing, limit,
+                                  save_every, refresh)
 
 
 def _fetch_sounds_only(group_name: str, taxon_id: int, min_obs: int,
                        all_names: bool, delay: float, existing: dict,
-                       limit: int, save_every: int) -> int:
+                       limit: int, save_every: int,
+                       refresh: bool = False) -> int:
     """Fetch only species with sound observations (sounds_only=true groups)."""
     min_obs_label = f"≥{min_obs} sound obs" if min_obs else "all with sounds"
     print(f"Fetching {group_name} (taxon_id={taxon_id}, {min_obs_label})")
 
-    # Phase 1: get species with sound observations
-    print("  Phase 1: Fetching sound observation counts...")
-    sound_species = fetch_sound_species(taxon_id, min_obs, delay)
+    # Phase 1: get species with sound observations (cached)
+    sound_species = None
+    if not refresh:
+        cached, ts = _load_cache("sound_counts", taxon_id)
+        if cached is not None:
+            sound_species = cached
+            # Apply min_observations filter to cached data
+            if min_obs:
+                sound_species = [s for s in sound_species
+                                 if s.get("sound_count", 0) >= min_obs]
+            print(f"  Phase 1: Using cached sound counts "
+                  f"({_cache_age_str(ts)}, {len(sound_species)} species)")
+
+    if sound_species is None:
+        print("  Phase 1: Fetching sound observation counts...")
+        sound_species = fetch_sound_species(taxon_id, min_obs=0, delay=delay)
+        # Cache ALL sound species (unfiltered) so cache works with any min_obs
+        _save_cache("sound_counts", taxon_id, sound_species,
+                    total_unfiltered=len(sound_species))
+        # Now apply min_observations filter
+        if min_obs:
+            sound_species = [s for s in sound_species
+                             if s.get("sound_count", 0) >= min_obs]
     print(f"  Found {len(sound_species)} species with sound observations")
 
     if is_shutting_down():
@@ -313,7 +390,8 @@ def _fetch_sounds_only(group_name: str, taxon_id: int, min_obs: int,
 
 def _fetch_all_species(group_name: str, taxon_id: int,
                        all_names: bool, delay: float, existing: dict,
-                       limit: int, save_every: int) -> int:
+                       limit: int, save_every: int,
+                       refresh: bool = False) -> int:
     """Fetch ALL species for a group (sounds_only=false), enrich with sound counts."""
     print(f"Fetching {group_name} (taxon_id={taxon_id}, all species)")
 
@@ -323,10 +401,21 @@ def _fetch_all_species(group_name: str, taxon_id: int,
     )
     print(f"  Already have: {existing_in_group} from previous runs")
 
-    # Phase 1: paginate all species from taxa API
-    print("  Phase 1: Fetching all species from taxa API...")
-    all_results = fetch_all_species(taxon_id, per_page=200, all_names=all_names,
-                                    delay=delay)
+    # Phase 1: paginate all species from taxa API (cached)
+    all_results = None
+    if not refresh:
+        cached, ts = _load_cache("taxa", taxon_id)
+        if cached is not None:
+            all_results = cached
+            print(f"  Phase 1: Using cached taxa list "
+                  f"({_cache_age_str(ts)}, {len(all_results)} species)")
+
+    if all_results is None:
+        print("  Phase 1: Fetching all species from taxa API...")
+        all_results = fetch_all_species(taxon_id, per_page=200,
+                                        all_names=all_names, delay=delay)
+        _save_cache("taxa", taxon_id, all_results,
+                    all_names=all_names)
     print(f"  Found {len(all_results)} total species")
 
     if is_shutting_down():
@@ -354,9 +443,21 @@ def _fetch_all_species(group_name: str, taxon_id: int,
         save_json(existing, OUTPUT_FILE)
         return new_count
 
-    # Phase 2: enrich with sound observation counts
-    print("  Phase 2: Fetching sound observation counts...")
-    sound_species = fetch_sound_species(taxon_id, min_obs=0, delay=delay)
+    # Phase 2: enrich with sound observation counts (cached)
+    sound_species = None
+    if not refresh:
+        cached, ts = _load_cache("sound_counts", taxon_id)
+        if cached is not None:
+            sound_species = cached
+            print(f"  Phase 2: Using cached sound counts "
+                  f"({_cache_age_str(ts)}, {len(sound_species)} species)")
+
+    if sound_species is None:
+        print("  Phase 2: Fetching sound observation counts...")
+        sound_species = fetch_sound_species(taxon_id, min_obs=0, delay=delay)
+        _save_cache("sound_counts", taxon_id, sound_species,
+                    total_unfiltered=len(sound_species))
+
     sound_lookup = {s["id"]: s["sound_count"] for s in sound_species}
     updated = _update_sound_counts(existing, sound_lookup, group_name)
 
@@ -447,6 +548,10 @@ def main():
         "--save-every", type=int, default=500,
         help="Save progress every N new species"
     )
+    parser.add_argument(
+        "--refresh", action="store_true",
+        help="Bypass cached Phase 1 data and re-fetch from API"
+    )
     args = parser.parse_args()
 
     # Filter groups
@@ -506,7 +611,7 @@ def main():
         if is_shutting_down():
             break
         new = fetch_group(group, existing, cfg, limit=args.limit,
-                          save_every=args.save_every)
+                          save_every=args.save_every, refresh=args.refresh)
         total_new += new
 
     # Final stats
