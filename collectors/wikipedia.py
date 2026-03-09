@@ -635,10 +635,12 @@ def main():
     not_found = len(all_titles) - found
     print(f"  Found: {found}, not found: {not_found}")
 
+    # Save after Phase 1 so English data isn't lost
+    _assemble_records(work, english_data, {}, {}, existing)
+    save_json(existing, OUTPUT_FILE)
+    print(f"  Saved {found} records after Phase 1")
+
     if is_shutting_down():
-        _assemble_records(work, english_data, {}, {}, existing)
-        save_json(existing, OUTPUT_FILE)
-        print(f"  Interrupted — saved {found} partial records")
         return
 
     # ── Phase 2: Locale extracts ──────────────────────────────────────
@@ -652,10 +654,12 @@ def main():
     locale_extracts = _run_phase2(english_data, pbar2)
     pbar2.close()
 
+    # Save after Phase 2 so locale extracts aren't lost
+    _assemble_records(work, english_data, locale_extracts, {}, existing)
+    save_json(existing, OUTPUT_FILE)
+    print(f"  Saved {total_locale_items} locale extracts after Phase 2")
+
     if is_shutting_down():
-        _assemble_records(work, english_data, locale_extracts, {}, existing)
-        save_json(existing, OUTPUT_FILE)
-        print(f"  Interrupted — saved records (some without image licenses)")
         return
 
     # ── Phase 3: Image licenses ───────────────────────────────────────
@@ -666,7 +670,7 @@ def main():
     title_licenses = _run_phase3(english_data, pbar3)
     pbar3.close()
 
-    # ── Assemble and save ─────────────────────────────────────────────
+    # ── Final save (with image licenses) ──────────────────────────────
     _assemble_records(work, english_data, locale_extracts, title_licenses, existing)
     save_json(existing, OUTPUT_FILE)
 
