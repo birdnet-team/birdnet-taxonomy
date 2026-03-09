@@ -54,7 +54,7 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 3. eBird | `python -m collectors.ebird` | `raw_data/ebird_data.json` |
 | 4. Wikipedia | `python -m collectors.wikipedia` | `raw_data/wikipedia_data.json` |
 | 5. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
-| 6. Images (optional) | `python -m collectors.images` | `dist/images/*.webp` |
+| 6. Images (optional) | `python -m collectors.images` | `dist/images/*.webp` (`--dev` → `dev/images/`) |
 
 Steps 1–2 collect source taxonomy data. Steps 3–5 enrich species with descriptions, images, and translations. Step 5 optionally uses Claude to generate polished English descriptions and translate them to configured locales. Step 6 batch-downloads species images as named WebP files with content-aware smart cropping (YOLOv8-nano animal detection).
 

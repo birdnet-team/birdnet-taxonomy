@@ -9,25 +9,39 @@ Images are saved to dev/images/ or dist/images/ with filenames:
 Incremental: existing files are skipped.  Supports --limit, --dry-run,
 and graceful shutdown (Ctrl-C saves progress).
 
+Uses a thread pool for concurrent downloads.  Each species image is
+downloaded once and then cropped/saved to all requested sizes.
+
 Usage:
     python -m collectors.images              # all sizes → dist/images/
     python -m collectors.images --dev        # → dev/images/
-    python -m collectors.images --size medium # only medium size
+    python -m collectors.images --size medium        # only medium
+    python -m collectors.images --size medium large  # medium + large
     python -m collectors.images --limit 100  # first 100 species
     python -m collectors.images --dry-run    # preview work
+    python -m collectors.images --workers 8  # 8 threads (default: 4)
 """
+
+from __future__ import annotations
 
 import argparse
 import json
 import sys
-import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from tqdm import tqdm
 
-from collectors._common import ROOT, RateLimiter, is_shutting_down, setup_shutdown
+from collectors._common import ROOT, is_shutting_down, setup_shutdown
 from config import load_config
-from utils.images import ImageSize, image_filename, save_species_image
+from utils.images import (
+    ImageSize,
+    crop_and_resize,
+    download_image,
+    image_filename,
+    to_webp,
+)
 
 
 def _load_species(dev: bool) -> list[dict]:
@@ -54,32 +68,75 @@ def _load_image_config() -> tuple[dict[str, ImageSize], int]:
     return sizes, quality
 
 
+def _process_species(rec: dict, needed_sizes: dict[str, ImageSize],
+                     out_dir: Path, quality: int) -> tuple[int, int]:
+    """Download one species image, crop to all needed sizes.
+
+    Downloads the source image once, then crops and saves for each size.
+    Returns (downloaded_count, failed_count).
+    """
+    url = rec["image_url"]
+    sci = rec.get("scientific_name", "")
+    common = rec.get("common_name", "")
+    author = rec.get("image_author", "")
+
+    img = download_image(url)
+    if img is None:
+        return 0, len(needed_sizes)
+
+    ok = 0
+    fail = 0
+    for size_name, size in needed_sizes.items():
+        fname = image_filename(sci, common, author, size_name)
+        dest = out_dir / fname
+        if dest.exists():
+            ok += 1
+            continue
+        try:
+            cropped = crop_and_resize(img.copy(), size)
+            webp = to_webp(cropped, quality)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_suffix(".tmp")
+            tmp.write_bytes(webp)
+            tmp.replace(dest)
+            ok += 1
+        except Exception:
+            fail += 1
+    return ok, fail
+
+
 def main():
     parser = argparse.ArgumentParser(description="Batch download species images")
     parser.add_argument("--dev", action="store_true",
                         help="Save to dev/images/ instead of dist/images/")
-    parser.add_argument("--size", choices=["thumb", "medium", "large"],
-                        help="Only download a specific size (default: all)")
+    parser.add_argument("--size", nargs="+", choices=["thumb", "medium", "large"],
+                        help="Sizes to download (default: all)")
     parser.add_argument("--limit", type=int, default=0,
                         help="Max species to process (0 = all)")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Number of download threads (default: 4)")
+    parser.add_argument("--quality", type=int, default=0,
+                        help="WebP quality 1-100 (default: from config.yml)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be downloaded without doing it")
-    parser.add_argument("--rps", type=float, default=5.0,
-                        help="Max requests per second (default: 5)")
     args = parser.parse_args()
 
-    shutdown = setup_shutdown()
+    setup_shutdown()
     species = _load_species(args.dev)
-    sizes, quality = _load_image_config()
+    all_sizes, quality = _load_image_config()
+    if args.quality:
+        quality = args.quality
 
     out_dir = ROOT / ("dev" if args.dev else "dist") / "images"
 
-    # Filter sizes
+    # Filter to requested sizes
     if args.size:
-        sizes = {args.size: sizes[args.size]}
+        sizes = {k: all_sizes[k] for k in args.size}
+    else:
+        sizes = all_sizes
 
     # Build work list: species that have an image_url and need at least one size
-    work: list[tuple[dict, list[str]]] = []
+    work: list[tuple[dict, dict[str, ImageSize]]] = []
     already_done = 0
 
     for rec in species:
@@ -90,14 +147,14 @@ def main():
         common = rec.get("common_name", "")
         author = rec.get("image_author", "")
 
-        needed_sizes = []
-        for size_name in sizes:
+        needed: dict[str, ImageSize] = {}
+        for size_name, size in sizes.items():
             fname = image_filename(sci, common, author, size_name)
             if not (out_dir / fname).exists():
-                needed_sizes.append(size_name)
+                needed[size_name] = size
 
-        if needed_sizes:
-            work.append((rec, needed_sizes))
+        if needed:
+            work.append((rec, needed))
         else:
             already_done += 1
 
@@ -109,46 +166,35 @@ def main():
     print(f"Already downloaded:  {already_done}")
     print(f"To download:         {len(work)} species, {total_files} files")
     print(f"Sizes:               {', '.join(sizes.keys())}")
+    print(f"Workers:             {args.workers}")
     print(f"Output:              {out_dir}")
 
     if args.dry_run or not work:
         return
 
-    limiter = RateLimiter(args.rps)
     downloaded = 0
     failed = 0
+    lock = threading.Lock()
 
     with tqdm(total=total_files, unit="img", desc="Downloading") as pbar:
-        for rec, needed_sizes in work:
-            if is_shutting_down():
-                print(f"\nStopped early. Downloaded {downloaded}, failed {failed}.")
-                break
-
-            url = rec["image_url"]
-            sci = rec.get("scientific_name", "")
-            common = rec.get("common_name", "")
-            author = rec.get("image_author", "")
-
-            for size_name in needed_sizes:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {}
+            for rec, needed in work:
                 if is_shutting_down():
                     break
+                fut = pool.submit(_process_species, rec, needed,
+                                  out_dir, quality)
+                futures[fut] = len(needed)
 
-                limiter.acquire()
-                result = save_species_image(
-                    url=url,
-                    scientific_name=sci,
-                    common_name=common,
-                    author=author,
-                    size_name=size_name,
-                    size=sizes[size_name],
-                    image_dir=out_dir,
-                    quality=quality,
-                )
-                if result:
-                    downloaded += 1
-                else:
-                    failed += 1
-                pbar.update(1)
+            for fut in as_completed(futures):
+                if is_shutting_down():
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    break
+                ok, fail = fut.result()
+                with lock:
+                    downloaded += ok
+                    failed += fail
+                pbar.update(futures[fut])
 
     print(f"\nDone. Downloaded {downloaded}, failed {failed}, "
           f"total on disk {already_done + downloaded}.")

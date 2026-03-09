@@ -23,6 +23,8 @@ Usage:
     result.save("out.webp", "WEBP", quality=80)
 """
 
+from __future__ import annotations
+
 import hashlib
 import io
 import logging
@@ -427,11 +429,12 @@ def image_filename(scientific_name: str, common_name: str,
 
     Format: <scientific>_<common>_<author>_<size>.webp
     All parts are sanitised to ASCII alphanumerics, hyphens, underscores.
+    The author field is truncated to 60 chars to avoid OS filename limits.
     """
     parts = [
         _sanitise(scientific_name),
         _sanitise(common_name) if common_name else "unknown",
-        _sanitise(author) if author else "unknown",
+        _sanitise(author)[:60].rstrip("_") if author else "unknown",
         size_name,
     ]
     return "_".join(p for p in parts if p) + ".webp"
