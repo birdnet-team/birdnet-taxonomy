@@ -16,8 +16,6 @@ Usage:
 """
 
 import argparse
-import hashlib
-import io
 import json
 import re
 import unicodedata
@@ -28,6 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
+from images import ImageSize, fetch_cached
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -140,7 +139,7 @@ def _normalise(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 _image_cache_dir: Path = ROOT / ".image_cache"
-_image_sizes: dict[str, tuple[int, int]] = {}
+_image_sizes: dict[str, ImageSize] = {}
 _image_quality: int = 80
 
 
@@ -153,61 +152,10 @@ def _init_image_config():
     _image_cache_dir.mkdir(parents=True, exist_ok=True)
     _image_quality = img.get("quality", 80)
     _image_sizes = {
-        "thumb": (img.get("thumb_width", 150), img.get("thumb_height", 100)),
-        "medium": (img.get("medium_width", 480), img.get("medium_height", 320)),
-        "large": (img.get("large_width", 1200), img.get("large_height", 800)),
+        "thumb": ImageSize(img.get("thumb_width", 150), img.get("thumb_height", 100)),
+        "medium": ImageSize(img.get("medium_width", 480), img.get("medium_height", 320)),
+        "large": ImageSize(img.get("large_width", 1200), img.get("large_height", 800)),
     }
-
-
-def _cache_key(url: str, size: str) -> str:
-    h = hashlib.sha256(url.encode()).hexdigest()[:16]
-    return f"{h}_{size}.webp"
-
-
-def _center_crop_3_2(img):
-    """Center-crop an image to 3:2 aspect ratio."""
-    w, h = img.size
-    target_ratio = 3 / 2
-    current_ratio = w / h
-    if abs(current_ratio - target_ratio) < 0.01:
-        return img
-    if current_ratio > target_ratio:
-        new_w = int(h * target_ratio)
-        left = (w - new_w) // 2
-        return img.crop((left, 0, left + new_w, h))
-    else:
-        new_h = int(w / target_ratio)
-        top = (h - new_h) // 2
-        return img.crop((0, top, w, top + new_h))
-
-
-def _fetch_and_convert(url: str, size: str) -> bytes | None:
-    """Fetch image from URL, crop, resize, convert to WebP."""
-    from PIL import Image
-
-    target = _image_sizes.get(size)
-    if not target:
-        return None
-
-    req = Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urlopen(req, timeout=30) as resp:
-            raw_bytes = resp.read()
-    except (HTTPError, URLError, TimeoutError):
-        return None
-
-    try:
-        img = Image.open(io.BytesIO(raw_bytes))
-        img = img.convert("RGB")
-    except Exception:
-        return None
-
-    img = _center_crop_3_2(img)
-    img.thumbnail(target, Image.LANCZOS)
-
-    buf = io.BytesIO()
-    img.save(buf, "WEBP", quality=_image_quality)
-    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -259,21 +207,10 @@ async def image_proxy(scientific_name: str, size: str):
     if not source_url:
         raise HTTPException(404, "No image available for this species")
 
-    cache_file = _image_cache_dir / _cache_key(source_url, size)
-    if cache_file.exists():
-        return Response(
-            content=cache_file.read_bytes(),
-            media_type="image/webp",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
-
-    webp_bytes = _fetch_and_convert(source_url, size)
+    webp_bytes = fetch_cached(source_url, size, _image_sizes[size],
+                              _image_cache_dir, _image_quality)
     if not webp_bytes:
         raise HTTPException(502, "Failed to fetch or convert source image")
-
-    tmp = cache_file.with_suffix(".tmp")
-    tmp.write_bytes(webp_bytes)
-    tmp.replace(cache_file)
 
     return Response(
         content=webp_bytes,
