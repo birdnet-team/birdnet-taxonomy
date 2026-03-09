@@ -426,15 +426,30 @@ def _run_phase1(titles: list[str], title_to_sci: dict[str, str],
 
 
 def _run_phase2(english_data: dict[str, dict],
+                existing_extracts: dict[str, dict[str, str]],
                 pbar: tqdm) -> dict[str, dict[str, str]]:
-    """Phase 2: Batch fetch locale extracts for all languages."""
+    """Phase 2: Batch fetch locale extracts for all languages.
+
+    Skips (input_title, lang) pairs that already have an extract in
+    existing_extracts.
+    """
     # Collect per-locale work: lang -> [(locale_title, input_title)]
     locale_work: dict[str, list[tuple[str, str]]] = {}
+    skipped = 0
     for input_title, data in english_data.items():
+        already = existing_extracts.get(input_title, {})
         for lang, info in data.get("langlinks", {}).items():
+            if lang in already:
+                skipped += 1
+                continue
             locale_work.setdefault(lang, []).append(
                 (info["title"], input_title)
             )
+
+    total_new = sum(len(v) for v in locale_work.values())
+    if skipped:
+        pbar.total = total_new
+        pbar.refresh()
 
     locale_extracts: dict[str, dict[str, str]] = {}
 
@@ -459,15 +474,28 @@ def _run_phase2(english_data: dict[str, dict],
 
 
 def _run_phase3(english_data: dict[str, dict],
+                existing_licenses: set[str],
                 pbar: tqdm) -> dict[str, dict]:
-    """Phase 3: Batch fetch image licenses from Wikimedia Commons."""
+    """Phase 3: Batch fetch image licenses from Wikimedia Commons.
+
+    Skips species that already have license info (in existing_licenses set
+    of input_titles).
+    """
     images: dict[str, str] = {}  # filename -> input_title
+    skipped = 0
     for input_title, data in english_data.items():
+        if input_title in existing_licenses:
+            skipped += 1
+            continue
         img = data.get("image_url", "")
         if img:
             filename = unquote(img.split("/")[-1])
             if filename:
                 images[filename] = input_title
+
+    if skipped:
+        pbar.total = len(images)
+        pbar.refresh()
 
     title_licenses: dict[str, dict] = {}
     filenames = list(images.keys())
@@ -492,9 +520,15 @@ def _assemble_records(
     title_licenses: dict[str, dict],
     existing: dict,
 ):
-    """Assemble final Wikipedia records from the three phases."""
+    """Assemble final Wikipedia records from the three phases.
+
+    Merges with existing records — preserves previously-fetched locale
+    extracts and image licenses not in the current run.
+    """
     for sci_name, wiki_title in work:
         data = english_data.get(wiki_title)
+        prev = existing.get(sci_name, {})
+
         if data:
             page_title = data.get("title", wiki_title)
             safe = quote(page_title, safe="/:@!$&'()*+,;=")
@@ -513,10 +547,15 @@ def _assemble_records(
             # Locale URLs and extracts
             for lang, info in data.get("langlinks", {}).items():
                 record["wikipedia_urls"][lang] = info["url"]
-            if wiki_title in locale_extracts:
-                record["extracts"].update(locale_extracts[wiki_title])
 
-            # Image + license
+            # Start with existing extracts, overlay new ones
+            merged_extracts = dict(prev.get("extracts", {}))
+            merged_extracts.update(record["extracts"])
+            if wiki_title in locale_extracts:
+                merged_extracts.update(locale_extracts[wiki_title])
+            record["extracts"] = merged_extracts
+
+            # Image + license (prefer new data, fall back to existing)
             img_url = data.get("image_url", "")
             if img_url:
                 record["image_url"] = img_url
@@ -525,6 +564,10 @@ def _assemble_records(
                     record["image_artist"] = lic.get("artist", "")
                     record["image_license"] = lic.get("license_short", "")
                     record["image_license_url"] = lic.get("license_url", "")
+                elif prev.get("image_license"):
+                    record["image_artist"] = prev.get("image_artist", "")
+                    record["image_license"] = prev.get("image_license", "")
+                    record["image_license_url"] = prev.get("image_license_url", "")
         else:
             wiki_url = f"http://en.wikipedia.org/wiki/{quote(wiki_title, safe='')}"
             record = {
@@ -578,7 +621,7 @@ def main():
     existing = load_json(OUTPUT_FILE)
     print(f"  Already have Wikipedia data for {len(existing)} species")
 
-    # Build work list
+    # Build work list: separate new species from incomplete ones
     if args.refetch:
         to_fetch = [
             (sci, species[sci])
@@ -593,14 +636,41 @@ def main():
     if args.limit:
         to_fetch = to_fetch[:args.limit]
 
-    # Build (sci_name, wiki_title) pairs
+    # Build (sci_name, wiki_title) pairs for new species
     work = []
     for sci, url in to_fetch:
         title = wiki_title_from_url(url)
         if title:
             work.append((sci, title))
 
-    print(f"  Will fetch {len(work)} species")
+    # Find incomplete species that need Phase 2 (locale extracts) or
+    # Phase 3 (image licenses) but already have Phase 1 data
+    incomplete = []
+    for sci, url in species.items():
+        if sci in {s for s, _ in work}:
+            continue  # already in new work list
+        rec = existing.get(sci)
+        if not rec or not rec.get("extract"):
+            continue  # no Phase 1 data
+        title = wiki_title_from_url(url)
+        if not title:
+            continue
+        needs_locales = len(rec.get("extracts", {})) < len(
+            rec.get("wikipedia_urls", {})
+        )
+        needs_license = (
+            rec.get("image_url") and not rec.get("image_license")
+        )
+        if needs_locales or needs_license:
+            incomplete.append((sci, title))
+
+    if args.limit:
+        remaining = max(0, args.limit - len(work))
+        incomplete = incomplete[:remaining]
+
+    print(f"  Will fetch {len(work)} new species")
+    print(f"  Will complete {len(incomplete)} incomplete species "
+          f"(missing locales/licenses)")
     print(f"  Target locales: {', '.join(target_locales)}")
 
     if args.dry_run:
@@ -608,11 +678,20 @@ def main():
             print(f"    {sci} -> {title}")
         if len(work) > 20:
             print(f"    ... and {len(work) - 20} more")
+        if incomplete:
+            print(f"  Incomplete (first 10):")
+            for sci, title in incomplete[:10]:
+                rec = existing.get(sci, {})
+                n_ext = len(rec.get("extracts", {}))
+                n_url = len(rec.get("wikipedia_urls", {}))
+                has_lic = "yes" if rec.get("image_license") else "no"
+                print(f"    {sci}: {n_ext}/{n_url} extracts, license={has_lic}")
 
+        total_work = len(work) + len(incomplete)
         n_locales = len([l for l in target_locales if l != "en"])
         en_batches = (len(work) + BATCH_SIZE - 1) // BATCH_SIZE
-        est_locale_batches = int(n_locales * len(work) * 0.6 / BATCH_SIZE) + n_locales
-        est_license_batches = en_batches
+        est_locale_batches = int(n_locales * total_work * 0.6 / BATCH_SIZE) + n_locales
+        est_license_batches = (total_work + BATCH_SIZE - 1) // BATCH_SIZE
         total_est = en_batches * 2 + est_locale_batches + est_license_batches
         print(f"\n  Estimated requests: ~{total_est}"
               f" (Phase 1: ~{en_batches * 2},"
@@ -624,60 +703,110 @@ def main():
     title_to_sci = {title: sci for sci, title in work}
     all_titles = [title for _, title in work]
 
-    # ── Phase 1: English Wikipedia ────────────────────────────────────
-    en_batches = (len(all_titles) + BATCH_SIZE - 1) // BATCH_SIZE
-    print(f"\nPhase 1: English Wikipedia ({en_batches} batches)...")
-    pbar1 = tqdm(total=len(all_titles), desc="Phase 1", unit="sp")
-    english_data = _run_phase1(all_titles, title_to_sci, target_locales, pbar1)
-    pbar1.close()
+    # ── Phase 1: English Wikipedia (new species only) ─────────────────
+    english_data = {}
+    if all_titles:
+        en_batches = (len(all_titles) + BATCH_SIZE - 1) // BATCH_SIZE
+        print(f"\nPhase 1: English Wikipedia ({en_batches} batches, "
+              f"{len(all_titles)} new species)...")
+        pbar1 = tqdm(total=len(all_titles), desc="Phase 1", unit="sp")
+        english_data = _run_phase1(all_titles, title_to_sci, target_locales, pbar1)
+        pbar1.close()
 
-    found = len(english_data)
-    not_found = len(all_titles) - found
-    print(f"  Found: {found}, not found: {not_found}")
+        found = len(english_data)
+        not_found = len(all_titles) - found
+        print(f"  Found: {found}, not found: {not_found}")
 
-    # Save after Phase 1 so English data isn't lost
-    _assemble_records(work, english_data, {}, {}, existing)
-    save_json(existing, OUTPUT_FILE)
-    print(f"  Saved {found} records after Phase 1")
+        # Save after Phase 1 so English data isn't lost
+        _assemble_records(work, english_data, {}, {}, existing)
+        save_json(existing, OUTPUT_FILE)
+        print(f"  Saved {found} records after Phase 1")
+    else:
+        print(f"\nPhase 1: No new species to fetch")
 
     if is_shutting_down():
         return
+
+    # Reconstruct english_data for incomplete species from existing records
+    # so Phase 2/3 can generate work for them
+    for sci, wiki_title in incomplete:
+        if wiki_title in english_data:
+            continue  # already handled
+        rec = existing.get(sci, {})
+        if not rec.get("extract"):
+            continue
+        # Rebuild the english_data entry from the stored record
+        langlinks = {}
+        for lang, url in rec.get("wikipedia_urls", {}).items():
+            if lang == "en":
+                continue
+            # Extract title from URL
+            parsed = urlparse(url)
+            if "/wiki/" in parsed.path:
+                loc_title = unquote(parsed.path.split("/wiki/")[-1])
+                langlinks[lang] = {"url": url, "title": loc_title}
+        english_data[wiki_title] = {
+            "title": rec.get("title", wiki_title),
+            "extract": rec.get("extract", ""),
+            "description": rec.get("description", ""),
+            "image_url": rec.get("image_url", ""),
+            "langlinks": langlinks,
+        }
+
+    all_work = work + incomplete
+
+    # Build lookup of existing extracts per wiki_title (for Phase 2 skip)
+    existing_extracts: dict[str, dict[str, str]] = {}
+    for sci, wiki_title in all_work:
+        rec = existing.get(sci, {})
+        exts = rec.get("extracts", {})
+        if exts:
+            existing_extracts[wiki_title] = exts
+
+    # Build set of wiki_titles that already have image license (for Phase 3 skip)
+    existing_licenses: set[str] = set()
+    for sci, wiki_title in all_work:
+        rec = existing.get(sci, {})
+        if rec.get("image_license"):
+            existing_licenses.add(wiki_title)
 
     # ── Phase 2: Locale extracts ──────────────────────────────────────
     total_locale_items = sum(
         len(d.get("langlinks", {}))
         for d in english_data.values()
     )
-    locale_batches = (total_locale_items + BATCH_SIZE - 1) // BATCH_SIZE
-    print(f"\nPhase 2: Locale extracts ({total_locale_items} items, ~{locale_batches} batches)...")
+    print(f"\nPhase 2: Locale extracts ({total_locale_items} total langlinks)...")
     pbar2 = tqdm(total=total_locale_items, desc="Phase 2", unit="ext")
-    locale_extracts = _run_phase2(english_data, pbar2)
+    locale_extracts = _run_phase2(english_data, existing_extracts, pbar2)
     pbar2.close()
 
     # Save after Phase 2 so locale extracts aren't lost
-    _assemble_records(work, english_data, locale_extracts, {}, existing)
+    _assemble_records(all_work, english_data, locale_extracts, {}, existing)
     save_json(existing, OUTPUT_FILE)
-    print(f"  Saved {total_locale_items} locale extracts after Phase 2")
+    n_new_extracts = sum(len(v) for v in locale_extracts.values())
+    print(f"  Saved {n_new_extracts} new locale extracts after Phase 2")
 
     if is_shutting_down():
         return
 
     # ── Phase 3: Image licenses ───────────────────────────────────────
     n_images = sum(1 for d in english_data.values() if d.get("image_url"))
-    img_batches = (n_images + BATCH_SIZE - 1) // BATCH_SIZE
-    print(f"\nPhase 3: Image licenses ({n_images} images, ~{img_batches} batches)...")
-    pbar3 = tqdm(total=n_images, desc="Phase 3", unit="img")
-    title_licenses = _run_phase3(english_data, pbar3)
+    n_need_license = n_images - len(existing_licenses)
+    img_batches = (n_need_license + BATCH_SIZE - 1) // BATCH_SIZE
+    print(f"\nPhase 3: Image licenses ({n_need_license} need licenses, "
+          f"{len(existing_licenses)} already done, ~{img_batches} batches)...")
+    pbar3 = tqdm(total=n_need_license, desc="Phase 3", unit="img")
+    title_licenses = _run_phase3(english_data, existing_licenses, pbar3)
     pbar3.close()
 
     # ── Final save (with image licenses) ──────────────────────────────
-    _assemble_records(work, english_data, locale_extracts, title_licenses, existing)
+    _assemble_records(all_work, english_data, locale_extracts, title_licenses, existing)
     save_json(existing, OUTPUT_FILE)
 
-    success = sum(1 for _, t in work if t in english_data)
-    total_extracts = sum(len(v) for v in locale_extracts.values())
-    print(f"\nDone! {success}/{len(work)} species with summaries,"
-          f" {total_extracts} locale extracts, {len(title_licenses)} image licenses.")
+    success = sum(1 for _, t in all_work if t in english_data)
+    print(f"\nDone! {success}/{len(all_work)} species with summaries,"
+          f" {n_new_extracts} new locale extracts,"
+          f" {len(title_licenses)} new image licenses.")
     print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries")
 
 

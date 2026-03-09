@@ -804,14 +804,18 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         eb = ebird.get(sci_name, {})
 
         description = ""
+        description_source = ""
         if cl.get("description_en"):
             description = cl["description_en"]
+            description_source = "claude"
             desc_sources["claude"] += 1
         elif wp.get("extract"):
             description = wp["extract"]
+            description_source = "wikipedia"
             desc_sources["wikipedia"] += 1
         elif eb.get("description"):
             description = eb["description"]
+            description_source = "ebird"
             desc_sources["ebird"] += 1
         else:
             desc_sources["none"] += 1
@@ -822,6 +826,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "taxon_group": tax.get("taxon_group", ""),
             "common_names": tax.get("common_names", {}),
             "description": description,
+            "description_source": description_source,
             "image_url": tax.get("image_url", ""),
             "image_author": tax.get("image_author", ""),
             "image_license": tax.get("image_license", ""),
@@ -877,7 +882,7 @@ def records_to_csv(records: list[dict]) -> str:
 
     base_cols = [
         "scientific_name", "common_name", "taxon_group",
-        "description",
+        "description", "description_source",
         "image_url", "image_author", "image_license", "image_source",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "observations_count",
