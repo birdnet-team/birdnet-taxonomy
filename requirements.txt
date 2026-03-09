@@ -1,6 +1,8 @@
 openpyxl>=3.1
 pyyaml>=6.0
 Pillow>=10.0
+onnxruntime>=1.16
+numpy>=1.24
 tqdm>=4.60
 fastapi>=0.100
 uvicorn>=0.20

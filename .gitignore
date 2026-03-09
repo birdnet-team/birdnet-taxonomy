@@ -211,3 +211,4 @@ dev/
 dist/
 images/
 .image_cache/
+.models/

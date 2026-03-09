@@ -89,7 +89,7 @@ claude:
     - zh         # Chinese
     - ru         # Russian
     - ar         # Arabic
-  batch_size: 10          # species per API call (describe + translate combined)
+  batch_size: 5           # species per API call (describe + translate combined)
   max_source_chars: 500   # truncate source text per species to save tokens
   max_tokens: 16384       # max output tokens per API call
   request_delay: 0.5

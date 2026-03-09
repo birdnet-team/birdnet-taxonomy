@@ -85,9 +85,9 @@ def _call_claude(system_prompt: str, user_message: str,
         "anthropic-version": "2023-06-01",
     })
 
-    for attempt in range(3):
+    for attempt in range(4):
         try:
-            with urlopen(req, timeout=120) as resp:
+            with urlopen(req, timeout=300) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 content = data.get("content", [])
                 if content and content[0].get("type") == "text":
@@ -96,17 +96,20 @@ def _call_claude(system_prompt: str, user_message: str,
         except HTTPError as e:
             body = e.read().decode("utf-8", errors="replace") if e.fp else ""
             if e.code == 429 or e.code >= 500:
-                wait = min(2 ** (attempt + 1), 30)
+                wait = min(2 ** (attempt + 1), 60)
                 tqdm.write(f"  Claude {e.code}, retrying in {wait}s...")
                 time.sleep(wait)
                 continue
             tqdm.write(f"  Claude API error {e.code}: {body[:200]}")
             return None
-        except (URLError, TimeoutError) as e:
-            if attempt < 2:
-                time.sleep(min(2 ** attempt, 10))
+        except (URLError, TimeoutError, OSError) as e:
+            if attempt < 3:
+                wait = min(2 ** (attempt + 1), 30)
+                tqdm.write(f"  Claude timeout/network error, "
+                           f"retrying in {wait}s... ({e})")
+                time.sleep(wait)
                 continue
-            tqdm.write(f"  Claude API error: {e}")
+            tqdm.write(f"  Claude API error after {attempt + 1} attempts: {e}")
             return None
 
     return None
