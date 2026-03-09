@@ -44,33 +44,28 @@ wikipedia:
   workers: 4             # parallel species fetchers (--workers override)
   rps: 50                # max requests per second (--rps override)
   # Locales for which to fetch Wikipedia langlinks and extracts.
-  # These are independent from Claude translation locales.
+  # Europe (broad), Americas (en/es/pt), China, Russia, Africa/Middle East.
   locales:
-    - en
-    - de
-    - fr
-    - es
-    - pt
-    - it
-    - nl
-    - pl
-    - sv
-    - da
-    - "no"
-    - fi
-    - cs
-    - ru
-    - ja
-    - zh
-    - ko
-    - ar
-    - hi
-    - tr
-    - uk
-    - vi
-    - id
-    - th
-    - he
+    - en         # English (UK, IE, global)
+    - de         # German (DE, AT, CH)
+    - fr         # French (FR, BE, CH, West Africa)
+    - es         # Spanish (ES, Latin America)
+    - pt         # Portuguese (PT, Brazil)
+    - it         # Italian (IT, CH)
+    - nl         # Dutch (NL, BE)
+    - pl         # Polish (PL)
+    - sv         # Swedish (SE)
+    - da         # Danish (DK)
+    - "no"       # Norwegian (NO)
+    - fi         # Finnish (FI)
+    - cs         # Czech (CZ)
+    - zh         # Chinese (CN)
+    - ru         # Russian (RU)
+    - ar         # Arabic (North Africa, Middle East)
+    - ja         # Japanese (JP)
+    - ko         # Korean (KR)
+    - tr         # Turkish (TR)
+    - sw         # Swahili (East Africa)
 
 # AviList checklist download
 avilist:
@@ -79,27 +74,20 @@ avilist:
 
 # Claude API settings (API key is in .env, not here)
 # Locales listed here are the target languages for Claude-generated
-# translations. All other locales (common names, eBird, Wikidata) are
-# auto-discovered from the data sources.
+# translations. Core European + Chinese, Russian, Arabic.
 claude:
   model: "claude-sonnet-4-20250514"
   locales:
-    - en
-    - de
-    - fr
-    - es
-    - pt
-    - it
-    - nl
-    - pl
-    - sv
-    - da
-    - "no"
-    - fi
-    - cs
-    - ru
-    - ja
-    - zh
+    - en         # English
+    - de         # German
+    - fr         # French
+    - es         # Spanish
+    - pt         # Portuguese
+    - it         # Italian
+    - nl         # Dutch
+    - zh         # Chinese
+    - ru         # Russian
+    - ar         # Arabic
   batch_size: 5           # species per API call (describe + translate)
   max_source_chars: 500   # truncate source text per species to save tokens
   description_max_tokens: 2048   # for batched description generation

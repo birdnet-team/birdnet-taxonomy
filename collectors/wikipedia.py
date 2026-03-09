@@ -182,11 +182,12 @@ def fetch_summary(title: str, sci_name: str = "") -> dict | None:
     return None
 
 
-def fetch_langlinks(title: str) -> dict[str, dict]:
-    """Fetch all localized Wikipedia article URLs and titles via langlinks API.
+def fetch_langlinks(title: str, target_locales: list[str]) -> dict[str, dict]:
+    """Fetch localized Wikipedia article URLs and titles via langlinks API.
 
-    Returns dict of lang -> {"url": ..., "title": ...} for all available languages.
+    Only returns entries for languages in target_locales (excluding 'en').
     """
+    target_set = {l for l in target_locales if l != "en"}
     url = (
         f"https://en.wikipedia.org/w/api.php"
         f"?action=query&titles={quote(title, safe='')}"
@@ -212,7 +213,7 @@ def fetch_langlinks(title: str) -> dict[str, dict]:
     for ll in langlinks:
         lang = ll.get("lang", "")
         article_title = ll.get("*", "")
-        if lang and article_title:
+        if lang and article_title and lang in target_set:
             result[lang] = {
                 "url": f"https://{lang}.wikipedia.org/wiki/{quote(article_title, safe='/:@!$&\'()*+,;=')}",
                 "title": article_title,
@@ -274,12 +275,12 @@ def fetch_locale_extract(lang: str, title: str) -> str | None:
     return data.get("extract", "") or None
 
 
-def fetch_species_wikipedia(sci_name: str, wiki_url: str) -> tuple[str, dict]:
+def fetch_species_wikipedia(sci_name: str, wiki_url: str,
+                            target_locales: list[str]) -> tuple[str, dict]:
     """Fetch Wikipedia data for one species.
 
-    Fetches the English summary, auto-discovers all available language editions
-    via langlinks, and fetches locale extracts (summaries) for every discovered
-    language.
+    Fetches the English summary, langlinks filtered to target_locales,
+    and locale extracts (summaries) for each matched language.
 
     Returns (sci_name, record_dict).
     """
@@ -291,21 +292,22 @@ def fetch_species_wikipedia(sci_name: str, wiki_url: str) -> tuple[str, dict]:
     summary = fetch_summary(title, sci_name=sci_name)
     resolved_title = summary["title"] if summary else title
 
-    # Auto-discover all available language editions
-    locale_links = fetch_langlinks(resolved_title)
+    # Fetch langlinks filtered to configured locales
+    locale_links = fetch_langlinks(resolved_title, target_locales)
     locale_urls = {lang: info["url"] for lang, info in locale_links.items()}
 
-    # Fetch locale extracts in parallel for all discovered languages
+    # Fetch locale extracts in parallel
     locale_extracts: dict[str, str] = {}
 
     def _fetch_one(lang_info: tuple[str, dict]) -> tuple[str, str | None]:
         lang, info = lang_info
         return lang, fetch_locale_extract(lang, info["title"])
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for lang, ext in pool.map(_fetch_one, locale_links.items()):
-            if ext:
-                locale_extracts[lang] = ext
+    if locale_links:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for lang, ext in pool.map(_fetch_one, locale_links.items()):
+                if ext:
+                    locale_extracts[lang] = ext
 
     if summary:
         record = {
@@ -363,6 +365,8 @@ def main():
     global _rate
     _rate = RateLimiter(args.rps)
 
+    target_locales = wiki_cfg.get("locales", ["en"])
+
     print("Loading species with Wikipedia URLs...")
     species = load_species_with_wikipedia()
     print(f"  Found {len(species)} species with Wikipedia URLs")
@@ -388,6 +392,7 @@ def main():
         to_fetch = to_fetch[:args.limit]
 
     print(f"  Will fetch {len(to_fetch)} species from Wikipedia ({args.workers} workers)")
+    print(f"  Target locales: {', '.join(target_locales)}")
 
     if args.dry_run:
         for sci, url in to_fetch[:20]:
@@ -404,7 +409,7 @@ def main():
         for sci, url in to_fetch:
             if is_shutting_down():
                 break
-            futures[pool.submit(fetch_species_wikipedia, sci, url)] = sci
+            futures[pool.submit(fetch_species_wikipedia, sci, url, target_locales)] = sci
 
         for future in as_completed(futures):
             sci_name = futures[future]
