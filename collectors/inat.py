@@ -106,20 +106,22 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
     """Fetch species for one taxon group. Returns count of new records.
 
     Results are sorted by observation count (descending) by the API.
-    The group's 'fraction' setting (0.0–1.0) controls what share of
-    species to fetch — e.g. 0.1 fetches the top 10% most-observed.
+    The group's 'min_observations' setting controls the cutoff — once a
+    species with fewer observations is encountered, fetching stops.
+    Set to 0 to fetch all species (no filter).
     """
     group_name = group["name"]
     taxon_id = group["taxon_id"]
-    fraction = group.get("fraction", 1.0)
+    min_obs = group.get("min_observations", 0)
     inat_cfg = cfg.get("inat", {})
     base_url = inat_cfg.get("base_url", "https://api.inaturalist.org/v1/taxa")
     per_page = min(inat_cfg.get("per_page", 200), 200)  # iNat API caps at 200
     all_names = inat_cfg.get("all_names", True)
     delay = inat_cfg.get("request_delay", 1.1)
 
+    min_obs_label = f"min_obs={min_obs}" if min_obs else "all species"
     print(f"\n{'='*60}")
-    print(f"Fetching {group_name} (taxon_id={taxon_id}, fraction={fraction})...")
+    print(f"Fetching {group_name} (taxon_id={taxon_id}, {min_obs_label})...")
 
     # First request to get total
     data = fetch_page(base_url, taxon_id, page=1, per_page=per_page,
@@ -134,13 +136,10 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
     if actual_per_page and actual_per_page < per_page:
         per_page = actual_per_page
 
-    # Apply fraction cap — only fetch top N% of species (sorted by obs count)
-    target = int(total * fraction) if fraction < 1.0 else total
-    target_pages = (target + per_page - 1) // per_page
     total_pages = (total + per_page - 1) // per_page
-    print(f"  Total species on iNat: {total} (target: {target}, ~{target_pages} pages of {per_page})")
-    if fraction < 1.0:
-        print(f"  Fraction {fraction} → fetching top {target} species")
+    print(f"  Total species on iNat: {total} (~{total_pages} pages of {per_page})")
+    if min_obs:
+        print(f"  Filtering to species with ≥{min_obs} observations")
 
     # Count how many we already have for this group
     existing_in_group = sum(
@@ -152,6 +151,7 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
     new_count = 0
     skipped = 0
     seen_total = 0  # actual species seen across all pages
+    hit_cutoff = False
     page = 1
 
     while not is_shutting_down():
@@ -181,6 +181,13 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
                 skipped += 1
                 continue
 
+            # Check min_observations cutoff — results are sorted desc,
+            # so once we drop below the threshold, all remaining are lower.
+            obs_count = result.get("observations_count", 0)
+            if min_obs and obs_count < min_obs:
+                hit_cutoff = True
+                break
+
             record = extract_record(result, group_name)
             existing[sci_name] = record
             new_count += 1
@@ -190,10 +197,10 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
 
         seen_total += len(results)
         print(
-            f"  Page {page}/{target_pages} — "
+            f"  Page {page}/{total_pages} — "
             f"{len(results)} species, "
             f"{new_count} new, {skipped} skipped, "
-            f"{seen_total}/{target} seen",
+            f"{seen_total} seen",
             flush=True,
         )
 
@@ -203,9 +210,8 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
         if (limit and new_count >= limit) or is_shutting_down():
             break
 
-        if seen_total >= target:
-            if fraction < 1.0:
-                print(f"  Reached fraction cap ({target}/{total} species)")
+        if hit_cutoff:
+            print(f"  Reached min_observations cutoff ({min_obs} obs)")
             break
 
         if page >= total_pages:
@@ -259,20 +265,18 @@ def main():
     if args.dry_run:
         inat_cfg = cfg.get("inat", {})
         base_url = inat_cfg.get("base_url", "https://api.inaturalist.org/v1/taxa")
-        per_page = inat_cfg.get("per_page", 200)
         for g in groups:
-            frac = g.get("fraction", 1.0)
+            min_obs = g.get("min_observations", 0)
             data = fetch_page(base_url, g["taxon_id"], page=1, per_page=1,
                               all_names=False)
             total = data["total_results"] if data else "?"
-            target = int(total * frac) if isinstance(total, int) and frac < 1.0 else total
             existing_in_group = sum(
                 1 for v in existing.values()
                 if v.get("taxon_group") == g["name"]
                 and v.get("inat_id") is not None
             )
-            label = f" (top {frac:.0%})" if frac < 1.0 else ""
-            print(f"  {g['name']}: {total} on iNat{label} → target {target}, {existing_in_group} already fetched")
+            label = f" (≥{min_obs} obs)" if min_obs else ""
+            print(f"  {g['name']}: {total} on iNat{label}, {existing_in_group} already fetched")
         return
 
     total_new = 0
