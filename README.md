@@ -25,6 +25,8 @@ ANTHROPIC_API_KEY=...
 ```
 config.py               # Configuration loader (reads config.yml)
 config.yml              # All settings: locales, taxon groups, API params
+utils/
+    images.py           # Image pipeline (download, YOLO crop, WebP convert)
 collectors/
     _common.py          # Shared utilities (rate limiter, JSON I/O, shutdown)
     avilist.py          # Download AviList checklist (XLSX → CSV)
@@ -32,6 +34,7 @@ collectors/
     ebird.py            # eBird page scraper (descriptions, images)
     wikipedia.py        # Wikipedia summaries, langlinks, image licenses
     claude.py           # Claude API (descriptions + translations)
+    images.py           # Batch image downloader (smart-crop + save)
 build/
     metadata.py         # Cross-reference all sources → final metadata
 web/
@@ -51,8 +54,9 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 3. eBird | `python -m collectors.ebird` | `raw_data/ebird_data.json` |
 | 4. Wikipedia | `python -m collectors.wikipedia` | `raw_data/wikipedia_data.json` |
 | 5. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
+| 6. Images (optional) | `python -m collectors.images` | `dist/images/*.webp` |
 
-Steps 1–2 collect source taxonomy data. Steps 3–5 enrich species with descriptions, images, and translations. Step 5 optionally uses Claude to generate polished English descriptions and translate them to configured locales.
+Steps 1–2 collect source taxonomy data. Steps 3–5 enrich species with descriptions, images, and translations. Step 5 optionally uses Claude to generate polished English descriptions and translate them to configured locales. Step 6 batch-downloads species images as named WebP files with content-aware smart cropping (YOLOv8-nano animal detection).
 
 ### Build
 
@@ -73,7 +77,7 @@ The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archive
 
 ### Web Server
 
-Browse and search the dataset through a web UI and REST API. Species images are served through a built-in proxy that fetches from the original source, converts to WebP, center-crops to 3:2, and caches on disk.
+Browse and search the dataset through a web UI and REST API. Species images are served through a built-in proxy that fetches from the original source, converts to WebP, smart-crops to 3:2 using YOLOv8-nano animal detection, and saves as named files (`<sci>_<common>_<author>_<size>.webp`). Pre-downloaded images from the collector are served directly.
 
 ```bash
 python -m web.server              # serve from dist/species_metadata.json

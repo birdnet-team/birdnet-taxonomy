@@ -26,7 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
-from images import ImageSize, fetch_cached
+from utils.images import ImageSize, fetch_cached, image_filename, save_species_image
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -138,16 +138,21 @@ def _normalise(text: str) -> str:
 # Image proxy helpers
 # ---------------------------------------------------------------------------
 
+_image_dir: Path = ROOT / "dist" / "images"
 _image_cache_dir: Path = ROOT / ".image_cache"
 _image_sizes: dict[str, ImageSize] = {}
 _image_quality: int = 80
+_dev_mode: bool = False
 
 
-def _init_image_config():
+def _init_image_config(dev: bool = False):
     """Load image proxy settings from config."""
-    global _image_cache_dir, _image_sizes, _image_quality
+    global _image_dir, _image_cache_dir, _image_sizes, _image_quality, _dev_mode
+    _dev_mode = dev
     cfg = load_config()
     img = cfg.get("images", {})
+    _image_dir = ROOT / ("dev" if dev else "dist") / "images"
+    _image_dir.mkdir(parents=True, exist_ok=True)
     _image_cache_dir = ROOT / img.get("cache_dir", ".image_cache")
     _image_cache_dir.mkdir(parents=True, exist_ok=True)
     _image_quality = img.get("quality", 80)
@@ -166,7 +171,7 @@ def _init_image_config():
 async def lifespan(application: FastAPI):
     if not _species_list:
         load_data()
-    _init_image_config()
+    _init_image_config(dev=_dev_mode)
     yield
 
 
@@ -192,8 +197,9 @@ async def image_proxy(scientific_name: str, size: str):
     """Serve a species image as WebP in the requested size.
 
     Sizes: thumb (150x100), medium (480x320), large (1200x800).
-    Images are fetched from the original source, converted to WebP,
-    center-cropped to 3:2, and cached on disk.
+    Images are fetched from the original source, smart-cropped with YOLO,
+    and saved to disk with meaningful filenames.  Subsequent requests are
+    served directly from the saved file.
     """
     if size not in _image_sizes:
         raise HTTPException(400, f"Invalid size '{size}'. Use: thumb, medium, large")
@@ -207,16 +213,39 @@ async def image_proxy(scientific_name: str, size: str):
     if not source_url:
         raise HTTPException(404, "No image available for this species")
 
-    webp_bytes = fetch_cached(source_url, size, _image_sizes[size],
-                              _image_cache_dir, _image_quality)
-    if not webp_bytes:
-        raise HTTPException(502, "Failed to fetch or convert source image")
+    sci = rec.get("scientific_name", "")
+    common = rec.get("common_name", "")
+    author = rec.get("image_author", "")
 
-    return Response(
-        content=webp_bytes,
-        media_type="image/webp",
-        headers={"Cache-Control": "public, max-age=86400"},
+    # Check for named file on disk first
+    fname = image_filename(sci, common, author, size)
+    local_path = _image_dir / fname
+    if local_path.exists():
+        return Response(
+            content=local_path.read_bytes(),
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    # Not on disk — fetch, crop, save with proper name
+    saved = save_species_image(
+        url=source_url,
+        scientific_name=sci,
+        common_name=common,
+        author=author,
+        size_name=size,
+        size=_image_sizes[size],
+        image_dir=_image_dir,
+        quality=_image_quality,
     )
+    if saved and saved.exists():
+        return Response(
+            content=saved.read_bytes(),
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    raise HTTPException(502, "Failed to fetch or convert source image")
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +435,7 @@ def main():
     args = parser.parse_args()
 
     load_data(dev=args.dev)
-    _init_image_config()
+    _init_image_config(dev=args.dev)
     uvicorn.run(
         "web.server:app",
         host=args.host,

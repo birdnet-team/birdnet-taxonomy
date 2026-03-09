@@ -11,7 +11,7 @@ Used by the web server (image proxy endpoint) and can be used by any
 collector or build script that needs processed images.
 
 Usage:
-    from images import fetch_and_convert, crop_and_resize, ImageSize
+    from utils.images import fetch_and_convert, crop_and_resize, ImageSize
 
     # Fetch from URL and get WebP bytes
     webp = fetch_and_convert(url, ImageSize(480, 320), quality=80)
@@ -26,6 +26,8 @@ Usage:
 import hashlib
 import io
 import logging
+import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -401,3 +403,60 @@ def fetch_cached(url: str, size_name: str, size: ImageSize,
     tmp.replace(cache_file)
 
     return webp_bytes
+
+
+# ---------------------------------------------------------------------------
+# Named image files: <sci>_<common>_<author>_<size>.webp
+# ---------------------------------------------------------------------------
+
+_SAFE_RE = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _sanitise(text: str) -> str:
+    """Strip non-alphanumeric characters, collapse runs, lowercase."""
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode()
+    text = _SAFE_RE.sub("_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text.lower()
+
+
+def image_filename(scientific_name: str, common_name: str,
+                   author: str, size_name: str) -> str:
+    """Build a human-readable WebP filename for a species image.
+
+    Format: <scientific>_<common>_<author>_<size>.webp
+    All parts are sanitised to ASCII alphanumerics, hyphens, underscores.
+    """
+    parts = [
+        _sanitise(scientific_name),
+        _sanitise(common_name) if common_name else "unknown",
+        _sanitise(author) if author else "unknown",
+        size_name,
+    ]
+    return "_".join(p for p in parts if p) + ".webp"
+
+
+def save_species_image(url: str, scientific_name: str, common_name: str,
+                       author: str, size_name: str, size: ImageSize,
+                       image_dir: Path, quality: int = 80) -> Path | None:
+    """Download, crop, and save a species image with a readable filename.
+
+    Returns the saved path, or None on failure.  Skips if the file already
+    exists on disk.
+    """
+    fname = image_filename(scientific_name, common_name, author, size_name)
+    dest = image_dir / fname
+
+    if dest.exists():
+        return dest
+
+    webp_bytes = fetch_and_convert(url, size, quality)
+    if webp_bytes is None:
+        return None
+
+    image_dir.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".tmp")
+    tmp.write_bytes(webp_bytes)
+    tmp.replace(dest)
+    return dest
