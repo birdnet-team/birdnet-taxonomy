@@ -40,14 +40,13 @@ from collections import Counter
 from pathlib import Path
 
 from config import load_config
-from collectors._common import ROOT, RAW_DIR, load_json, save_json
+from collectors._common import ROOT, RAW_DIR, USER_AGENT, load_json, save_json
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
-WIKIDATA_UA = "BirdNET-SpeciesData/1.0 (taxonomy matching)"
 EBIRD_TAXONOMY_URL = "https://api.ebird.org/v2/ref/taxonomy/ebird"
 
 INAT_FILE = RAW_DIR / "inat_data.json"
@@ -118,7 +117,7 @@ def _sparql_query(query: str) -> list[dict]:
     req = urllib.request.Request(
         WIKIDATA_SPARQL, data=data,
         headers={
-            "User-Agent": WIKIDATA_UA,
+            "User-Agent": USER_AGENT,
             "Accept": "application/sparql-results+json",
             "Content-Type": "application/x-www-form-urlencoded",
         },
@@ -221,7 +220,7 @@ def query_wikidata_identifiers(species_names: list[str]) -> dict[str, dict]:
 def _download_ebird_taxonomy(locale: str) -> dict[str, str]:
     """Download eBird taxonomy CSV for a locale → {code: name}."""
     url = f"{EBIRD_TAXONOMY_URL}?fmt=csv&locale={locale}&cat=species"
-    req = urllib.request.Request(url, headers={"User-Agent": WIKIDATA_UA})
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = resp.read().decode("utf-8")
@@ -399,7 +398,7 @@ def check_commons_licenses(
         }).encode("utf-8")
         req = urllib.request.Request(
             _COMMONS_API, data=post_data,
-            headers={"User-Agent": WIKIDATA_UA},
+            headers={"User-Agent": USER_AGENT},
         )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:

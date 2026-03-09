@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw_data"
 
-USER_AGENT = "species-data-collector/1.0 (https://github.com/birdnet-team/species-data)"
+USER_AGENT = "BirdNET Species Metadata Crawler (https://github.com/birdnet-team/species-data)"
 
 
 # ---------------------------------------------------------------------------

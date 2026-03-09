@@ -38,7 +38,7 @@ WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
-USER_AGENT = "BirdNET-SpeciesData/1.0"
+USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"
 
 # ---------------------------------------------------------------------------
 # Known locale display names (for UI).  Dynamically extended at load time

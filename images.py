@@ -31,7 +31,7 @@ from urllib.request import Request, urlopen
 
 from PIL import Image
 
-USER_AGENT = "species-data-pipeline/1.0 (image-utils)"
+from collectors._common import USER_AGENT
 
 # Default sizes matching config.yml image proxy settings
 SIZES = {
