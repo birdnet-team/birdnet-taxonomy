@@ -377,7 +377,8 @@ def main():
             continue  # no source text
 
         english_name = inat[sci_name].get("preferred_common_name", sci_name)
-        item = (sci_name, english_name, ebird_desc, wiki_extract)
+        obs_count = inat[sci_name].get("observations_count", 0) or 0
+        item = (sci_name, english_name, ebird_desc, wiki_extract, obs_count)
 
         entry = existing.get(sci_name)
         if not entry or not entry.get("description_en"):
@@ -386,6 +387,11 @@ def main():
             trans = entry.get("translations", {})
             if len(trans) < n_target:
                 needs_translation.append(item)
+
+    # Sort by observation count (most common first) so we can abort
+    # at any point and still have the most important species done
+    needs_everything.sort(key=lambda x: x[4], reverse=True)
+    needs_translation.sort(key=lambda x: x[4], reverse=True)
 
     print(f"  New/retry: {len(needs_everything)}, "
           f"partial translations: {len(needs_translation)}")
@@ -403,14 +409,15 @@ def main():
           f"(single call per batch: describe + translate)")
 
     if args.dry_run:
-        for sci, en, eb, wi in to_process[:20]:
+        for sci, en, eb, wi, obs in to_process[:20]:
             sources = []
             if eb:
                 sources.append("ebird")
             if wi:
                 sources.append("wiki")
             status = "new" if sci not in existing else "retry/partial"
-            print(f"  {sci} ({en}) — {status}, sources: {', '.join(sources)}")
+            obs_str = f"{obs:,}" if obs else "?"
+            print(f"  {sci} ({en}) — {status}, {obs_str} obs, sources: {', '.join(sources)}")
         if len(to_process) > 20:
             print(f"  ... and {len(to_process) - 20} more")
         return
@@ -429,10 +436,13 @@ def main():
             f"batch {batch_idx + 1}/{n_batches}", refresh=False
         )
 
+        # Strip obs_count from tuples (only used for sorting)
+        batch_4 = [(s, e, eb, wi) for s, e, eb, wi, _ in batch]
+
         # Split: species needing full describe+translate vs translation-only
-        need_desc = [(s, e, eb, wi) for s, e, eb, wi in batch
+        need_desc = [(s, e, eb, wi) for s, e, eb, wi in batch_4
                      if not existing.get(s, {}).get("description_en")]
-        have_desc = [(s, e, eb, wi) for s, e, eb, wi in batch
+        have_desc = [(s, e, eb, wi) for s, e, eb, wi in batch_4
                      if existing.get(s, {}).get("description_en")]
 
         # ── Full describe + translate for new species ──
@@ -479,7 +489,7 @@ def main():
             for sci, _, _, _ in need_desc:
                 existing[sci] = {"description_en": None, "error": "no_response"}
 
-        for sci, en, _, _ in batch:
+        for sci, en, _, _ in batch_4:
             species_result = results.get(sci, {})
             old = existing.get(sci, {})
             desc_en = species_result.get("en") or old.get("description_en")
