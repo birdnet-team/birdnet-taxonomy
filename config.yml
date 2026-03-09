@@ -89,10 +89,9 @@ claude:
     - zh         # Chinese
     - ru         # Russian
     - ar         # Arabic
-  batch_size: 5           # species per API call (describe + translate)
+  batch_size: 10          # species per API call (describe + translate combined)
   max_source_chars: 500   # truncate source text per species to save tokens
-  description_max_tokens: 2048   # for batched description generation
-  translation_max_tokens: 8192   # for batched multi-species translation
+  max_tokens: 16384       # max output tokens per API call
   request_delay: 0.5
 
 # Image proxy settings (served via /api/image endpoint)
