@@ -43,8 +43,7 @@ ebird:
 wikipedia:
   summary_api: "https://en.wikipedia.org/api/rest_v1/page/summary/"
   langlinks_api: "https://en.wikipedia.org/w/api.php"
-  workers: 4             # parallel species fetchers (--workers override)
-  rps: 50                # max requests per second (--rps override)
+  rps: 25                # max requests per second (--rps override)
   # Locales for which to fetch Wikipedia langlinks and extracts.
   # Europe (broad), Americas (en/es/pt), China, Russia, Africa/Middle East.
   locales:
