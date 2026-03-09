@@ -4,30 +4,32 @@
 # locales, taxon groups, API settings, etc.
 
 # iNaturalist iconic taxon groups to fetch.
-# Each entry has a name and the iNat taxon_id used for filtering.
-# min_observations: only fetch species with at least this many observations.
-#   0 = fetch all species (no filter). Adjust thresholds to control dataset size.
+# sounds_only: if true, only fetch species with sound observations on iNat.
+#   min_observations then refers to minimum sound observation count.
+# If false (e.g. Aves), fetch ALL species from the taxa API.
 taxon_groups:
   - name: Aves
     taxon_id: 3
-    min_observations: 0     # all birds (0 = no filter)
+    sounds_only: false      # fetch all bird species
   - name: Mammalia
     taxon_id: 40151
-    min_observations: 50
+    sounds_only: true
+    min_observations: 1    # min sound obs
   - name: Insecta
     taxon_id: 47158
-    min_observations: 50
+    sounds_only: true
+    min_observations: 1
   - name: Reptilia
     taxon_id: 26036
-    min_observations: 50
+    sounds_only: true
+    min_observations: 1
   - name: Amphibia
     taxon_id: 20978
-    min_observations: 50
+    sounds_only: true
+    min_observations: 1
 
 # iNaturalist API settings
 inat:
-  base_url: "https://api.inaturalist.org/v1/taxa"
-  per_page: 200          # iNat API caps at 200
   request_delay: 1.1     # seconds between requests (iNat asks ≤1 req/sec)
   all_names: true        # fetch all common name translations
 
