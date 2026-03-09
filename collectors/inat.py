@@ -12,6 +12,9 @@ Two modes per group (controlled by sounds_only in config):
 In both modes, full taxon details (common names, photos, etc.) are fetched
 via the taxa API in batches of 30 IDs.
 
+After group fetching, an AviList reconciliation phase looks up any species
+present in the AviList checklist but missing from iNat data, and adds them.
+
 Output: raw_data/inat_data.json (incremental, resumable)
 
 Usage:
@@ -19,9 +22,11 @@ Usage:
 """
 
 import argparse
+import csv
 import json
 import time
 from datetime import datetime, timezone
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -522,6 +527,174 @@ def _update_sound_counts(existing: dict, sound_lookup: dict[int, int],
     return updated
 
 
+# ── AviList reconciliation ─────────────────────────────────────────────
+
+def _load_avilist_species(cfg: dict) -> set[str]:
+    """Load species-rank scientific names from the AviList CSV."""
+    avilist_cfg = cfg.get("avilist", {})
+    csv_file = avilist_cfg.get("csv_file", "")
+    if not csv_file:
+        return set()
+    csv_path = RAW_DIR / csv_file
+    if not csv_path.exists():
+        return set()
+
+    species = set()
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        for row in reader:
+            if row.get("Taxon_rank") == "species":
+                name = row.get("Scientific_name", "").strip()
+                if name:
+                    species.add(name)
+    return species
+
+
+def _search_taxon(name: str, delay: float) -> dict | None:
+    """Search iNat for an exact species name. Returns the taxon dict or None."""
+    encoded = quote(name)
+    url = f"{TAXA_URL}?q={encoded}&rank=species&per_page=5"
+    data = _api_get(url)
+    if not data:
+        time.sleep(delay * 2)
+        data = _api_get(url)
+    if not data:
+        return None
+
+    for r in data.get("results", []):
+        if r.get("name") == name and r.get("is_active"):
+            return r
+
+    # Fallback: try autocomplete endpoint
+    url2 = f"{TAXA_URL}/autocomplete?q={encoded}&rank=species&per_page=5"
+    data2 = _api_get(url2)
+    if data2:
+        for r in data2.get("results", []):
+            if r.get("name") == name and r.get("is_active"):
+                return r
+
+    return None
+
+
+def reconcile_avilist(existing: dict, cfg: dict, delay: float,
+                     all_names: bool, limit: int = 0,
+                     save_every: int = 200) -> int:
+    """Look up AviList species not yet in iNat data and add them.
+
+    Uses the iNat taxa search API to find each missing species by name.
+    Returns the count of newly added species.
+    """
+    print(f"\n{'='*60}")
+    print("AviList reconciliation")
+
+    avi_species = _load_avilist_species(cfg)
+    if not avi_species:
+        print("  No AviList CSV found — run 'python -m collectors.avilist' first")
+        return 0
+
+    missing = sorted(name for name in avi_species if name not in existing)
+    print(f"  AviList species: {len(avi_species)}")
+    print(f"  Already in iNat data: {len(avi_species) - len(missing)}")
+    print(f"  Missing: {len(missing)}")
+
+    if not missing:
+        print("  Nothing to reconcile!")
+        return 0
+
+    if limit:
+        missing = missing[:limit]
+        print(f"  Limited to first {limit}")
+
+    # Look up each missing species via iNat taxa API
+    # Use batch detail fetches where possible: collect IDs first,
+    # then batch-fetch full records with all_names
+    print(f"  Looking up {len(missing)} species on iNat...")
+
+    found_taxa = []      # (sci_name, taxon_id)
+    not_found = []       # sci_names not matched
+    new_count = 0
+
+    for i, name in enumerate(missing):
+        if is_shutting_down():
+            break
+
+        result = _search_taxon(name, delay)
+        if result:
+            found_taxa.append((name, result.get("id")))
+        else:
+            not_found.append(name)
+
+        if (i + 1) % 50 == 0 or i == len(missing) - 1:
+            print(
+                f"  Searched {i + 1}/{len(missing)} — "
+                f"{len(found_taxa)} found, {len(not_found)} not found",
+                flush=True,
+            )
+
+        time.sleep(delay)
+
+    if is_shutting_down() and not found_taxa:
+        return 0
+
+    print(f"  Matched {len(found_taxa)} species, "
+          f"{len(not_found)} not found on iNat")
+
+    if not_found:
+        show = not_found[:20]
+        print(f"  Not found (first {len(show)}):")
+        for name in show:
+            print(f"    {name}")
+        if len(not_found) > 20:
+            print(f"    ... and {len(not_found) - 20} more")
+
+    if not found_taxa:
+        return 0
+
+    # Batch-fetch full taxon details for all matched species
+    print(f"  Fetching full details for {len(found_taxa)} species...")
+    batches = [
+        found_taxa[i:i + TAXA_BATCH_SIZE]
+        for i in range(0, len(found_taxa), TAXA_BATCH_SIZE)
+    ]
+
+    for batch_idx, batch in enumerate(batches):
+        if is_shutting_down():
+            break
+
+        batch_ids = [tid for _, tid in batch]
+        batch_names = {tid: name for name, tid in batch}
+        results = fetch_taxa_batch(batch_ids, all_names, delay)
+
+        for result in results:
+            sci_name = result.get("name", "")
+            tid = result.get("id")
+            # Use the AviList name if the iNat name matches one of our targets
+            if tid in batch_names:
+                sci_name = batch_names[tid]
+            if not sci_name or sci_name in existing:
+                continue
+
+            record = extract_record(result, "Aves", sound_count=0)
+            existing[sci_name] = record
+            new_count += 1
+
+        if (batch_idx + 1) % 10 == 0 or batch_idx == len(batches) - 1:
+            print(
+                f"  Detail batch {batch_idx + 1}/{len(batches)} — "
+                f"{new_count} new records",
+                flush=True,
+            )
+
+        if new_count > 0 and new_count % save_every < TAXA_BATCH_SIZE:
+            save_json(existing, OUTPUT_FILE)
+
+        time.sleep(delay)
+
+    save_json(existing, OUTPUT_FILE)
+    print(f"  AviList reconciliation complete: {new_count} species added")
+    return new_count
+
+
 # ── CLI ────────────────────────────────────────────────────────────────
 
 def main():
@@ -551,6 +724,14 @@ def main():
     parser.add_argument(
         "--refresh", action="store_true",
         help="Bypass cached Phase 1 data and re-fetch from API"
+    )
+    parser.add_argument(
+        "--skip-avilist", action="store_true",
+        help="Skip AviList reconciliation phase"
+    )
+    parser.add_argument(
+        "--avilist-only", action="store_true",
+        help="Only run AviList reconciliation (skip group fetching)"
     )
     args = parser.parse_args()
 
@@ -606,13 +787,27 @@ def main():
             time.sleep(delay)
         return
 
+    inat_cfg = cfg.get("inat", {})
     total_new = 0
-    for group in groups:
-        if is_shutting_down():
-            break
-        new = fetch_group(group, existing, cfg, limit=args.limit,
-                          save_every=args.save_every, refresh=args.refresh)
-        total_new += new
+
+    if not args.avilist_only:
+        for group in groups:
+            if is_shutting_down():
+                break
+            new = fetch_group(group, existing, cfg, limit=args.limit,
+                              save_every=args.save_every, refresh=args.refresh)
+            total_new += new
+
+    # AviList reconciliation — find AviList species missing from iNat data
+    if not args.skip_avilist and not is_shutting_down():
+        avilist_new = reconcile_avilist(
+            existing, cfg,
+            delay=inat_cfg.get("request_delay", 1.1),
+            all_names=inat_cfg.get("all_names", True),
+            limit=args.limit,
+            save_every=args.save_every,
+        )
+        total_new += avilist_new
 
     # Final stats
     print(f"\n{'='*60}")
