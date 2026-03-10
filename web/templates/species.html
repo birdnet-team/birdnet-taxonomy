@@ -241,10 +241,11 @@
     </div>
 </div>
 
-{% if s.description %}
+{% set desc_en = (s.descriptions or {}).get('en', '') %}
+{% if desc_en %}
 <div class="description">
     <h3>Description</h3>
-    <p>{{ s.description }}</p>
+    <p>{{ desc_en }}</p>
 </div>
 {% endif %}
 

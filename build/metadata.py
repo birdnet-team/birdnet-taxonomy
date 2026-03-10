@@ -803,18 +803,23 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         wp = wiki.get(sci_name, {})
         eb = ebird.get(sci_name, {})
 
-        description = ""
+        # Descriptions: locale → text.  English follows Claude > Wikipedia
+        # > eBird priority.  Claude translations fill other locales.
+        descriptions: dict[str, str] = {}
         description_source = ""
         if cl.get("description_en"):
-            description = cl["description_en"]
+            descriptions["en"] = cl["description_en"]
             description_source = "claude"
             desc_sources["claude"] += 1
+            for loc, text in cl.get("translations", {}).items():
+                if text:
+                    descriptions[loc] = text
         elif wp.get("extract"):
-            description = wp["extract"]
+            descriptions["en"] = wp["extract"]
             description_source = "wikipedia"
             desc_sources["wikipedia"] += 1
         elif eb.get("description"):
-            description = eb["description"]
+            descriptions["en"] = eb["description"]
             description_source = "ebird"
             desc_sources["ebird"] += 1
         else:
@@ -825,7 +830,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "common_name": tax.get("preferred_common_name", ""),
             "taxon_group": tax.get("taxon_group", ""),
             "common_names": tax.get("common_names", {}),
-            "description": description,
+            "descriptions": descriptions,
             "description_source": description_source,
             "image_url": tax.get("image_url", ""),
             "image_author": tax.get("image_author", ""),
@@ -866,6 +871,14 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     for src, cnt in desc_sources.most_common():
         print(f"    {src}: {cnt}")
 
+    n_translated = sum(1 for r in records if r.get("descriptions"))
+    desc_locales = sorted(set(
+        loc for r in records for loc in r.get("descriptions", {}).keys()
+    ))
+    if n_translated:
+        print(f"    translated: {n_translated} species, "
+              f"{len(desc_locales)} locales ({', '.join(desc_locales)})")
+
     print(f"\n  Images:")
     for src, cnt in img_sources.most_common():
         print(f"    {src}: {cnt}")
@@ -896,6 +909,8 @@ def records_to_csv(records: list[dict]) -> str:
 
     for rec in records:
         row = {k: rec.get(k, "") for k in base_cols}
+        # Flatten descriptions.en → description for CSV
+        row["description"] = rec.get("descriptions", {}).get("en", "")
         for loc in top_locales:
             row[f"common_name_{loc}"] = rec.get("common_names", {}).get(loc, "")
         writer.writerow(row)
