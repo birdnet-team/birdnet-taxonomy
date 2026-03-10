@@ -49,6 +49,9 @@ from collectors._common import ROOT, RAW_DIR, USER_AGENT, load_json, save_json
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 EBIRD_TAXONOMY_URL = "https://api.ebird.org/v2/ref/taxonomy/ebird"
 
+_REQUEST_CACHE_DIR = RAW_DIR / ".request_cache"
+_use_cache = True  # set via --no-cache CLI flag
+
 INAT_FILE = RAW_DIR / "inat_data.json"
 EBIRD_DATA_FILE = RAW_DIR / "ebird_data.json"
 WIKI_DATA_FILE = RAW_DIR / "wikipedia_data.json"
@@ -108,11 +111,49 @@ WD_IDENTIFIERS = {
 
 
 # ---------------------------------------------------------------------------
+# Request cache helpers
+# ---------------------------------------------------------------------------
+
+def _cache_key(prefix: str, data: str) -> Path:
+    """Build a cache file path from a prefix and hashable data string."""
+    h = hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
+    return _REQUEST_CACHE_DIR / f"{prefix}_{h}.json"
+
+
+def _cache_get(key: Path):
+    """Return cached JSON value or None if not cached / caching disabled."""
+    if not _use_cache:
+        return None
+    if key.exists():
+        with open(key, encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def _cache_put(key: Path, value):
+    """Write a JSON-serialisable value to the cache."""
+    if not _use_cache:
+        return
+    _REQUEST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = key.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(value, f, ensure_ascii=False)
+    os.replace(tmp, key)
+
+
+# ---------------------------------------------------------------------------
 # Wikidata / eBird helpers
 # ---------------------------------------------------------------------------
 
 def _sparql_query(query: str) -> list[dict]:
-    """Run a SPARQL query against Wikidata (POST to avoid URL limits)."""
+    """Run a SPARQL query against Wikidata (POST to avoid URL limits).
+    Results are cached to disk to avoid redundant requests on re-runs.
+    """
+    key = _cache_key("sparql", query)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
     data = urllib.parse.urlencode({"query": query}).encode("utf-8")
     req = urllib.request.Request(
         WIKIDATA_SPARQL, data=data,
@@ -124,10 +165,13 @@ def _sparql_query(query: str) -> list[dict]:
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read())["results"]["bindings"]
+            result = json.loads(resp.read())["results"]["bindings"]
     except Exception as e:
         print(f"  WARNING: Wikidata query failed: {e}")
         return []
+
+    _cache_put(key, result)
+    return result
 
 
 def query_wikidata_ebird(unmatched: list[tuple[str, int]]) -> dict[str, str]:
@@ -219,17 +263,25 @@ def query_wikidata_identifiers(species_names: list[str]) -> dict[str, dict]:
 
 def _download_ebird_taxonomy(locale: str) -> dict[str, str]:
     """Download eBird taxonomy CSV for a locale → {code: name}."""
+    key = _cache_key("ebird_tax", locale)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
     url = f"{EBIRD_TAXONOMY_URL}?fmt=csv&locale={locale}&cat=species"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = resp.read().decode("utf-8")
-        reader = csv.DictReader(io.StringIO(data))
-        return {row["SPECIES_CODE"]: row["COMMON_NAME"]
-                for row in reader if row.get("SPECIES_CODE")}
+        result = {row["SPECIES_CODE"]: row["COMMON_NAME"]
+                  for row in csv.DictReader(io.StringIO(data))
+                  if row.get("SPECIES_CODE")}
     except Exception as e:
         print(f"  WARNING: eBird taxonomy download failed for {locale}: {e}")
         return {}
+
+    _cache_put(key, result)
+    return result
 
 
 def fetch_ebird_names() -> dict[str, dict[str, str]]:
@@ -389,23 +441,30 @@ def check_commons_licenses(
     for i in range(0, len(all_files), _COMMONS_BATCH):
         batch = all_files[i:i + _COMMONS_BATCH]
         titles = "|".join(f"File:{fn}" for fn in batch)
-        post_data = urllib.parse.urlencode({
-            "action": "query",
-            "titles": titles,
-            "prop": "imageinfo",
-            "iiprop": "extmetadata",
-            "format": "json",
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            _COMMONS_API, data=post_data,
-            headers={"User-Agent": USER_AGENT},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read())
-        except Exception as e:
-            print(f"  WARNING: Commons license check failed: {e}")
-            continue
+
+        key = _cache_key("commons", titles)
+        cached_data = _cache_get(key)
+        if cached_data is not None:
+            data = cached_data
+        else:
+            post_data = urllib.parse.urlencode({
+                "action": "query",
+                "titles": titles,
+                "prop": "imageinfo",
+                "iiprop": "extmetadata",
+                "format": "json",
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                _COMMONS_API, data=post_data,
+                headers={"User-Agent": USER_AGENT},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read())
+            except Exception as e:
+                print(f"  WARNING: Commons license check failed: {e}")
+                continue
+            _cache_put(key, data)
 
         pages = data.get("query", {}).get("pages", {})
         for page in pages.values():
@@ -661,7 +720,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                     wd_label_counts[loc] = wd_label_counts.get(loc, 0) + 1
     stats["wikidata_labels"] = wd_label_counts
 
-    # Pass 6: Default image selection (iNat → Wikimedia Commons → eBird)
+    # Pass 6: Default image selection (iNat → eBird → Wikimedia Commons)
     img_stats = {"inat": 0, "wikimedia": 0, "ebird": 0, "none": 0}
 
     print("\n  Selecting default images...")
@@ -676,6 +735,21 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             entry["image_license"] = lic
             entry["image_source"] = "inat"
             img_stats["inat"] += 1
+
+    ebird_imgs = load_ebird_images()
+    if ebird_imgs:
+        for sci, entry in taxonomy.items():
+            if entry["image_url"]:
+                continue
+            code = entry.get("ebird_code", "")
+            if code and code in ebird_imgs:
+                eb = ebird_imgs[code]
+                entry["image_url"] = eb["url"]
+                entry["image_author"] = _parse_image_author(
+                    eb["attribution"], "ebird")
+                entry["image_license"] = ""
+                entry["image_source"] = "ebird"
+                img_stats["ebird"] += 1
 
     need_image = [sci for sci, e in taxonomy.items() if not e["image_url"]]
     if need_image:
@@ -692,21 +766,6 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 taxonomy[sci]["image_license"] = info["license"]
                 taxonomy[sci]["image_source"] = "wikimedia"
                 img_stats["wikimedia"] += 1
-
-    ebird_imgs = load_ebird_images()
-    if ebird_imgs:
-        for sci, entry in taxonomy.items():
-            if entry["image_url"]:
-                continue
-            code = entry.get("ebird_code", "")
-            if code and code in ebird_imgs:
-                eb = ebird_imgs[code]
-                entry["image_url"] = eb["url"]
-                entry["image_author"] = _parse_image_author(
-                    eb["attribution"], "ebird")
-                entry["image_license"] = ""
-                entry["image_source"] = "ebird"
-                img_stats["ebird"] += 1
 
     img_stats["none"] = sum(1 for e in taxonomy.values() if not e["image_url"])
     stats["images"] = img_stats
@@ -776,8 +835,8 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     total_with_img = img.get("inat", 0) + img.get("wikimedia", 0) + img.get("ebird", 0)
     print(f"\n  Default images ({total_with_img}/{total} species):")
     print(f"    iNat (permissive):  {img.get('inat', 0)}")
-    print(f"    Wikimedia Commons:  {img.get('wikimedia', 0)}")
     print(f"    eBird:              {img.get('ebird', 0)}")
+    print(f"    Wikimedia Commons:  {img.get('wikimedia', 0)}")
     print(f"    No image:           {img.get('none', 0)}")
 
 
@@ -934,7 +993,13 @@ def main():
                         help="Write to dev/ instead of dist/")
     parser.add_argument("--no-zip", action="store_true",
                         help="Skip zip archive creation")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="Bypass request cache (re-fetch all remote data)")
     args = parser.parse_args()
+
+    global _use_cache
+    if args.no_cache:
+        _use_cache = False
 
     cfg = load_config()
 
