@@ -15,23 +15,145 @@ Usage:
     uvicorn web.server:app --reload        # development with auto-reload
 """
 
+from __future__ import annotations
+
 import argparse
+import csv
+import io
 import json
 import re
 import unicodedata
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
+from pydantic import BaseModel, Field
 from utils.images import ImageSize, fetch_cached, image_filename, save_species_image
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config import load_config
+
+
+# ---------------------------------------------------------------------------
+# Pydantic response models (for OpenAPI schema + Swagger examples)
+# ---------------------------------------------------------------------------
+
+_SPECIES_EXAMPLE: dict[str, Any] = {
+    "scientific_name": "Anas platyrhynchos",
+    "common_name": "Mallard",
+    "taxon_group": "Aves",
+    "observations_count": 829418,
+    "inat_id": 6930,
+    "ebird_code": "mallar3",
+    "gbif_id": 9761484,
+    "ncbi_id": 8839,
+    "avibase_id": "Anas-platyrhynchos",
+    "birdlife_id": 22680186,
+    "image": {
+        "thumb": "/api/image/Anas platyrhynchos/thumb",
+        "medium": "/api/image/Anas platyrhynchos/medium",
+        "large": "/api/image/Anas platyrhynchos/large",
+        "source": "inat",
+        "author": "anonymous",
+        "license": "cc-by-sa",
+    },
+    "description_source": "claude",
+    "descriptions": {
+        "en": "This large, familiar duck inhabits diverse aquatic environments...",
+        "de": "Diese große, bekannte Ente bewohnt vielfältige Gewässer...",
+    },
+    "common_names": {
+        "en": "Mallard",
+        "de": "Stockente",
+        "fr": "Canard colvert",
+        "es": "Ánade azulón",
+    },
+}
+
+
+class SpeciesRecord(BaseModel):
+    """Full species metadata record."""
+    scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
+    common_name: str = Field("", examples=["Mallard"])
+    taxon_group: str = Field("", examples=["Aves"])
+    observations_count: Optional[int] = Field(None, examples=[829418])
+    inat_id: Optional[int] = Field(None, examples=[6930])
+    ebird_code: Optional[str] = Field(None, examples=["mallar3"])
+    gbif_id: Optional[int] = Field(None, examples=[9761484])
+    ncbi_id: Optional[int] = Field(None, examples=[8839])
+    avibase_id: Optional[str] = Field(None, examples=["Anas-platyrhynchos"])
+    birdlife_id: Optional[int] = Field(None, examples=[22680186])
+    image: Optional[dict[str, str]] = Field(
+        None,
+        description="Image proxy URLs and attribution",
+        examples=[{
+            "thumb": "/api/image/Anas platyrhynchos/thumb",
+            "medium": "/api/image/Anas platyrhynchos/medium",
+            "large": "/api/image/Anas platyrhynchos/large",
+            "source": "inat",
+            "author": "anonymous",
+            "license": "cc-by-sa",
+        }],
+    )
+    description_source: Optional[str] = Field(None, examples=["claude"])
+    descriptions: Optional[dict[str, str]] = Field(None, examples=[{"en": "A large, familiar duck...", "de": "Eine große, bekannte Ente..."}])
+    common_names: Optional[dict[str, str]] = Field(None, examples=[{"en": "Mallard", "de": "Stockente", "fr": "Canard colvert"}])
+
+    model_config = {"extra": "allow"}
+
+
+class PaginatedSpecies(BaseModel):
+    """Paginated list of species records."""
+    total: int = Field(..., examples=[13361])
+    page: int = Field(..., examples=[1])
+    per_page: int = Field(..., examples=[50])
+    results: list[dict[str, Any]] = Field(...)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{
+                "total": 13361,
+                "page": 1,
+                "per_page": 2,
+                "results": [_SPECIES_EXAMPLE],
+            }],
+        },
+    }
+
+
+class SearchResponse(PaginatedSpecies):
+    """Search results with query echo."""
+    query: str = Field(..., examples=["mallard"])
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{
+                "query": "mallard",
+                "total": 1,
+                "page": 1,
+                "per_page": 50,
+                "results": [_SPECIES_EXAMPLE],
+            }],
+        },
+    }
+
+
+class StatsResponse(BaseModel):
+    """Dataset statistics."""
+    total_species: int = Field(..., examples=[13361])
+    groups: dict[str, int] = Field(..., examples=[{"Aves": 11157, "Mammalia": 1087, "Insecta": 566, "Amphibia": 540, "Reptilia": 11}])
+    locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
+
+
+class GroupCount(BaseModel):
+    """Taxon group with species count."""
+    name: str = Field(..., examples=["Aves"])
+    count: int = Field(..., examples=[11157])
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent
@@ -123,6 +245,7 @@ def load_data(dev: bool = False):
         [(code, LOCALE_NAMES.get(code, code)) for code in locale_set],
         key=lambda x: x[1],
     )
+    _refresh_field_set()
     print(f"  {len(_all_locales)} locales discovered from data")
 
 
@@ -305,10 +428,204 @@ async def species_page(request: FRequest, scientific_name: str):
 
 
 # ---------------------------------------------------------------------------
+# REST API — projection, filtering, sorting helpers
+# ---------------------------------------------------------------------------
+
+# All top-level keys that exist in species records
+_ALL_FIELDS: set[str] = set()
+
+
+def _refresh_field_set():
+    """Rebuild the set of known top-level fields from loaded data.
+
+    Reports API field names (``image`` instead of the internal
+    ``image_url`` / ``image_source`` / ``image_author`` / ``image_license``).
+    """
+    global _ALL_FIELDS
+    fields: set[str] = set()
+    for rec in _species_list:
+        fields.update(rec.keys())
+    # Replace internal image_* keys with the API-facing 'image' key
+    for k in ("image_url", "image_source", "image_author", "image_license"):
+        fields.discard(k)
+    fields.add("image")
+    _ALL_FIELDS = fields
+
+
+def _api_record(record: dict) -> dict:
+    """Transform a raw data record for API output.
+
+    Replaces the internal ``image_url`` / ``image_source`` / ``image_author`` /
+    ``image_license`` fields with a single ``image`` dict that contains proxy
+    URLs pointing to our server plus attribution metadata.
+    """
+    rec = dict(record)  # shallow copy
+
+    sci = rec.get("scientific_name", "")
+    url = rec.pop("image_url", None)
+    source = rec.pop("image_source", None)
+    author = rec.pop("image_author", None)
+    lic = rec.pop("image_license", None)
+
+    if url and sci:
+        img: dict[str, str] = {
+            "thumb": f"/api/image/{sci}/thumb",
+            "medium": f"/api/image/{sci}/medium",
+            "large": f"/api/image/{sci}/large",
+        }
+        if source:
+            img["source"] = source
+        if author:
+            img["author"] = author
+        if lic:
+            img["license"] = lic
+        rec["image"] = img
+    else:
+        rec["image"] = None
+
+    return rec
+
+
+def _project(record: dict, fields: str | None, exclude: str | None,
+             locale: str | None) -> dict:
+    """Apply field selection / exclusion and locale filtering to a record.
+
+    ``fields`` and ``exclude`` are comma-separated top-level key names.
+    ``locale`` is a comma-separated list of locale codes.  When given,
+    ``common_names`` and ``descriptions`` are trimmed to only those locales.
+    """
+    rec = _api_record(record)
+
+    # --- locale filter ---
+    if locale:
+        codes = {c.strip() for c in locale.split(",") if c.strip()}
+        if codes:
+            if "common_names" in rec and isinstance(rec["common_names"], dict):
+                rec["common_names"] = {
+                    k: v for k, v in rec["common_names"].items() if k in codes
+                }
+            if "descriptions" in rec and isinstance(rec["descriptions"], dict):
+                rec["descriptions"] = {
+                    k: v for k, v in rec["descriptions"].items() if k in codes
+                }
+
+    # --- field inclusion ---
+    if fields:
+        keys = {f.strip() for f in fields.split(",") if f.strip()}
+        rec = {k: v for k, v in rec.items() if k in keys}
+
+    # --- field exclusion ---
+    elif exclude:
+        keys = {f.strip() for f in exclude.split(",") if f.strip()}
+        for k in keys:
+            rec.pop(k, None)
+
+    return rec
+
+
+def _filter_species(data: list[dict], *,
+                    group: str = "",
+                    has_image: str = "",
+                    has_description: str = "",
+                    description_source: str = "",
+                    min_observations: int | None = None,
+                    max_observations: int | None = None) -> list[dict]:
+    """Apply boolean / range filters to a species list."""
+    result = data
+
+    if group:
+        result = [r for r in result
+                  if r.get("taxon_group", "").lower() == group.lower()]
+
+    if has_image:
+        want = has_image.lower() in ("true", "1", "yes")
+        result = [r for r in result if bool(r.get("image_url")) == want]
+
+    if has_description:
+        want = has_description.lower() in ("true", "1", "yes")
+        result = [r for r in result
+                  if bool((r.get("descriptions") or {}).get("en")) == want]
+
+    if description_source:
+        sources = {s.strip().lower() for s in description_source.split(",") if s.strip()}
+        result = [r for r in result
+                  if (r.get("description_source") or "").lower() in sources]
+
+    if min_observations is not None:
+        result = [r for r in result
+                  if (r.get("observations_count") or 0) >= min_observations]
+
+    if max_observations is not None:
+        result = [r for r in result
+                  if (r.get("observations_count") or 0) <= max_observations]
+
+    return result
+
+
+def _sort_species(data: list[dict], sort: str) -> list[dict]:
+    """Sort species list by field name.  Prefix with ``-`` for descending."""
+    if not sort:
+        return data
+    desc = sort.startswith("-")
+    key = sort.lstrip("-").strip()
+    if not key:
+        return data
+
+    def sort_key(r: dict):
+        v = r.get(key)
+        if v is None:
+            return (1, "")  # nones last
+        if isinstance(v, (int, float)):
+            return (0, v)
+        return (0, str(v).lower())
+
+    return sorted(data, key=sort_key, reverse=desc)
+
+
+def _to_csv(records: list[dict], fields: str | None = None) -> str:
+    """Convert list of records to CSV string.
+
+    Nested dicts (common_names, descriptions) are JSON-encoded in cells.
+    """
+    if not records:
+        return ""
+
+    if fields:
+        columns = [f.strip() for f in fields.split(",") if f.strip()]
+    else:
+        # Deterministic column order: fixed columns first, rest sorted
+        priority = [
+            "scientific_name", "common_name", "taxon_group",
+            "observations_count", "inat_id", "ebird_code",
+        ]
+        all_keys: set[str] = set()
+        for r in records:
+            all_keys.update(r.keys())
+        columns = [c for c in priority if c in all_keys]
+        columns += sorted(all_keys - set(columns))
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for rec in records:
+        row = {}
+        for c in columns:
+            v = rec.get(c)
+            if isinstance(v, dict):
+                row[c] = json.dumps(v, ensure_ascii=False)
+            elif v is None:
+                row[c] = ""
+            else:
+                row[c] = v
+        writer.writerow(row)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # REST API
 # ---------------------------------------------------------------------------
 
-@app.get("/api/stats", tags=["API"])
+@app.get("/api/stats", tags=["API"], response_model=StatsResponse)
 async def api_stats():
     """Pipeline statistics: total species, counts per taxon group."""
     from collections import Counter
@@ -320,7 +637,7 @@ async def api_stats():
     }
 
 
-@app.get("/api/groups", tags=["API"])
+@app.get("/api/groups", tags=["API"], response_model=list[GroupCount])
 async def api_groups():
     """List available taxon groups with species counts."""
     from collections import Counter
@@ -328,55 +645,129 @@ async def api_groups():
     return [{"name": g, "count": c} for g, c in sorted(groups.items())]
 
 
-@app.get("/api/search", tags=["API"])
+@app.get("/api/fields", tags=["API"], response_model=list[str])
+async def api_fields():
+    """List all available top-level field names in species records.
+
+    Returns the names of every top-level key that appears in at least one
+    species record.  Use these names with the `fields` and `exclude`
+    query parameters on other endpoints.
+    """
+    return sorted(_ALL_FIELDS)
+
+
+@app.get("/api/search", tags=["API"],
+         response_model=SearchResponse,
+         response_model_exclude_none=True)
 async def api_search(
     q: str = Query("", description="Search query (scientific or common name)"),
     group: str = Query("", description="Filter by taxon group"),
+    has_image: str = Query("", description="Filter: true/false"),
+    has_description: str = Query("", description="Filter: true/false"),
+    description_source: str = Query("", description="Filter by source (claude, wikipedia, ebird)"),
+    min_observations: Optional[int] = Query(None, description="Minimum observation count"),
+    max_observations: Optional[int] = Query(None, description="Maximum observation count"),
+    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -observations_count)"),
+    fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
+    exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
+    locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
+    format: str = Query("json", description="Response format: json or csv"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=500, description="Results per page"),
 ):
-    """Search species by name. Returns paginated results."""
+    """Search species by name with full filtering, sorting, and field selection."""
     results = _search(q, group)
+    results = _filter_species(
+        results, group=group,
+        has_image=has_image, has_description=has_description,
+        description_source=description_source,
+        min_observations=min_observations, max_observations=max_observations,
+    )
+    results = _sort_species(results, sort)
+
     total = len(results)
     start = (page - 1) * per_page
+    page_results = results[start:start + per_page]
+    page_results = [_project(r, fields, exclude, locale) for r in page_results]
+
+    if format == "csv":
+        return Response(
+            content=_to_csv(page_results, fields),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=search_results.csv"},
+        )
+
     return {
         "query": q,
-        "group": group,
         "total": total,
         "page": page,
         "per_page": per_page,
-        "results": results[start:start + per_page],
+        "results": page_results,
     }
 
 
-@app.get("/api/species", tags=["API"])
+@app.get("/api/species", tags=["API"],
+         response_model=PaginatedSpecies,
+         response_model_exclude_none=True)
 async def api_species_list(
     group: str = Query("", description="Filter by taxon group"),
+    has_image: str = Query("", description="Filter: true/false"),
+    has_description: str = Query("", description="Filter: true/false"),
+    description_source: str = Query("", description="Filter by source (claude, wikipedia, ebird)"),
+    min_observations: Optional[int] = Query(None, description="Minimum observation count"),
+    max_observations: Optional[int] = Query(None, description="Maximum observation count"),
+    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -observations_count)"),
+    fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
+    exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
+    locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
+    format: str = Query("json", description="Response format: json or csv"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=500, description="Results per page"),
 ):
-    """List all species, optionally filtered by taxon group."""
-    data = _species_list
-    if group:
-        data = [r for r in data if r.get("taxon_group", "").lower() == group.lower()]
+    """List all species with filtering, sorting, field selection, and pagination."""
+    data = _filter_species(
+        _species_list, group=group,
+        has_image=has_image, has_description=has_description,
+        description_source=description_source,
+        min_observations=min_observations, max_observations=max_observations,
+    )
+    data = _sort_species(data, sort)
+
     total = len(data)
     start = (page - 1) * per_page
+    page_results = data[start:start + per_page]
+    page_results = [_project(r, fields, exclude, locale) for r in page_results]
+
+    if format == "csv":
+        return Response(
+            content=_to_csv(page_results, fields),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=species.csv"},
+        )
+
     return {
         "total": total,
         "page": page,
         "per_page": per_page,
-        "results": data[start:start + per_page],
+        "results": page_results,
     }
 
 
-@app.get("/api/species/{scientific_name:path}", tags=["API"])
-async def api_species_detail(scientific_name: str):
+@app.get("/api/species/{scientific_name:path}", tags=["API"],
+         response_model=SpeciesRecord,
+         response_model_exclude_none=True)
+async def api_species_detail(
+    scientific_name: str,
+    fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
+    exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
+    locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
+):
     """Get full metadata for one species by scientific name."""
     rec = _species_by_name.get(scientific_name) or \
           _species_by_name.get(scientific_name.lower())
     if not rec:
         raise HTTPException(status_code=404, detail="Species not found")
-    return rec
+    return _project(rec, fields, exclude, locale)
 
 
 # ---------------------------------------------------------------------------

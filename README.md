@@ -82,7 +82,7 @@ Browse and search the dataset through a web UI and REST API. Species images are 
 ```bash
 python -m web.server              # serve from dist/species_metadata.json
 python -m web.server --dev        # serve from dev/species_metadata.json
-python -m web.server --port 3000  # custom port
+python -m web.server --port 8888  # custom port
 ```
 
 Or with hot-reload during development:
@@ -96,12 +96,51 @@ uvicorn web.server:app --reload
 | `/` | Home page — search, browse, filter by taxon group |
 | `/species/{name}` | Species detail page (HTML) |
 | `/api/image/{name}/{size}` | Image proxy — `thumb`, `medium`, `large` (WebP) |
-| `/api/species` | List species (JSON), supports `?group=`, `?page=` |
-| `/api/species/{name}` | Single species detail (JSON) |
-| `/api/search?q=` | Search species by name |
+| `/api/species` | List species (JSON/CSV) with filtering, sorting, field selection |
+| `/api/species/{name}` | Single species detail (JSON) with field selection |
+| `/api/search?q=` | Search species by name with full query options |
+| `/api/fields` | List all available field names |
 | `/api/groups` | List taxon groups with counts |
 | `/api/stats` | Dataset statistics |
 | `/docs` | Interactive API docs (Swagger UI) |
+
+#### API Query Parameters
+
+All list/search endpoints (`/api/species`, `/api/search`) support these parameters:
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `fields` | `?fields=scientific_name,common_name` | Return only specified fields (comma-separated) |
+| `exclude` | `?exclude=common_names,descriptions` | Return all fields except these |
+| `locale` | `?locale=en,de,fr` | Filter `common_names` and `descriptions` to specific locales |
+| `sort` | `?sort=-observations_count` | Sort by field; prefix `-` for descending |
+| `group` | `?group=Aves` | Filter by taxon group |
+| `has_image` | `?has_image=true` | Filter species with/without images |
+| `has_description` | `?has_description=true` | Filter species with/without English description |
+| `description_source` | `?description_source=claude,wikipedia` | Filter by description source |
+| `min_observations` | `?min_observations=10000` | Minimum iNaturalist observation count |
+| `max_observations` | `?max_observations=50000` | Maximum iNaturalist observation count |
+| `format` | `?format=csv` | Response format — `json` (default) or `csv` |
+| `page` | `?page=2` | Page number (default 1) |
+| `per_page` | `?per_page=100` | Results per page (1–500, default 50) |
+
+The detail endpoint (`/api/species/{name}`) supports `fields`, `exclude`, and `locale`.
+
+**Examples:**
+
+```bash
+# Top 10 most observed birds with images
+curl '/api/species?group=Aves&has_image=true&sort=-observations_count&per_page=10&fields=scientific_name,common_name,observations_count'
+
+# German and French names/descriptions for a species
+curl '/api/species/Anas%20platyrhynchos?locale=de,fr&fields=scientific_name,common_names,descriptions'
+
+# Export all mammals as CSV
+curl '/api/species?group=Mammalia&per_page=500&format=csv' > mammals.csv
+
+# Search with field selection
+curl '/api/search?q=eagle&fields=scientific_name,common_name&per_page=20'
+```
 
 ## Data Sources
 

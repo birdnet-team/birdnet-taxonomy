@@ -347,8 +347,21 @@ def to_webp(img: Image.Image, quality: int = 80) -> bytes:
     return buf.getvalue()
 
 
+def _normalise_url(url: str) -> str:
+    """Fix known URL patterns that have become stale.
+
+    eBird's CDN dropped support for bare ``/api/v2/asset/{id}`` URLs —
+    a size suffix is now required.  Append ``/1800`` (full-res) when
+    it's missing so downstream fetches succeed.
+    """
+    if re.search(r'cdn\.download\.ams\.birds\.cornell\.edu/api/v2/asset/\d+$', url):
+        return url + "/1800"
+    return url
+
+
 def download_image(url: str, timeout: int = 30) -> Image.Image | None:
     """Download an image from a URL and return as PIL Image, or None."""
+    url = _normalise_url(url)
     req = Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urlopen(req, timeout=timeout) as resp:

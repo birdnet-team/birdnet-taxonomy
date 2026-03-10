@@ -55,7 +55,7 @@
                 <div class="meta">
                     <span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span>
                     {% if s.observations_count %}
-                    &middot; {{ "{:,}".format(s.observations_count) }} obs
+                    &middot; {{ "{:,}".format(s.observations_count) }} iNat obs
                     {% endif %}
                 </div>
             </div>
@@ -89,4 +89,5 @@
     {% if query or group %}No species found.{% else %}No data loaded. Run <code>python -m build.metadata</code> first.{% endif %}
 </p>
 {% endif %}
+<script>sessionStorage.setItem('browseUrl', location.href);</script>
 {% endblock %}

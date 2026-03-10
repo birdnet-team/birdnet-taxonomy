@@ -28,16 +28,31 @@
     }
     .species-info { flex: 1; min-width: 250px; }
     .species-info h1 {
-        font-size: 1.8rem;
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 0.1rem;
+    }
+    .species-info .sci-name {
+        font-size: 1.15rem;
         font-style: italic;
-        color: var(--accent);
-        margin-bottom: 0.2rem;
-    }
-    .species-info h2 {
-        font-size: 1.2rem;
+        color: var(--muted);
         font-weight: 400;
-        margin-bottom: 1rem;
+        margin-bottom: 0.8rem;
     }
+    .species-info .desc-source {
+        display: inline-block;
+        padding: 0.1rem 0.45rem;
+        border-radius: 4px;
+        font-size: 0.72rem;
+        font-weight: 500;
+        background: #e9ecef;
+        color: var(--muted);
+        vertical-align: middle;
+        margin-left: 0.4rem;
+    }
+    .species-info .desc-source.src-claude { background: #d4edda; color: #155724; }
+    .species-info .desc-source.src-wikipedia { background: #cce5ff; color: #004085; }
+    .species-info .desc-source.src-ebird { background: #fff3cd; color: #856404; }
 
     .info-table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
     .info-table td {
@@ -192,7 +207,11 @@
 {% endblock %}
 
 {% block content %}
-<p style="margin-bottom: 1rem;"><a href="/">&larr; Back to browse</a></p>
+<p style="margin-bottom: 1rem;"><a href="/" id="backLink">&larr; Back to browse</a></p>
+<script>{
+    const u = sessionStorage.getItem('browseUrl');
+    if (u) document.getElementById('backLink').href = u;
+}</script>
 
 <div class="species-header">
     <div class="species-photo">
@@ -207,10 +226,8 @@
     </div>
 
     <div class="species-info">
-        <h1>{{ s.scientific_name }}</h1>
-        {% if s.common_name %}
-        <h2>{{ s.common_name }}</h2>
-        {% endif %}
+        <h1>{{ s.common_name or s.scientific_name }}</h1>
+        <div class="sci-name">{{ s.scientific_name }}</div>
 
         <table class="info-table">
             <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
@@ -221,7 +238,10 @@
             <tr><td>eBird</td><td><a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank">{{ s.ebird_code }}</a></td></tr>
             {% endif %}
             {% if s.observations_count %}
-            <tr><td>Observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
+            <tr><td>iNaturalist observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
+            {% endif %}
+            {% if s.image_source %}
+            <tr><td>Image source</td><td>{{ s.image_source }}</td></tr>
             {% endif %}
         </table>
 
@@ -242,10 +262,31 @@
 </div>
 
 {% set desc_en = (s.descriptions or {}).get('en', '') %}
+{% set translations = {} %}
+{% if s.descriptions %}
+{% for lang, text in s.descriptions.items() if lang != 'en' %}
+{% if translations.update({lang: text}) %}{% endif %}
+{% endfor %}
+{% endif %}
+
 {% if desc_en %}
 <div class="description">
-    <h3>Description</h3>
+    <h3>Description
+        {% if s.description_source and s.description_source != 'claude' %}<span class="desc-source src-{{ s.description_source }}">{{ s.description_source }}</span>{% endif %}
+    </h3>
     <p>{{ desc_en }}</p>
+</div>
+{% endif %}
+
+{% if translations %}
+<div class="section translations">
+    <h3>Translated Descriptions ({{ translations|length }})</h3>
+    {% for lang, text in translations|dictsort %}
+    <details>
+        <summary>{{ lang }}</summary>
+        <div class="trans-text">{{ text }}</div>
+    </details>
+    {% endfor %}
 </div>
 {% endif %}
 

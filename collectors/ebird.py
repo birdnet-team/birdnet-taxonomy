@@ -116,15 +116,19 @@ def _extract_og_tag(html: str, tag: str) -> str | None:
 
 
 def _image_base_url(og_image_url: str) -> str:
-    """Strip the size suffix from an eBird CDN image URL.
+    """Normalise an eBird CDN image URL for full-resolution download.
 
     Input:  https://cdn.download.ams.birds.cornell.edu/api/v2/asset/46409481/900
-    Output: https://cdn.download.ams.birds.cornell.edu/api/v2/asset/46409481
+    Output: https://cdn.download.ams.birds.cornell.edu/api/v2/asset/46409481/1800
+
+    Replaces whatever size suffix the OG tag uses with ``/1800`` (full-res).
+    Bare URLs without a size suffix also get ``/1800`` appended.
     """
     if not og_image_url:
         return ""
-    # Remove trailing /NNN size
-    return re.sub(r'/\d+$', '', og_image_url)
+    # Strip any trailing /NNN size, then add /1800
+    base = re.sub(r'/\d+$', '', og_image_url)
+    return base + "/1800"
 
 
 def _extract_asset_id(image_url: str) -> str:
