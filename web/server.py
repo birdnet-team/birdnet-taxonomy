@@ -30,7 +30,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from utils.images import ImageSize, fetch_cached, image_filename, save_species_image
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -62,10 +62,14 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
         "author": "anonymous",
         "license": "cc-by-sa",
     },
-    "description_source": "claude",
+    "description_source": "wikipedia",
     "descriptions": {
         "en": "This large, familiar duck inhabits diverse aquatic environments...",
         "de": "Diese große, bekannte Ente bewohnt vielfältige Gewässer...",
+    },
+    "wikipedia_urls": {
+        "en": "https://en.wikipedia.org/wiki/Mallard",
+        "de": "https://de.wikipedia.org/wiki/Stockente",
     },
     "common_names": {
         "en": "Mallard",
@@ -88,6 +92,13 @@ class SpeciesRecord(BaseModel):
     ncbi_id: Optional[int] = Field(None, examples=[8839])
     avibase_id: Optional[str] = Field(None, examples=["Anas-platyrhynchos"])
     birdlife_id: Optional[int] = Field(None, examples=[22680186])
+
+    @field_validator("birdlife_id", "gbif_id", "ncbi_id", "inat_id", mode="before")
+    @classmethod
+    def _empty_str_to_none(cls, v):
+        if v == "":
+            return None
+        return v
     image: Optional[dict[str, str]] = Field(
         None,
         description="Image proxy URLs and attribution",
@@ -100,8 +111,9 @@ class SpeciesRecord(BaseModel):
             "license": "cc-by-sa",
         }],
     )
-    description_source: Optional[str] = Field(None, examples=["claude"])
+    description_source: Optional[str] = Field(None, examples=["wikipedia"])
     descriptions: Optional[dict[str, str]] = Field(None, examples=[{"en": "A large, familiar duck...", "de": "Eine große, bekannte Ente..."}])
+    wikipedia_urls: Optional[dict[str, str]] = Field(None, examples=[{"en": "https://en.wikipedia.org/wiki/Mallard", "de": "https://de.wikipedia.org/wiki/Stockente"}])
     common_names: Optional[dict[str, str]] = Field(None, examples=[{"en": "Mallard", "de": "Stockente", "fr": "Canard colvert"}])
 
     model_config = {"extra": "allow"}
@@ -508,6 +520,10 @@ def _project(record: dict, fields: str | None, exclude: str | None,
                 rec["descriptions"] = {
                     k: v for k, v in rec["descriptions"].items() if k in codes
                 }
+            if "wikipedia_urls" in rec and isinstance(rec["wikipedia_urls"], dict):
+                rec["wikipedia_urls"] = {
+                    k: v for k, v in rec["wikipedia_urls"].items() if k in codes
+                }
 
     # --- field inclusion ---
     if fields:
@@ -664,7 +680,7 @@ async def api_search(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (claude, wikipedia, ebird)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, ebird)"),
     min_observations: Optional[int] = Query(None, description="Minimum observation count"),
     max_observations: Optional[int] = Query(None, description="Maximum observation count"),
     sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -observations_count)"),
@@ -713,7 +729,7 @@ async def api_species_list(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (claude, wikipedia, ebird)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, ebird)"),
     min_observations: Optional[int] = Query(None, description="Minimum observation count"),
     max_observations: Optional[int] = Query(None, description="Maximum observation count"),
     sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -observations_count)"),

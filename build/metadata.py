@@ -845,44 +845,71 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
 # ---------------------------------------------------------------------------
 
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
-                   claude: dict) -> list[dict]:
+                   claude: dict = None) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
     Each record:
       scientific_name, common_name, taxon_group, common_names,
-      description, image_url, image_author, image_license, image_source,
+      descriptions, description_source, wikipedia_urls,
+      image_url, image_author, image_license, image_source,
       inat_id, ebird_code, gbif_id, ncbi_id, avibase_id, birdlife_id,
       observations_count
     """
     records = []
     desc_sources: dict[str, int] = Counter()
 
+    if claude is None:
+        claude = {}
+
     for sci_name, tax in taxonomy.items():
-        cl = claude.get(sci_name, {})
         wp = wiki.get(sci_name, {})
         eb = ebird.get(sci_name, {})
+        cl = claude.get(sci_name, {})
 
-        # Descriptions: locale → text.  English follows Claude > Wikipedia
-        # > eBird priority.  Claude translations fill other locales.
+        # Descriptions: locale → text.
+        # Base layer: Wikipedia (multi-locale) or eBird (English-only).
+        # Claude overlay: replaces only the locales it provides.
         descriptions: dict[str, str] = {}
         description_source = ""
-        if cl.get("description_en"):
-            descriptions["en"] = cl["description_en"]
-            description_source = "claude"
-            desc_sources["claude"] += 1
-            for loc, text in cl.get("translations", {}).items():
-                if text:
-                    descriptions[loc] = text
-        elif wp.get("extract"):
+        wikipedia_urls: dict[str, str] = {}
+
+        # Wikipedia: use English extract, plus any locale extracts and URLs
+        wp_extracts = wp.get("extracts", {})
+        if wp.get("extract"):
             descriptions["en"] = wp["extract"]
             description_source = "wikipedia"
             desc_sources["wikipedia"] += 1
-        elif eb.get("description"):
-            descriptions["en"] = eb["description"]
-            description_source = "ebird"
-            desc_sources["ebird"] += 1
-        else:
-            desc_sources["none"] += 1
+        elif wp_extracts:
+            # No English extract but locale extracts exist
+            description_source = "wikipedia"
+            desc_sources["wikipedia"] += 1
+
+        if description_source == "wikipedia":
+            for loc, text in wp_extracts.items():
+                if loc != "en" and text:
+                    descriptions[loc] = text
+            for loc, url in wp.get("wikipedia_urls", {}).items():
+                if url:
+                    wikipedia_urls[loc] = url
+
+        if not description_source:
+            if eb.get("description"):
+                descriptions["en"] = eb["description"]
+                description_source = "ebird"
+                desc_sources["ebird"] += 1
+            else:
+                desc_sources["none"] += 1
+
+        # Claude overlay — replace only the locales Claude provides
+        claude_locales: list[str] = []
+        if cl.get("description_en"):
+            descriptions["en"] = cl["description_en"]
+            description_source = "claude"
+            claude_locales.append("en")
+            for loc, text in cl.get("translations", {}).items():
+                if text:
+                    descriptions[loc] = text
+                    claude_locales.append(loc)
 
         record = {
             "scientific_name": sci_name,
@@ -891,6 +918,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "common_names": tax.get("common_names", {}),
             "descriptions": descriptions,
             "description_source": description_source,
+            "claude_locales": claude_locales,
+            "wikipedia_urls": wikipedia_urls,
             "image_url": tax.get("image_url", ""),
             "image_author": tax.get("image_author", ""),
             "image_license": tax.get("image_license", ""),

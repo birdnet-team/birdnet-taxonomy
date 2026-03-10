@@ -29,6 +29,7 @@ import json
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -431,7 +432,7 @@ def _run_phase2(english_data: dict[str, dict],
     """Phase 2: Batch fetch locale extracts for all languages.
 
     Skips (input_title, lang) pairs that already have an extract in
-    existing_extracts.
+    existing_extracts.  Fetches all locales concurrently using threads.
     """
     # Collect per-locale work: lang -> [(locale_title, input_title)]
     locale_work: dict[str, list[tuple[str, str]]] = {}
@@ -452,13 +453,13 @@ def _run_phase2(english_data: dict[str, dict],
         pbar.refresh()
 
     locale_extracts: dict[str, dict[str, str]] = {}
+    _lock = threading.Lock()
 
-    for lang, pairs in sorted(locale_work.items()):
-        if is_shutting_down():
-            break
-
+    def _fetch_lang(lang: str, pairs: list[tuple[str, str]]):
+        """Fetch all batches for a single locale."""
         loc_titles = [p[0] for p in pairs]
         loc_to_input = {p[0]: p[1] for p in pairs}
+        results: dict[str, dict[str, str]] = {}
 
         for batch in _chunks(loc_titles, BATCH_SIZE):
             if is_shutting_down():
@@ -467,8 +468,25 @@ def _run_phase2(english_data: dict[str, dict],
             for loc_title, ext in extracts.items():
                 input_title = loc_to_input.get(loc_title, "")
                 if input_title:
-                    locale_extracts.setdefault(input_title, {})[lang] = ext
-            pbar.update(len(batch))
+                    results.setdefault(input_title, {})[lang] = ext
+            with _lock:
+                pbar.update(len(batch))
+
+        return results
+
+    # Run all locales concurrently (one thread per locale)
+    n_workers = min(len(locale_work), 8)
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {
+            pool.submit(_fetch_lang, lang, pairs): lang
+            for lang, pairs in sorted(locale_work.items())
+        }
+        for future in as_completed(futures):
+            if is_shutting_down():
+                break
+            results = future.result()
+            for input_title, lang_texts in results.items():
+                locale_extracts.setdefault(input_title, {}).update(lang_texts)
 
     return locale_extracts
 

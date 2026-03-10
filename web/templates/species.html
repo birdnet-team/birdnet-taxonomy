@@ -269,10 +269,19 @@
 {% endfor %}
 {% endif %}
 
+{% set wiki_urls = s.wikipedia_urls or {} %}
+{% set cl_locales = s.claude_locales or [] %}
+
 {% if desc_en %}
 <div class="description">
     <h3>Description
-        {% if s.description_source and s.description_source != 'claude' %}<span class="desc-source src-{{ s.description_source }}">{{ s.description_source }}</span>{% endif %}
+        {% if s.description_source != 'claude' %}
+            {% if s.description_source == 'wikipedia' and wiki_urls.en %}
+            <a href="{{ wiki_urls.en }}" target="_blank" class="desc-source src-wikipedia" style="text-decoration:none">wikipedia</a>
+            {% elif s.description_source == 'ebird' and s.ebird_code %}
+            <a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank" class="desc-source src-ebird" style="text-decoration:none">ebird</a>
+            {% endif %}
+        {% endif %}
     </h3>
     <p>{{ desc_en }}</p>
 </div>
@@ -283,7 +292,7 @@
     <h3>Translated Descriptions ({{ translations|length }})</h3>
     {% for lang, text in translations|dictsort %}
     <details>
-        <summary>{{ lang }}</summary>
+        <summary>{{ lang }}{% if wiki_urls[lang] and lang not in cl_locales %} <a href="{{ wiki_urls[lang] }}" target="_blank" style="font-size:0.75rem; color:var(--muted); margin-left:0.4rem">wikipedia</a>{% endif %}</summary>
         <div class="trans-text">{{ text }}</div>
     </details>
     {% endfor %}
