@@ -5,7 +5,7 @@ FastAPI web server for browsing and querying species metadata.
 Provides:
   - HTML pages: home/search, species detail
   - REST API: /api/species, /api/species/{name}, /api/search, /api/stats
-  - Image proxy: /api/image/{scientific_name}/{size}  (WebP, cached)
+  - Image proxy: /api/image/{scientific_name}  (WebP, cached)
   - Auto-generated docs at /docs (Swagger) and /redoc
 
 Usage:
@@ -31,7 +31,7 @@ from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
 from pydantic import BaseModel, Field, field_validator
-from utils.images import ImageSize, fetch_cached, image_filename, save_species_image
+from utils.images import ImageSize, image_filename, save_species_image
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -55,9 +55,7 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
     "avibase_id": "Anas-platyrhynchos",
     "birdlife_id": 22680186,
     "image": {
-        "thumb": "/api/image/Anas platyrhynchos/thumb",
-        "medium": "/api/image/Anas platyrhynchos/medium",
-        "large": "/api/image/Anas platyrhynchos/large",
+        "url": "/api/image/Anas platyrhynchos",
         "source": "inat",
         "author": "anonymous",
         "license": "cc-by-sa",
@@ -101,11 +99,9 @@ class SpeciesRecord(BaseModel):
         return v
     image: Optional[dict[str, str]] = Field(
         None,
-        description="Image proxy URLs and attribution",
+        description="Image proxy URL and attribution",
         examples=[{
-            "thumb": "/api/image/Anas platyrhynchos/thumb",
-            "medium": "/api/image/Anas platyrhynchos/medium",
-            "large": "/api/image/Anas platyrhynchos/large",
+            "url": "/api/image/Anas platyrhynchos",
             "source": "inat",
             "author": "anonymous",
             "license": "cc-by-sa",
@@ -274,28 +270,21 @@ def _normalise(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 _image_dir: Path = ROOT / "dist" / "images"
-_image_cache_dir: Path = ROOT / ".image_cache"
-_image_sizes: dict[str, ImageSize] = {}
-_image_quality: int = 80
+_image_size: ImageSize = ImageSize(480, 320)
+_image_quality: int = 60
 _dev_mode: bool = False
 
 
 def _init_image_config(dev: bool = False):
     """Load image proxy settings from config."""
-    global _image_dir, _image_cache_dir, _image_sizes, _image_quality, _dev_mode
+    global _image_dir, _image_size, _image_quality, _dev_mode
     _dev_mode = dev
     cfg = load_config()
     img = cfg.get("images", {})
     _image_dir = ROOT / ("dev" if dev else "dist") / "images"
     _image_dir.mkdir(parents=True, exist_ok=True)
-    _image_cache_dir = ROOT / img.get("cache_dir", ".image_cache")
-    _image_cache_dir.mkdir(parents=True, exist_ok=True)
-    _image_quality = img.get("quality", 80)
-    _image_sizes = {
-        "thumb": ImageSize(img.get("thumb_width", 150), img.get("thumb_height", 100)),
-        "medium": ImageSize(img.get("medium_width", 480), img.get("medium_height", 320)),
-        "large": ImageSize(img.get("large_width", 1200), img.get("large_height", 800)),
-    }
+    _image_quality = img.get("quality", 60)
+    _image_size = ImageSize(img.get("width", 480), img.get("height", 320))
 
 
 # ---------------------------------------------------------------------------
@@ -325,20 +314,16 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # Image proxy endpoint
 # ---------------------------------------------------------------------------
 
-@app.get("/api/image/{scientific_name:path}/{size}",
+@app.get("/api/image/{scientific_name:path}",
          tags=["Images"],
          responses={200: {"content": {"image/webp": {}}}})
-async def image_proxy(scientific_name: str, size: str):
-    """Serve a species image as WebP in the requested size.
+async def image_proxy(scientific_name: str):
+    """Serve a species image as WebP (480x320, quality 60).
 
-    Sizes: thumb (150x100), medium (480x320), large (1200x800).
     Images are fetched from the original source, smart-cropped with YOLO,
     and saved to disk with meaningful filenames.  Subsequent requests are
     served directly from the saved file.
     """
-    if size not in _image_sizes:
-        raise HTTPException(400, f"Invalid size '{size}'. Use: thumb, medium, large")
-
     rec = _species_by_name.get(scientific_name) or \
           _species_by_name.get(scientific_name.lower())
     if not rec:
@@ -353,7 +338,7 @@ async def image_proxy(scientific_name: str, size: str):
     author = rec.get("image_author", "")
 
     # Check for named file on disk first
-    fname = image_filename(sci, common, author, size)
+    fname = image_filename(sci, common, author)
     local_path = _image_dir / fname
     if local_path.exists():
         return Response(
@@ -368,8 +353,7 @@ async def image_proxy(scientific_name: str, size: str):
         scientific_name=sci,
         common_name=common,
         author=author,
-        size_name=size,
-        size=_image_sizes[size],
+        size=_image_size,
         image_dir=_image_dir,
         quality=_image_quality,
     )
@@ -481,9 +465,7 @@ def _api_record(record: dict) -> dict:
 
     if url and sci:
         img: dict[str, str] = {
-            "thumb": f"/api/image/{sci}/thumb",
-            "medium": f"/api/image/{sci}/medium",
-            "large": f"/api/image/{sci}/large",
+            "url": f"/api/image/{sci}",
         }
         if source:
             img["source"] = source

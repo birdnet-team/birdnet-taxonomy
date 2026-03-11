@@ -2,10 +2,10 @@
 Shared image utilities: download, crop, resize, and convert to WebP.
 
 Provides a single pipeline for fetching remote images and converting them
-to WebP at various sizes with content-aware smart cropping.  A lightweight
-YOLOv8-nano model detects the animal bounding box and the crop window is
-placed to include as much of the subject as possible.  Falls back to
-center crop when the model is unavailable or no animal is detected.
+to WebP with content-aware smart cropping.  A lightweight YOLOv8-nano model
+detects the animal bounding box and the crop window is placed to include as
+much of the subject as possible.  Falls back to center crop when the model
+is unavailable or no animal is detected.
 
 Used by the web server (image proxy endpoint) and can be used by any
 collector or build script that needs processed images.
@@ -14,18 +14,17 @@ Usage:
     from utils.images import fetch_and_convert, crop_and_resize, ImageSize
 
     # Fetch from URL and get WebP bytes
-    webp = fetch_and_convert(url, ImageSize(480, 320), quality=80)
+    webp = fetch_and_convert(url, ImageSize(480, 320), quality=60)
 
     # Or process a local PIL Image directly
     from PIL import Image
     img = Image.open("photo.jpg")
     result = crop_and_resize(img, ImageSize(480, 320))
-    result.save("out.webp", "WEBP", quality=80)
+    result.save("out.webp", "WEBP", quality=60)
 """
 
 from __future__ import annotations
 
-import hashlib
 import io
 import logging
 import re
@@ -48,12 +47,8 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-# Default sizes matching config.yml image proxy settings
-SIZES = {
-    "thumb": (150, 100),
-    "medium": (480, 320),
-    "large": (1200, 800),
-}
+# Default image size (medium, 3:2 aspect ratio)
+DEFAULT_SIZE = (480, 320)
 
 
 @dataclass(frozen=True)
@@ -99,14 +94,15 @@ _ANIMAL_CLASSES = frozenset({
 })
 
 _ort_session: "ort.InferenceSession | None" = None  # type: ignore[name-defined]
+_model_failed: bool = False  # True after first failed attempt — skip retries
 
 
 def _ensure_model() -> "ort.InferenceSession | None":  # type: ignore[name-defined]
     """Load YOLOv8n ONNX model, exporting from .pt if needed."""
-    global _ort_session
+    global _ort_session, _model_failed
     if _ort_session is not None:
         return _ort_session
-    if not _ORT_AVAILABLE:
+    if _model_failed or not _ORT_AVAILABLE:
         return None
 
     model_path = _MODEL_DIR / _MODEL_FILE
@@ -132,7 +128,9 @@ def _ensure_model() -> "ort.InferenceSession | None":  # type: ignore[name-defin
             pt_path.unlink(missing_ok=True)
             log.info("Model saved to %s", model_path)
         except Exception as exc:
-            log.warning("Failed to prepare YOLO model: %s", exc)
+            log.warning("Failed to prepare YOLO model: %s — "
+                        "smart crop disabled, using center crop", exc)
+            _model_failed = True
             return None
 
     try:
@@ -143,6 +141,7 @@ def _ensure_model() -> "ort.InferenceSession | None":  # type: ignore[name-defin
         return _ort_session
     except Exception as exc:
         log.warning("Failed to load YOLO model: %s", exc)
+        _model_failed = True
         return None
 
 
@@ -340,7 +339,7 @@ def crop_and_resize(img: Image.Image, size: ImageSize) -> Image.Image:
     return img
 
 
-def to_webp(img: Image.Image, quality: int = 80) -> bytes:
+def to_webp(img: Image.Image, quality: int = 60) -> bytes:
     """Convert a PIL Image to WebP bytes."""
     buf = io.BytesIO()
     img.save(buf, "WEBP", quality=quality)
@@ -376,7 +375,7 @@ def download_image(url: str, timeout: int = 30) -> Image.Image | None:
 
 
 def fetch_and_convert(url: str, size: ImageSize,
-                      quality: int = 80) -> bytes | None:
+                      quality: int = 60) -> bytes | None:
     """Download image from URL, crop, resize, convert to WebP.
 
     Returns WebP bytes or None on failure.
@@ -389,79 +388,45 @@ def fetch_and_convert(url: str, size: ImageSize,
     return to_webp(img, quality)
 
 
-def cache_key(url: str, size_name: str) -> str:
-    """Generate a deterministic cache filename for a URL + size."""
-    h = hashlib.sha256(url.encode()).hexdigest()[:16]
-    return f"{h}_{size_name}.webp"
-
-
-def fetch_cached(url: str, size_name: str, size: ImageSize,
-                 cache_dir: Path, quality: int = 80) -> bytes | None:
-    """Fetch an image with disk caching.
-
-    Returns WebP bytes from cache if available, otherwise downloads,
-    converts, caches, and returns. Returns None on failure.
-    """
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_file = cache_dir / cache_key(url, size_name)
-
-    if cache_file.exists():
-        return cache_file.read_bytes()
-
-    webp_bytes = fetch_and_convert(url, size, quality)
-    if webp_bytes is None:
-        return None
-
-    # Atomic write via temp file
-    tmp = cache_file.with_suffix(".tmp")
-    tmp.write_bytes(webp_bytes)
-    tmp.replace(cache_file)
-
-    return webp_bytes
-
-
 # ---------------------------------------------------------------------------
-# Named image files: <sci>_<common>_<author>_<size>.webp
+# Named image files: <sci name with spaces>_<com name with spaces>_<author name with spaces>.webp
 # ---------------------------------------------------------------------------
 
-_SAFE_RE = re.compile(r"[^a-zA-Z0-9_-]")
+_COLLAPSE_SPACES = re.compile(r"\s+")
+_STRIP_NON_PRINT = re.compile(r"[\x00-\x1f\x7f]")
 
 
-def _sanitise(text: str) -> str:
-    """Strip non-alphanumeric characters, collapse runs, lowercase."""
-    text = unicodedata.normalize("NFKD", text)
-    text = text.encode("ascii", "ignore").decode()
-    text = _SAFE_RE.sub("_", text)
-    text = re.sub(r"_+", "_", text).strip("_")
-    return text.lower()
+def _clean_name(text: str) -> str:
+    """Normalise a name for use in filenames: NFC, strip control chars, collapse spaces."""
+    text = unicodedata.normalize("NFC", text)
+    text = _STRIP_NON_PRINT.sub("", text)
+    text = _COLLAPSE_SPACES.sub(" ", text).strip()
+    return text
 
 
 def image_filename(scientific_name: str, common_name: str,
-                   author: str, size_name: str) -> str:
+                   author: str) -> str:
     """Build a human-readable WebP filename for a species image.
 
-    Format: <scientific>_<common>_<author>_<size>.webp
-    All parts are sanitised to ASCII alphanumerics, hyphens, underscores.
+    Format: <scientific name>_<common name>_<author>.webp
+    Spaces are preserved within each part; parts are separated by underscores.
     The author field is truncated to 60 chars to avoid OS filename limits.
     """
-    parts = [
-        _sanitise(scientific_name),
-        _sanitise(common_name) if common_name else "unknown",
-        _sanitise(author)[:60].rstrip("_") if author else "unknown",
-        size_name,
-    ]
-    return "_".join(p for p in parts if p) + ".webp"
+    sci = _clean_name(scientific_name) if scientific_name else "unknown"
+    com = _clean_name(common_name) if common_name else "unknown"
+    auth = _clean_name(author)[:60].rstrip() if author else "unknown"
+    return f"{sci}_{com}_{auth}.webp"
 
 
 def save_species_image(url: str, scientific_name: str, common_name: str,
-                       author: str, size_name: str, size: ImageSize,
-                       image_dir: Path, quality: int = 80) -> Path | None:
+                       author: str, size: ImageSize,
+                       image_dir: Path, quality: int = 60) -> Path | None:
     """Download, crop, and save a species image with a readable filename.
 
     Returns the saved path, or None on failure.  Skips if the file already
     exists on disk.
     """
-    fname = image_filename(scientific_name, common_name, author, size_name)
+    fname = image_filename(scientific_name, common_name, author)
     dest = image_dir / fname
 
     if dest.exists():

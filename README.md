@@ -56,7 +56,7 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 5. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
 | 6. Images (optional) | `python -m collectors.images` | `dist/images/*.webp` (`--dev` → `dev/images/`) |
 
-Steps 1–2 collect source taxonomy data. Steps 3–5 enrich species with descriptions, images, and translations. Step 5 optionally uses Claude to generate polished English descriptions and translate them to configured locales. Step 6 batch-downloads species images as named WebP files with content-aware smart cropping (YOLOv8-nano animal detection).
+Steps 1–2 collect source taxonomy data. Steps 3–5 enrich species with descriptions, images, and translations. Step 5 optionally uses Claude to generate polished English descriptions and translate them to configured locales. Step 6 batch-downloads species images as named WebP files with content-aware smart cropping (YOLOv8-nano animal detection). Filenames use the format `<scientific name>_<common name>_<author>.webp`.
 
 ### Build
 
@@ -77,7 +77,7 @@ The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archive
 
 ### Web Server
 
-Browse and search the dataset through a web UI and REST API. Species images are served through a built-in proxy that fetches from the original source, converts to WebP, smart-crops to 3:2 using YOLOv8-nano animal detection, and saves as named files (`<sci>_<common>_<author>_<size>.webp`). Pre-downloaded images from the collector are served directly.
+Browse and search the dataset through a web UI and REST API. Species images are served through a built-in proxy that fetches from the original source, converts to WebP (quality 60), smart-crops to 3:2 using YOLOv8-nano animal detection, and saves as named files (`<sci name>_<common name>_<author>.webp`). Pre-downloaded images from the collector are served directly.
 
 ```bash
 python -m web.server              # serve from dist/species_metadata.json
@@ -95,7 +95,7 @@ uvicorn web.server:app --reload
 |-------|-------------|
 | `/` | Home page — search, browse, filter by taxon group |
 | `/species/{name}` | Species detail page (HTML) |
-| `/api/image/{name}/{size}` | Image proxy — `thumb`, `medium`, `large` (WebP) |
+| `/api/image/{name}` | Image proxy (WebP, 480×320) |
 | `/api/species` | List species (JSON/CSV) with filtering, sorting, field selection |
 | `/api/species/{name}` | Single species detail (JSON) with field selection |
 | `/api/search?q=` | Search species by name with full query options |
