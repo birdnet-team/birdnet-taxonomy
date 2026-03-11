@@ -43,7 +43,7 @@
         <a href="/species/{{ s.scientific_name }}">
             {% set display_name = s.common_names.get(lang, s.common_name) if lang and s.common_names else s.common_name %}
             {% if s.image_url %}
-            <img src="/api/image/{{ s.scientific_name }}" alt="{{ display_name or s.scientific_name }}" loading="lazy">
+            <img src="/api/image/{{ s.scientific_name }}?size=thumb" alt="{{ display_name or s.scientific_name }}" loading="lazy">
             {% else %}
             <div class="no-img">No image</div>
             {% endif %}

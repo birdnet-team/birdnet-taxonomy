@@ -96,6 +96,9 @@ claude:
 
 # Image settings (served via /api/image endpoint)
 images:
-  width: 480             # image max width (3:2 aspect ratio)
-  height: 320            # image max height
-  quality: 60            # WebP quality (1-100)
+  thumb_width: 150       # thumbnail max width (3:2 aspect ratio)
+  thumb_height: 100      # thumbnail max height
+  thumb_quality: 40      # thumbnail WebP quality (1-100)
+  medium_width: 480      # medium max width (3:2 aspect ratio)
+  medium_height: 320     # medium max height
+  medium_quality: 60     # medium WebP quality (1-100)

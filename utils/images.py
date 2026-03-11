@@ -47,8 +47,11 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-# Default image size (medium, 3:2 aspect ratio)
-DEFAULT_SIZE = (480, 320)
+# Default image sizes (3:2 aspect ratio)
+SIZES = {
+    "thumb": (150, 100),
+    "medium": (480, 320),
+}
 
 
 @dataclass(frozen=True)

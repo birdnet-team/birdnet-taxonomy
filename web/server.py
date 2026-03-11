@@ -5,7 +5,7 @@ FastAPI web server for browsing and querying species metadata.
 Provides:
   - HTML pages: home/search, species detail
   - REST API: /api/species, /api/species/{name}, /api/search, /api/stats
-  - Image proxy: /api/image/{scientific_name}  (WebP, cached)
+  - Image proxy: /api/image/{scientific_name}?size=  (WebP, cached)
   - Auto-generated docs at /docs (Swagger) and /redoc
 
 Usage:
@@ -55,7 +55,8 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
     "avibase_id": "Anas-platyrhynchos",
     "birdlife_id": 22680186,
     "image": {
-        "url": "/api/image/Anas platyrhynchos",
+        "thumb": "/api/image/Anas platyrhynchos?size=thumb",
+        "medium": "/api/image/Anas platyrhynchos?size=medium",
         "source": "inat",
         "author": "anonymous",
         "license": "cc-by-sa",
@@ -99,9 +100,10 @@ class SpeciesRecord(BaseModel):
         return v
     image: Optional[dict[str, str]] = Field(
         None,
-        description="Image proxy URL and attribution",
+        description="Image proxy URLs and attribution",
         examples=[{
-            "url": "/api/image/Anas platyrhynchos",
+            "thumb": "/api/image/Anas platyrhynchos?size=thumb",
+            "medium": "/api/image/Anas platyrhynchos?size=medium",
             "source": "inat",
             "author": "anonymous",
             "license": "cc-by-sa",
@@ -269,22 +271,28 @@ def _normalise(text: str) -> str:
 # Image proxy helpers
 # ---------------------------------------------------------------------------
 
-_image_dir: Path = ROOT / "dist" / "images"
-_image_size: ImageSize = ImageSize(480, 320)
-_image_quality: int = 60
+_image_base: Path = ROOT / "dist" / "images"
+_image_sizes: dict[str, ImageSize] = {}
+_image_qualities: dict[str, int] = {}
 _dev_mode: bool = False
 
 
 def _init_image_config(dev: bool = False):
     """Load image proxy settings from config."""
-    global _image_dir, _image_size, _image_quality, _dev_mode
+    global _image_base, _image_sizes, _image_qualities, _dev_mode
     _dev_mode = dev
     cfg = load_config()
     img = cfg.get("images", {})
-    _image_dir = ROOT / ("dev" if dev else "dist") / "images"
-    _image_dir.mkdir(parents=True, exist_ok=True)
-    _image_quality = img.get("quality", 60)
-    _image_size = ImageSize(img.get("width", 480), img.get("height", 320))
+    _image_base = ROOT / ("dev" if dev else "dist") / "images"
+    _image_base.mkdir(parents=True, exist_ok=True)
+    _image_sizes = {
+        "thumb": ImageSize(img.get("thumb_width", 150), img.get("thumb_height", 100)),
+        "medium": ImageSize(img.get("medium_width", 480), img.get("medium_height", 320)),
+    }
+    _image_qualities = {
+        "thumb": img.get("thumb_quality", 20),
+        "medium": img.get("medium_quality", 60),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -317,13 +325,18 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/api/image/{scientific_name:path}",
          tags=["Images"],
          responses={200: {"content": {"image/webp": {}}}})
-async def image_proxy(scientific_name: str):
-    """Serve a species image as WebP (480x320, quality 60).
+async def image_proxy(scientific_name: str,
+                      size: str = Query("medium", description="Image size: thumb or medium")):
+    """Serve a species image as WebP.
 
+    Sizes: thumb (150x100), medium (480x320).  Default is medium.
     Images are fetched from the original source, smart-cropped with YOLO,
     and saved to disk with meaningful filenames.  Subsequent requests are
     served directly from the saved file.
     """
+    if size not in _image_sizes:
+        raise HTTPException(400, f"Invalid size '{size}'. Use: thumb, medium")
+
     rec = _species_by_name.get(scientific_name) or \
           _species_by_name.get(scientific_name.lower())
     if not rec:
@@ -339,7 +352,8 @@ async def image_proxy(scientific_name: str):
 
     # Check for named file on disk first
     fname = image_filename(sci, common, author)
-    local_path = _image_dir / fname
+    image_dir = _image_base / size
+    local_path = image_dir / fname
     if local_path.exists():
         return Response(
             content=local_path.read_bytes(),
@@ -353,9 +367,9 @@ async def image_proxy(scientific_name: str):
         scientific_name=sci,
         common_name=common,
         author=author,
-        size=_image_size,
-        image_dir=_image_dir,
-        quality=_image_quality,
+        size=_image_sizes[size],
+        image_dir=image_dir,
+        quality=_image_qualities.get(size, 60),
     )
     if saved and saved.exists():
         return Response(
@@ -465,7 +479,8 @@ def _api_record(record: dict) -> dict:
 
     if url and sci:
         img: dict[str, str] = {
-            "url": f"/api/image/{sci}",
+            "thumb": f"/api/image/{sci}?size=thumb",
+            "medium": f"/api/image/{sci}?size=medium",
         }
         if source:
             img["source"] = source

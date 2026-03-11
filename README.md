@@ -95,7 +95,7 @@ uvicorn web.server:app --reload
 |-------|-------------|
 | `/` | Home page — search, browse, filter by taxon group |
 | `/species/{name}` | Species detail page (HTML) |
-| `/api/image/{name}` | Image proxy (WebP, 480×320) |
+| `/api/image/{name}?size=` | Image proxy — `thumb` (150×100), `medium` (480×320, default) |
 | `/api/species` | List species (JSON/CSV) with filtering, sorting, field selection |
 | `/api/species/{name}` | Single species detail (JSON) with field selection |
 | `/api/search?q=` | Search species by name with full query options |
