@@ -14,7 +14,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For Claude-generated descriptions, add your API key to a `.env` file:
+For Claude translations and shortening, add your API key to a `.env` file:
 
 ```
 ANTHROPIC_API_KEY=...
@@ -33,7 +33,7 @@ collectors/
     inat.py             # iNaturalist taxa paginator
     ebird.py            # eBird page scraper (descriptions, images)
     wikipedia.py        # Wikipedia summaries, langlinks, image licenses
-    claude.py           # Claude API (descriptions + translations)
+    claude.py           # Claude API (shorten long extracts + translate)
     images.py           # Batch image downloader (smart-crop + save)
 build/
     metadata.py         # Cross-reference all sources → final metadata
@@ -42,6 +42,18 @@ web/
     templates/          # Jinja2 templates (home, species detail, base)
     static/             # Logo and static assets
 ```
+
+## Taxon Groups
+
+Configured in `config.yml`. Birds include all species; other groups are limited to species with sound observations on iNaturalist.
+
+| Group | iNat Taxon ID | Mode | Min sound observations |
+|-------|---------------|------|------------------------|
+| Aves | 3 | All species | — |
+| Mammalia | 40151 | Sounds only | 1 |
+| Insecta | 47158 | Sounds only | 10 |
+| Reptilia | 26036 | Sounds only | 10 |
+| Amphibia | 20978 | Sounds only | 10 |
 
 ## Pipeline
 
@@ -54,16 +66,109 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 3. eBird | `python -m collectors.ebird` | `raw_data/ebird_data.json` |
 | 4. Wikipedia | `python -m collectors.wikipedia` | `raw_data/wikipedia_data.json` |
 | 5. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
-| 6. Images (optional) | `python -m collectors.images` | `dist/images/*.webp` (`--dev` → `dev/images/`) |
+| 6. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
+| 7. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
 
-Steps 1–2 collect source taxonomy data. Steps 3–5 enrich species with descriptions, images, and translations. Step 5 optionally uses Claude to generate polished English descriptions and translate them to configured locales. Step 6 batch-downloads species images as named WebP files with content-aware smart cropping (YOLOv8-nano animal detection). Filenames use the format `<scientific name>_<common name>_<author>.webp`.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with descriptions, images, and translations from Wikipedia and eBird. Step 5 uses Claude to shorten excessively long extracts and translate missing locales. Step 6 downloads species images. Step 7 cross-references everything into the final output.
 
-### Build
+### Step 1 — AviList
 
-Once raw data is collected, build the final metadata file. This runs two phases:
+Downloads the AviList Global Avian Checklist (XLSX), converts to CSV. Provides authoritative bird taxonomy and AviList IDs.
 
-1. **Taxonomy** — cross-references iNaturalist, AviList, and Wikidata to build a canonical species list with eBird codes, common names (60+ locales via eBird + Wikidata), external identifiers (GBIF, NCBI, Avibase, BirdLife), and default images (iNat → Wikimedia Commons → eBird).
-2. **Merge** — enriches each species with a single description (Claude > Wikipedia > eBird priority) and writes the final output.
+### Step 2 — iNaturalist
+
+Paginates the iNat taxa API to fetch all species for each taxon group. For birds, fetches all species. For other groups, queries the iNat sounds API to find species with audio observations meeting the `min_observations` threshold. Collects taxonomy, common names (all locales when `all_names: true`), observation counts, default photos, and Wikipedia URLs.
+
+### Step 3 — eBird
+
+Scrapes eBird species pages for English descriptions and Macaulay Library images. Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps).
+
+### Step 4 — Wikipedia
+
+Fetches multilingual Wikipedia data in four phases:
+
+- **Phase 1 — English Wikipedia:** Batch-fetches extracts, langlinks, page images, and Wikidata descriptions for each species' Wikipedia article. Up to 50 titles per request. Includes a search fallback for titles not found in batch results.
+- **Phase 1b — Extract backfill:** Scans existing data for species that have an English Wikipedia URL but are missing the English extract (can happen due to API glitches during bulk fetching). Re-fetches just the extracts for those species with redirect resolution.
+- **Phase 2 — Locale extracts:** For each target language (20 configured locales), batch-fetches intro extracts from the corresponding Wikipedia. Runs locales concurrently with a thread pool. Skips species that already have extracts for a given locale.
+- **Phase 3 — Image licenses:** Batch-fetches license metadata (artist, license, license URL) from Wikimedia Commons for all page images found in Phase 1.
+
+Rate-limited (default 25 rps), with exponential backoff on 429s and server errors. All phases save incrementally.
+
+**Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, ar, ja, ko, tr, sw
+
+```bash
+python -m collectors.wikipedia              # fetch all
+python -m collectors.wikipedia --limit 100  # cap at 100 new species
+python -m collectors.wikipedia --refetch    # re-fetch species with few locale extracts
+python -m collectors.wikipedia --rps 10     # custom rate limit
+python -m collectors.wikipedia --dry-run    # preview without fetching
+```
+
+### Step 5 — Claude
+
+Uses the Claude API (Sonnet 4) for two tasks on existing Wikipedia extracts — no content is generated from scratch:
+
+- **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks Claude to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
+- **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for Claude's target locales. Sends the English text to Claude for translation into all missing locales at once.
+
+Claude's output is stored separately in `claude_data.json` and overlaid on top of Wikipedia extracts during the build step. Claude only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
+
+**Claude locales:** en, de, fr, es, pt, it, nl, zh, ru, ar (subset of Wikipedia locales)
+
+```bash
+python -m collectors.claude                   # run both phases
+python -m collectors.claude --shorten-only    # only shorten long extracts
+python -m collectors.claude --translate-only  # only translate missing locales
+python -m collectors.claude --batch-size 3    # species per API call
+python -m collectors.claude --limit 50        # cap total work items
+python -m collectors.claude --dry-run         # preview without API calls
+```
+
+### Step 6 — Images
+
+Batch-downloads species images as WebP files with content-aware smart cropping. Each species gets two sizes stored in subdirectories:
+
+| Size | Dimensions | Quality | Path |
+|------|-----------|---------|------|
+| thumb | 150×100 | 40 | `images/thumb/` |
+| medium | 480×320 | 60 | `images/medium/` |
+
+**Filename format:** `<scientific name>_<common name>_<author>.webp`
+
+**Smart cropping** uses YOLOv8-nano (ONNX) for animal detection. The model prefers COCO animal classes (bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe) and centers the crop on the detected subject. For tall subjects (e.g. a woodpecker on a trunk), the crop prefers the upper portion to keep the head visible. Falls back to center-crop if no animal is detected or if the ONNX runtime is unavailable.
+
+**Dummy images:** On startup, generates a grayscale dummy WebP (neutral gray background with centered BirdNET logo) for each size. When a download or conversion fails, the dummy is copied as the species' named file so every species has an image file.
+
+```bash
+python -m collectors.images              # download to dist/images/
+python -m collectors.images --dev        # download to dev/images/
+python -m collectors.images --workers 8  # parallel downloaders
+python -m collectors.images --limit 100  # cap at 100 species
+python -m collectors.images --dry-run    # preview without downloading
+```
+
+### Step 7 — Build
+
+Cross-references all sources into the final metadata file. Runs in two phases:
+
+**Taxonomy phase:**
+1. Cross-references iNaturalist, AviList, and Wikidata to build a canonical species list
+2. Resolves eBird codes via AviList and Wikidata SPARQL queries
+3. Fetches external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife)
+4. Collects common names from eBird (60+ locales) and Wikidata labels
+5. Selects the best image for each species through a priority chain:
+   - **iNaturalist taxon photo** — default photo if CC-licensed
+   - **Macaulay Library** — eBird image (source tagged as "Macaulay Library ML{asset_id}")
+   - **Wikimedia Commons** — Wikidata P18 image if CC/PD/GFDL licensed
+   - **iNat observation photo** (non-birds only) — queries the observations API for CC-licensed photos from research-grade observations, sorted by community votes
+
+**Merge phase:**
+Assembles per-species descriptions from multiple sources with the following priority:
+- **Base layer — Wikipedia:** English extract plus all locale extracts and Wikipedia URLs
+- **Fallback — eBird:** English description only, used when no Wikipedia article exists
+- **Claude overlay:** For each locale Claude provides, replaces the description for that locale. Claude locales are tracked in the `claude_locales` field
+
+The effective priority is **Claude > Wikipedia > eBird**, applied per-locale.
 
 ```bash
 python -m build.metadata              # full rebuild → dist/species_metadata.{json,csv,zip}
@@ -77,7 +182,7 @@ The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archive
 
 ### Web Server
 
-Browse and search the dataset through a web UI and REST API. Species images are served through a built-in proxy that fetches from the original source, converts to WebP (quality 60), smart-crops to 3:2 using YOLOv8-nano animal detection, and saves as named files (`<sci name>_<common name>_<author>.webp`). Pre-downloaded images from the collector are served directly.
+Browse and search the dataset through a web UI and REST API.
 
 ```bash
 python -m web.server              # serve from dist/species_metadata.json
@@ -90,6 +195,16 @@ Or with hot-reload during development:
 ```bash
 uvicorn web.server:app --reload
 ```
+
+**Species lookup** supports multiple identifier types. The `/species/{name}` and `/api/species/{name}` endpoints accept any of:
+- Scientific name (e.g., `Turdus merula`)
+- Common name in any locale (e.g., `Amsel`, `Merle noir`)
+- eBird species code (e.g., `eurblk1`)
+- iNaturalist taxon ID (e.g., `12727`)
+
+HTML species pages redirect to the canonical scientific name URL when accessed via an alias.
+
+**Image proxy** (`/api/image/{name}?size=thumb|medium`) serves species images with on-demand downloading, smart cropping, and caching. Returns a dummy image (BirdNET logo on gray background) for unknown species or failed downloads. All images cached with 24-hour `Cache-Control` headers.
 
 | Route | Description |
 |-------|-------------|
@@ -140,6 +255,9 @@ curl '/api/species?group=Mammalia&per_page=500&format=csv' > mammals.csv
 
 # Search with field selection
 curl '/api/search?q=eagle&fields=scientific_name,common_name&per_page=20'
+
+# Look up a species by eBird code
+curl '/api/species/eurblk1'
 ```
 
 ## Data Sources
@@ -148,7 +266,7 @@ curl '/api/search?q=eagle&fields=scientific_name,common_name&per_page=20'
 - **[eBird](https://ebird.org)** — Species descriptions and images from the Cornell Lab of Ornithology. Species codes from the eBird/Clements taxonomy.
 - **[Wikipedia](https://www.wikipedia.org)** — English summaries and localized article links via the REST and MediaWiki APIs. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2025). AviList Core Team, 2025. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2025](https://doi.org/10.2173/avilist.v2025).
-- **[Claude](https://www.anthropic.com/claude)** (Anthropic) — AI-generated species descriptions and translations.
+- **[Claude](https://www.anthropic.com/claude)** (Anthropic) — AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts.
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
