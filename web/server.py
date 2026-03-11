@@ -377,6 +377,14 @@ async def image_proxy(scientific_name: str,
 
     rec = _find_species(scientific_name)
     if not rec:
+        # Unknown species — serve dummy fallback
+        dummy = _image_base / size / "dummy.webp"
+        if dummy.exists():
+            return Response(
+                content=dummy.read_bytes(),
+                media_type="image/webp",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
         raise HTTPException(404, "Species not found")
 
     source_url = rec.get("image_url", "")
