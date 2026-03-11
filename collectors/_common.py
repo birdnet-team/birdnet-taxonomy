@@ -6,8 +6,10 @@ Provides common infrastructure used by all collectors and build steps:
   - RateLimiter (thread-safe token-bucket)
   - Atomic JSON load/save
   - Graceful shutdown handling (SIGINT)
+  - HTTP request caching (disk-backed)
 """
 
+import hashlib
 import json
 import os
 import signal
@@ -98,3 +100,33 @@ def save_json(data, path: Path):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------------------
+# HTTP request cache (disk-backed)
+# ---------------------------------------------------------------------------
+
+_REQUEST_CACHE_DIR = RAW_DIR / ".request_cache"
+
+
+def cache_key(prefix: str, data: str) -> Path:
+    """Build a cache file path from a prefix and hashable data string."""
+    h = hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
+    return _REQUEST_CACHE_DIR / f"{prefix}_{h}.json"
+
+
+def cache_get(key: Path):
+    """Return cached JSON value or None if not cached."""
+    if key.exists():
+        with open(key, encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def cache_put(key: Path, value):
+    """Write a JSON-serialisable value to the cache."""
+    _REQUEST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = key.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(value, f, ensure_ascii=False)
+    os.replace(tmp, key)

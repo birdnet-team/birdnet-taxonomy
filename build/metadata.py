@@ -3,15 +3,18 @@
 Build the unified species metadata file.
 
 Combines two phases:
-  Phase 1 — Taxonomy: Cross-reference iNaturalist, AviList, and Wikidata to
-            build a canonical species list with common names, images, and
-            external identifiers.
+  Phase 1 — Taxonomy: Cross-reference iNaturalist, AviList, Wikidata, and
+            eBird data to build a canonical species list with common names,
+            images, and external identifiers. All data is read from
+            pre-collected JSON files — no API calls.
   Phase 2 — Merge: Enrich each species with a single description using the
             priority Claude > Wikipedia > eBird, then write the final output.
 
 Input files (all in raw_data/):
   - inat_data.json         (from collectors/inat.py)
   - ebird_data.json        (from collectors/ebird.py)
+  - ebird_names.json       (from collectors/ebird.py --names-only)
+  - wikidata_data.json     (from collectors/wikidata.py)
   - wikipedia_data.json    (from collectors/wikipedia.py)
   - claude_data.json       (from collectors/claude.py — optional)
   - AviList CSV            (from collectors/avilist.py)
@@ -27,33 +30,25 @@ Usage:
 
 import argparse
 import csv
-import hashlib
 import io
 import json
 import os
 import re
-import time
-import urllib.parse
-import urllib.request
 import zipfile
 from collections import Counter
 from pathlib import Path
 
 from config import load_config
-from collectors._common import ROOT, RAW_DIR, USER_AGENT, load_json, save_json
+from collectors._common import ROOT, RAW_DIR, load_json, save_json
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
-EBIRD_TAXONOMY_URL = "https://api.ebird.org/v2/ref/taxonomy/ebird"
-
-_REQUEST_CACHE_DIR = RAW_DIR / ".request_cache"
-_use_cache = True  # set via --no-cache CLI flag
-
 INAT_FILE = RAW_DIR / "inat_data.json"
 EBIRD_DATA_FILE = RAW_DIR / "ebird_data.json"
+EBIRD_NAMES_FILE = RAW_DIR / "ebird_names.json"
+WIKIDATA_FILE = RAW_DIR / "wikidata_data.json"
 WIKI_DATA_FILE = RAW_DIR / "wikipedia_data.json"
 CLAUDE_DATA_FILE = RAW_DIR / "claude_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
@@ -64,290 +59,11 @@ ACCEPTABLE_INAT_LICENSES = {
     "cc-by-nd", "cc-by-nc-nd", "pd", "gfdl",
 }
 
-_COMMONS_API = "https://commons.wikimedia.org/w/api.php"
-_COMMONS_BATCH = 50
-_SPARQL_BATCH = 150
-
-# All known eBird locales with real translations.
-# (ebird_locale, canonical_locale) — canonical is stored in common_names.
-EBIRD_LOCALES: list[tuple[str, str]] = [
-    ("af", "af"), ("ar", "ar"), ("bg", "bg"), ("bn", "bn"),
-    ("ca", "ca"), ("cs", "cs"), ("da", "da"), ("de", "de"),
-    ("el", "el"), ("es", "es"), ("es_AR", "es_AR"), ("es_CL", "es_CL"),
-    ("es_CR", "es_CR"), ("es_CU", "es_CU"), ("es_DO", "es_DO"),
-    ("es_EC", "es_EC"), ("es_ES", "es_ES"), ("es_MX", "es_MX"),
-    ("es_PA", "es_PA"), ("es_PR", "es_PR"),
-    ("et", "et"), ("eu", "eu"), ("fa", "fa"), ("fi", "fi"),
-    ("fr", "fr"), ("gl", "gl"), ("gu", "gu"),
-    ("he", "he"), ("hi", "hi"), ("hr", "hr"), ("hu", "hu"),
-    ("hy", "hy"), ("is", "is"), ("it", "it"),
-    ("ja", "ja"), ("ka", "ka"), ("kk", "kk"), ("kn", "kn"),
-    ("ko", "ko"), ("lt", "lt"), ("lv", "lv"),
-    ("ml", "ml"), ("mn", "mn"), ("mr", "mr"),
-    ("nl", "nl"), ("no", "no"), ("pl", "pl"),
-    ("pt_BR", "pt"), ("pt_PT", "pt_PT"),
-    ("ro", "ro"), ("ru", "ru"),
-    ("sk", "sk"), ("sl", "sl"), ("sq", "sq"), ("sr", "sr"),
-    ("sv", "sv"), ("te", "te"), ("th", "th"), ("tr", "tr"),
-    ("uk", "uk"),
-    ("zh_SIM", "zh"), ("zh_TRA", "zh_TRA"),
-    ("zu", "zu"),
-]
-
 # Normalize locale codes across sources to canonical forms.
 LOCALE_NORMALIZE: dict[str, str] = {
     "nb": "no",
     "pt-br": "pt",
 }
-
-# Wikidata properties for species identifiers
-WD_IDENTIFIERS = {
-    "ebird_code": "P3444",
-    "gbif_id": "P846",
-    "ncbi_id": "P685",
-    "avibase_id": "P2426",
-    "birdlife_id": "P5257",
-}
-
-
-# ---------------------------------------------------------------------------
-# Request cache helpers
-# ---------------------------------------------------------------------------
-
-def _cache_key(prefix: str, data: str) -> Path:
-    """Build a cache file path from a prefix and hashable data string."""
-    h = hashlib.sha256(data.encode("utf-8")).hexdigest()[:16]
-    return _REQUEST_CACHE_DIR / f"{prefix}_{h}.json"
-
-
-def _cache_get(key: Path):
-    """Return cached JSON value or None if not cached / caching disabled."""
-    if not _use_cache:
-        return None
-    if key.exists():
-        with open(key, encoding="utf-8") as f:
-            return json.load(f)
-    return None
-
-
-def _cache_put(key: Path, value):
-    """Write a JSON-serialisable value to the cache."""
-    if not _use_cache:
-        return
-    _REQUEST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = key.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(value, f, ensure_ascii=False)
-    os.replace(tmp, key)
-
-
-# ---------------------------------------------------------------------------
-# Wikidata / eBird helpers
-# ---------------------------------------------------------------------------
-
-def _sparql_query(query: str) -> list[dict]:
-    """Run a SPARQL query against Wikidata (POST to avoid URL limits).
-    Results are cached to disk to avoid redundant requests on re-runs.
-    """
-    key = _cache_key("sparql", query)
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached
-
-    data = urllib.parse.urlencode({"query": query}).encode("utf-8")
-    req = urllib.request.Request(
-        WIKIDATA_SPARQL, data=data,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/sparql-results+json",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            result = json.loads(resp.read())["results"]["bindings"]
-    except Exception as e:
-        print(f"  WARNING: Wikidata query failed: {e}")
-        return []
-
-    _cache_put(key, result)
-    return result
-
-
-def query_wikidata_ebird(unmatched: list[tuple[str, int]]) -> dict[str, str]:
-    """Query Wikidata for eBird taxon IDs of unmatched species."""
-    if not unmatched:
-        return {}
-
-    results = {}
-
-    # Pass A: by scientific name (P225 → P3444)
-    for i in range(0, len(unmatched), _SPARQL_BATCH):
-        batch = unmatched[i:i + _SPARQL_BATCH]
-        values = " ".join(f'"{sci}"' for sci, _ in batch)
-        rows = _sparql_query(
-            f"SELECT ?taxonName ?ebirdId WHERE {{"
-            f"  VALUES ?taxonName {{ {values} }}"
-            f"  ?item wdt:P225 ?taxonName ."
-            f"  ?item wdt:P3444 ?ebirdId ."
-            f"}}"
-        )
-        for r in rows:
-            results[r["taxonName"]["value"]] = r["ebirdId"]["value"]
-
-    # Pass B: remaining — by iNaturalist taxon ID (P3151 → P3444)
-    remaining = [(sci, iid) for sci, iid in unmatched
-                 if sci not in results and iid is not None]
-    if remaining:
-        iid_to_sci = {str(iid): sci for sci, iid in remaining}
-        for i in range(0, len(remaining), _SPARQL_BATCH):
-            batch = remaining[i:i + _SPARQL_BATCH]
-            inat_values = " ".join(f'"{iid}"' for _, iid in batch)
-            rows = _sparql_query(
-                f"SELECT ?inatId ?ebirdId WHERE {{"
-                f"  VALUES ?inatId {{ {inat_values} }}"
-                f"  ?item wdt:P3151 ?inatId ."
-                f"  ?item wdt:P3444 ?ebirdId ."
-                f"}}"
-            )
-            for r in rows:
-                iid = r["inatId"]["value"]
-                sci = iid_to_sci.get(iid)
-                if sci and sci not in results:
-                    results[sci] = r["ebirdId"]["value"]
-
-    return results
-
-
-def query_wikidata_identifiers(species_names: list[str]) -> dict[str, dict]:
-    """Batch-query Wikidata for external identifiers (GBIF, NCBI, etc.)."""
-    if not species_names:
-        return {}
-
-    optionals = ""
-    selects = ["?taxonName"]
-    for key, prop in WD_IDENTIFIERS.items():
-        if key == "ebird_code":
-            continue
-        var = f"?{key}"
-        selects.append(var)
-        optionals += f"  OPTIONAL {{ ?item wdt:{prop} {var} . }}\n"
-
-    results = {}
-    select_str = " ".join(selects)
-
-    for i in range(0, len(species_names), _SPARQL_BATCH):
-        batch = species_names[i:i + _SPARQL_BATCH]
-        values = " ".join(f'"{s}"' for s in batch)
-        query = (
-            f"SELECT {select_str} WHERE {{\n"
-            f"  VALUES ?taxonName {{ {values} }}\n"
-            f"  ?item wdt:P225 ?taxonName .\n"
-            f"{optionals}}}"
-        )
-        rows = _sparql_query(query)
-        for r in rows:
-            sci = r["taxonName"]["value"]
-            ids = {}
-            for key in WD_IDENTIFIERS:
-                if key == "ebird_code":
-                    continue
-                val = r.get(key, {}).get("value", "")
-                if val:
-                    ids[key] = val
-            if ids:
-                results[sci] = ids
-
-    return results
-
-
-def _download_ebird_taxonomy(locale: str) -> dict[str, str]:
-    """Download eBird taxonomy CSV for a locale → {code: name}."""
-    key = _cache_key("ebird_tax", locale)
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached
-
-    url = f"{EBIRD_TAXONOMY_URL}?fmt=csv&locale={locale}&cat=species"
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = resp.read().decode("utf-8")
-        result = {row["SPECIES_CODE"]: row["COMMON_NAME"]
-                  for row in csv.DictReader(io.StringIO(data))
-                  if row.get("SPECIES_CODE")}
-    except Exception as e:
-        print(f"  WARNING: eBird taxonomy download failed for {locale}: {e}")
-        return {}
-
-    _cache_put(key, result)
-    return result
-
-
-def fetch_ebird_names() -> dict[str, dict[str, str]]:
-    """Download eBird taxonomy for ALL available locales.
-
-    Returns {species_code: {canonical_locale: common_name}}.
-    Only includes actual translations (skips English fallbacks).
-    """
-    print("    Downloading English baseline...")
-    en_names = _download_ebird_taxonomy("en")
-    if not en_names:
-        print("  WARNING: Could not download eBird English taxonomy.")
-        return {}
-
-    result: dict[str, dict[str, str]] = {}
-    for code, name in en_names.items():
-        result.setdefault(code, {})["en"] = name
-
-    for ebird_loc, canonical in EBIRD_LOCALES:
-        print(f"    Downloading {canonical} (eBird: {ebird_loc})...",
-              end=" ", flush=True)
-        names = _download_ebird_taxonomy(ebird_loc)
-        translated = 0
-        for code, name in names.items():
-            en_name = en_names.get(code, "")
-            if name and name != en_name:
-                result.setdefault(code, {})[canonical] = name
-                translated += 1
-        print(f"{translated}/{len(names)} translated")
-        time.sleep(0.2)
-
-    return result
-
-
-def query_wikidata_labels(
-    species_names: list[str],
-) -> dict[str, dict[str, str]]:
-    """Query Wikidata for species labels in ALL languages."""
-    if not species_names:
-        return {}
-
-    results: dict[str, dict[str, str]] = {}
-
-    for i in range(0, len(species_names), _SPARQL_BATCH):
-        batch = species_names[i:i + _SPARQL_BATCH]
-        values = " ".join(f'"{s}"' for s in batch)
-        query = (
-            f"SELECT ?taxonName ?label WHERE {{\n"
-            f"  VALUES ?taxonName {{ {values} }}\n"
-            f"  ?item wdt:P225 ?taxonName .\n"
-            f"  ?item rdfs:label ?label .\n"
-            f"  FILTER(STRLEN(LANG(?label)) >= 2)\n"
-            f"}}"
-        )
-        rows = _sparql_query(query)
-        for r in rows:
-            sci = r["taxonName"]["value"]
-            label = r["label"]["value"]
-            lang = r["label"].get("xml:lang", "")
-            canonical = LOCALE_NORMALIZE.get(lang, lang)
-            if label == sci:
-                continue
-            if canonical not in results.get(sci, {}):
-                results.setdefault(sci, {})[canonical] = label
-
-    return results
 
 
 # ---------------------------------------------------------------------------
@@ -393,173 +109,6 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
 
     return text.strip(" ,.") if text.strip(" ,.") else ""
 
-
-INAT_OBS_URL = "https://api.inaturalist.org/v1/observations"
-
-
-def _photo_url_large(url: str) -> str:
-    """Convert iNat photo URL from square/medium to large."""
-    if not url:
-        return ""
-    return url.replace("/square.", "/large.").replace("/medium.", "/large.")
-
-
-def _fetch_inat_cc_photo(inat_id: int) -> dict | None:
-    """Find the best CC-licensed photo for a taxon via the observations API.
-
-    Queries research-grade observations sorted by votes (most-faved first)
-    and returns the first photo with an acceptable license.
-    Returns {url, attribution, license} or None.
-    """
-    key = _cache_key("inat_obs_photo", str(inat_id))
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached if cached else None
-
-    url = (
-        f"{INAT_OBS_URL}?taxon_id={inat_id}"
-        f"&photos=true&photo_licensed=true"
-        f"&quality_grade=research&order_by=votes&per_page=5"
-    )
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-    except Exception:
-        _cache_put(key, {})
-        return None
-
-    for obs in data.get("results", []):
-        for photo in obs.get("photos", []):
-            lic = photo.get("license_code", "")
-            if lic and lic in ACCEPTABLE_INAT_LICENSES:
-                result = {
-                    "url": _photo_url_large(photo.get("url", "")),
-                    "attribution": photo.get("attribution", ""),
-                    "license": lic,
-                }
-                _cache_put(key, result)
-                return result
-
-    _cache_put(key, {})
-    return None
-
-
-def _commons_url(filename: str) -> str:
-    filename = filename.replace(" ", "_")
-    md5 = hashlib.md5(filename.encode("utf-8")).hexdigest()
-    encoded = urllib.parse.quote(filename, safe="")
-    return (f"https://upload.wikimedia.org/wikipedia/commons/"
-            f"{md5[0]}/{md5[:2]}/{encoded}")
-
-
-def _is_commons_license_ok(license_short: str) -> bool:
-    if not license_short:
-        return False
-    low = license_short.lower()
-    return any(x in low for x in ("cc", "public domain", "pd", "gfdl"))
-
-
-def query_wikidata_images(species_names: list[str]) -> dict[str, str]:
-    """Query Wikidata P18 (image) → {scientific_name: Commons filename}."""
-    if not species_names:
-        return {}
-
-    results: dict[str, str] = {}
-    for i in range(0, len(species_names), _SPARQL_BATCH):
-        batch = species_names[i:i + _SPARQL_BATCH]
-        values = " ".join(f'"{s}"' for s in batch)
-        rows = _sparql_query(
-            f"SELECT ?taxonName ?image WHERE {{\n"
-            f"  VALUES ?taxonName {{ {values} }}\n"
-            f"  ?item wdt:P225 ?taxonName .\n"
-            f"  ?item wdt:P18 ?image .\n"
-            f"}}"
-        )
-        for r in rows:
-            sci = r["taxonName"]["value"]
-            image_url = r["image"]["value"]
-            filename = urllib.parse.unquote(image_url.split("/")[-1])
-            if sci not in results:
-                results[sci] = filename
-
-    return results
-
-
-def check_commons_licenses(
-    filenames: dict[str, str],
-) -> dict[str, dict]:
-    """Batch-check licenses for Wikimedia Commons files."""
-    if not filenames:
-        return {}
-
-    file_to_sci: dict[str, list[str]] = {}
-    for sci, fn in filenames.items():
-        norm = fn.replace(" ", "_")
-        file_to_sci.setdefault(norm, []).append(sci)
-
-    all_files = list(file_to_sci.keys())
-    results: dict[str, dict] = {}
-
-    for i in range(0, len(all_files), _COMMONS_BATCH):
-        batch = all_files[i:i + _COMMONS_BATCH]
-        titles = "|".join(f"File:{fn}" for fn in batch)
-
-        key = _cache_key("commons", titles)
-        cached_data = _cache_get(key)
-        if cached_data is not None:
-            data = cached_data
-        else:
-            post_data = urllib.parse.urlencode({
-                "action": "query",
-                "titles": titles,
-                "prop": "imageinfo",
-                "iiprop": "extmetadata",
-                "format": "json",
-            }).encode("utf-8")
-            req = urllib.request.Request(
-                _COMMONS_API, data=post_data,
-                headers={"User-Agent": USER_AGENT},
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    data = json.loads(resp.read())
-            except Exception as e:
-                print(f"  WARNING: Commons license check failed: {e}")
-                continue
-            _cache_put(key, data)
-
-        pages = data.get("query", {}).get("pages", {})
-        for page in pages.values():
-            title = page.get("title", "")
-            if not title.startswith("File:"):
-                continue
-            fn = title[5:]
-
-            imageinfo = page.get("imageinfo", [])
-            if not imageinfo:
-                continue
-            meta = imageinfo[0].get("extmetadata", {})
-
-            license_short = meta.get("LicenseShortName", {}).get("value", "")
-            license_url = meta.get("LicenseUrl", {}).get("value", "")
-            artist_html = meta.get("Artist", {}).get("value", "")
-            artist = _strip_html_tags(artist_html) if artist_html else ""
-
-            if not _is_commons_license_ok(license_short):
-                continue
-
-            url = _commons_url(fn)
-            norm = fn.replace(" ", "_")
-            for sci in file_to_sci.get(norm, []):
-                results[sci] = {
-                    "url": url,
-                    "attribution": artist,
-                    "license": license_short,
-                    "license_url": license_url,
-                }
-
-    return results
 
 
 def load_ebird_images() -> dict[str, dict]:
@@ -626,8 +175,9 @@ def load_avilist(cfg: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
-    """Cross-reference iNat and AviList to build a unified taxonomy.
+    """Cross-reference iNat, AviList, Wikidata, and eBird to build a taxonomy.
 
+    All data is read from pre-collected JSON files — no API calls.
     Returns (taxonomy_dict, stats_dict).
     """
     taxonomy = {}
@@ -640,10 +190,17 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             if name:
                 avi_by_en[name.lower()] = row
 
+    # Load pre-collected Wikidata and eBird names
+    wikidata = load_json(WIKIDATA_FILE)
+    ebird_names = load_json(EBIRD_NAMES_FILE)
+    if wikidata:
+        print(f"  Wikidata:    {len(wikidata)} species")
+    if ebird_names:
+        print(f"  eBird names: {len(ebird_names)} species codes")
+
     matched_sci = set()
     stats = {"direct": 0, "common_name": 0, "wikidata": 0, "inat_only": 0,
              "avilist_only": 0, "non_bird": 0}
-    pending_unmatched = []
 
     # Pass 1: Process all iNat species
     for sci_name, rec in inat.items():
@@ -670,8 +227,15 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                     matched_sci.add(avi_row["scientific_name"])
                     stats["common_name"] += 1
                 else:
-                    match_source = "inat_only"
-                    pending_unmatched.append((sci_name, rec["inat_id"]))
+                    # Try Wikidata for eBird code
+                    wd_code = wikidata.get(sci_name, {}).get("ebird_code", "")
+                    if wd_code:
+                        ebird_code = wd_code
+                        match_source = "wikidata"
+                        stats["wikidata"] += 1
+                    else:
+                        match_source = "inat_only"
+                        stats["inat_only"] += 1
         else:
             match_source = "non_bird"
             stats["non_bird"] += 1
@@ -697,19 +261,6 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             "image_source": "",
             "match_source": match_source,
         }
-
-    # Pass 1b: Wikidata lookup for unmatched birds
-    if pending_unmatched:
-        print(f"  Querying Wikidata for {len(pending_unmatched)} unmatched birds...")
-        wd_results = query_wikidata_ebird(pending_unmatched)
-        for sci_name, _ in pending_unmatched:
-            ebird_code = wd_results.get(sci_name, "")
-            if ebird_code:
-                taxonomy[sci_name]["ebird_code"] = ebird_code
-                taxonomy[sci_name]["match_source"] = "wikidata"
-                stats["wikidata"] += 1
-            else:
-                stats["inat_only"] += 1
 
     # Pass 2: Add AviList-only species
     for row in avilist_rows:
@@ -741,52 +292,54 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
         stats["avilist_only"] += 1
 
     # Pass 3: Wikidata identifiers (GBIF, NCBI, etc.)
-    all_names = list(taxonomy.keys())
-    n_batches = (len(all_names) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
-    print(f"  Querying Wikidata for identifiers ({len(all_names)} species, "
-          f"{n_batches} batches)...")
-    wd_ids = query_wikidata_identifiers(all_names)
-    id_counts = {k: 0 for k in WD_IDENTIFIERS if k != "ebird_code"}
-    for sci, ids in wd_ids.items():
-        if sci in taxonomy:
-            for key, val in ids.items():
+    id_keys = ("gbif_id", "ncbi_id", "avibase_id", "birdlife_id")
+    id_counts = {k: 0 for k in id_keys}
+    wd_coverage = 0
+    for sci in taxonomy:
+        wd = wikidata.get(sci, {})
+        if not wd:
+            continue
+        wd_coverage += 1
+        for key in id_keys:
+            val = wd.get(key, "")
+            if val:
                 taxonomy[sci][key] = val
                 id_counts[key] += 1
     stats["wikidata_ids"] = id_counts
-    stats["wikidata_coverage"] = len(wd_ids)
+    stats["wikidata_coverage"] = wd_coverage
 
     # Pass 4: eBird common names (authority for bird names)
-    print(f"\n  Fetching eBird common names ({len(EBIRD_LOCALES)} locales)...")
-    ebird_names = fetch_ebird_names()
     ebird_name_counts: dict[str, int] = {}
-    for sci, entry in taxonomy.items():
-        code = entry.get("ebird_code", "")
-        if not code:
-            continue
-        names = ebird_names.get(code, {})
-        for loc, name in names.items():
-            entry["common_names"][loc] = name
-            ebird_name_counts[loc] = ebird_name_counts.get(loc, 0) + 1
+    if ebird_names:
+        for sci, entry in taxonomy.items():
+            code = entry.get("ebird_code", "")
+            if not code:
+                continue
+            names = ebird_names.get(code, {})
+            for loc, name in names.items():
+                entry["common_names"][loc] = name
+                ebird_name_counts[loc] = ebird_name_counts.get(loc, 0) + 1
     stats["ebird_names"] = ebird_name_counts
 
     # Pass 5: Wikidata labels as fallback for all species
-    n_label_batches = (len(all_names) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
-    print(f"\n  Querying Wikidata for labels ({len(all_names)} species, "
-          f"all languages, {n_label_batches} batches)...")
-    wd_labels = query_wikidata_labels(all_names)
     wd_label_counts: dict[str, int] = {}
-    for sci, labels in wd_labels.items():
-        if sci in taxonomy:
-            for loc, label in labels.items():
-                if loc not in taxonomy[sci]["common_names"]:
-                    taxonomy[sci]["common_names"][loc] = label
-                    wd_label_counts[loc] = wd_label_counts.get(loc, 0) + 1
+    for sci in taxonomy:
+        wd = wikidata.get(sci, {})
+        labels = wd.get("labels", {})
+        for loc, label in labels.items():
+            if loc not in taxonomy[sci]["common_names"]:
+                taxonomy[sci]["common_names"][loc] = label
+                wd_label_counts[loc] = wd_label_counts.get(loc, 0) + 1
     stats["wikidata_labels"] = wd_label_counts
 
-    # Pass 6: Default image selection (iNat → eBird → Wikimedia Commons)
-    img_stats = {"inat": 0, "wikimedia": 0, "ebird": 0, "none": 0}
+    # Pass 6: Default image selection
+    # Priority: iNat taxon → iNat observation → eBird → Wikimedia Commons
+    img_stats = {"inat": 0, "inat_obs": 0, "ebird": 0, "wikimedia": 0,
+                 "none": 0}
 
     print("\n  Selecting default images...")
+
+    # 6a: iNat taxon photo (CC-licensed)
     for sci, entry in taxonomy.items():
         inat_rec = inat.get(sci, {})
         url = inat_rec.get("image_url", "")
@@ -799,6 +352,21 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             entry["image_source"] = "iNaturalist"
             img_stats["inat"] += 1
 
+    # 6b: iNat observation photo fallback (all species)
+    for sci, entry in taxonomy.items():
+        if entry["image_url"]:
+            continue
+        inat_rec = inat.get(sci, {})
+        obs_photo = inat_rec.get("obs_photo")
+        if obs_photo and obs_photo.get("url"):
+            entry["image_url"] = obs_photo["url"]
+            entry["image_author"] = _parse_image_author(
+                obs_photo.get("attribution", ""), "inat")
+            entry["image_license"] = obs_photo.get("license", "")
+            entry["image_source"] = "iNaturalist"
+            img_stats["inat_obs"] += 1
+
+    # 6c: eBird / Macaulay Library
     ebird_imgs = load_ebird_images()
     if ebird_imgs:
         for sci, entry in taxonomy.items():
@@ -815,49 +383,18 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 entry["image_source"] = f"Macaulay Library ML{asset_id}"
                 img_stats["ebird"] += 1
 
-    need_image = [sci for sci, e in taxonomy.items() if not e["image_url"]]
-    if need_image:
-        n_img_batches = (len(need_image) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
-        print(f"    Querying Wikidata P18 for {len(need_image)} species "
-              f"({n_img_batches} batches)...")
-        wd_images = query_wikidata_images(need_image)
-        print(f"    Found {len(wd_images)} Commons images, checking licenses...")
-        commons_results = check_commons_licenses(wd_images)
-        for sci, info in commons_results.items():
-            if sci in taxonomy and not taxonomy[sci]["image_url"]:
-                taxonomy[sci]["image_url"] = info["url"]
-                taxonomy[sci]["image_author"] = info["attribution"]
-                taxonomy[sci]["image_license"] = info["license"]
-                taxonomy[sci]["image_source"] = "Wikimedia"
-                img_stats["wikimedia"] += 1
-
-    # iNat observation photo fallback (non-birds only)
-    need_inat = [
-        (sci, inat.get(sci, {}).get("inat_id"))
-        for sci, e in taxonomy.items()
-        if not e["image_url"]
-        and e.get("taxon_group") != "Aves"
-        and inat.get(sci, {}).get("inat_id")
-    ]
-    if need_inat:
-        img_stats["inat_obs"] = 0
-        print(f"    Searching iNat observations for {len(need_inat)} "
-              f"non-bird species without images...")
-        for i, (sci, inat_id) in enumerate(need_inat):
-            result = _fetch_inat_cc_photo(inat_id)
-            if result and result.get("url"):
-                taxonomy[sci]["image_url"] = result["url"]
-                taxonomy[sci]["image_author"] = _parse_image_author(
-                    result["attribution"], "inat")
-                taxonomy[sci]["image_license"] = result["license"]
-                taxonomy[sci]["image_source"] = "iNaturalist"
-                img_stats["inat_obs"] += 1
-            if (i + 1) % 25 == 0:
-                print(f"      {i + 1}/{len(need_inat)} checked, "
-                      f"{img_stats['inat_obs']} found")
-            time.sleep(1.1)
-        print(f"    Found {img_stats['inat_obs']} CC-licensed photos "
-              f"from iNat observations")
+    # 6d: Wikimedia Commons (from wikidata_data.json)
+    for sci, entry in taxonomy.items():
+        if entry["image_url"]:
+            continue
+        wd = wikidata.get(sci, {})
+        wd_img = wd.get("image")
+        if wd_img and wd_img.get("url"):
+            entry["image_url"] = wd_img["url"]
+            entry["image_author"] = wd_img.get("attribution", "")
+            entry["image_license"] = wd_img.get("license", "")
+            entry["image_source"] = "Wikimedia"
+            img_stats["wikimedia"] += 1
 
     img_stats["none"] = sum(1 for e in taxonomy.values() if not e["image_url"])
     stats["images"] = img_stats
@@ -924,12 +461,14 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
 
     # Images
     img = stats.get("images", {})
-    total_with_img = img.get("inat", 0) + img.get("wikimedia", 0) + img.get("ebird", 0)
+    total_with_img = (img.get("inat", 0) + img.get("inat_obs", 0)
+                      + img.get("ebird", 0) + img.get("wikimedia", 0))
     print(f"\n  Default images ({total_with_img}/{total} species):")
-    print(f"    iNat (permissive):  {img.get('inat', 0)}")
-    print(f"    eBird:              {img.get('ebird', 0)}")
-    print(f"    Wikimedia Commons:  {img.get('wikimedia', 0)}")
-    print(f"    No image:           {img.get('none', 0)}")
+    print(f"    iNat (taxon photo):    {img.get('inat', 0)}")
+    print(f"    iNat (observation):    {img.get('inat_obs', 0)}")
+    print(f"    eBird:                 {img.get('ebird', 0)}")
+    print(f"    Wikimedia Commons:     {img.get('wikimedia', 0)}")
+    print(f"    No image:              {img.get('none', 0)}")
 
 
 # ---------------------------------------------------------------------------
@@ -1114,13 +653,7 @@ def main():
                         help="Write to dev/ instead of dist/")
     parser.add_argument("--no-zip", action="store_true",
                         help="Skip zip archive creation")
-    parser.add_argument("--no-cache", action="store_true",
-                        help="Bypass request cache (re-fetch all remote data)")
     args = parser.parse_args()
-
-    global _use_cache
-    if args.no_cache:
-        _use_cache = False
 
     cfg = load_config()
 

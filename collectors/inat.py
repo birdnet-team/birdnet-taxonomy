@@ -15,6 +15,10 @@ via the taxa API in batches of 30 IDs.
 After group fetching, an AviList reconciliation phase looks up any species
 present in the AviList checklist but missing from iNat data, and adds them.
 
+An observation photo fallback phase queries the iNat observations API for
+CC-licensed photos for species whose default taxon photo is missing or
+not permissively licensed.
+
 Output: raw_data/inat_data.json (incremental, resumable)
 
 Usage:
@@ -52,7 +56,7 @@ def _api_get(url: str, timeout: int = 60) -> dict | None:
     try:
         with urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError) as e:
+    except (HTTPError, URLError, TimeoutError, ConnectionError, OSError) as e:
         print(f"  ERROR: {e} — {url[:120]}")
         return None
 
@@ -695,6 +699,106 @@ def reconcile_avilist(existing: dict, cfg: dict, delay: float,
     return new_count
 
 
+# ── Observation photo fallback ─────────────────────────────────────────
+
+# Acceptable iNat photo licenses (NC is fine; only "all rights reserved" rejected)
+ACCEPTABLE_INAT_LICENSES = {
+    "cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa",
+    "cc-by-nd", "cc-by-nc-nd", "pd", "gfdl",
+}
+
+INAT_OBS_URL = "https://api.inaturalist.org/v1/observations"
+
+
+def _fetch_obs_photo(inat_id: int, delay: float) -> dict | None:
+    """Find the best CC-licensed photo for a taxon via the observations API.
+
+    Queries research-grade observations sorted by votes (most-faved first)
+    and returns the first photo with an acceptable license.
+    Returns {url, attribution, license} or None.
+    """
+    url = (
+        f"{INAT_OBS_URL}?taxon_id={inat_id}"
+        f"&photos=true&photo_licensed=true"
+        f"&quality_grade=research&order_by=votes&per_page=5"
+    )
+    for attempt in range(3):
+        data = _api_get(url)
+        if data is not None:
+            break
+        if attempt < 2:
+            time.sleep(delay * (attempt + 1))
+    else:
+        return None
+
+    for obs in data.get("results", []):
+        for photo in obs.get("photos", []):
+            lic = photo.get("license_code", "")
+            if lic and lic in ACCEPTABLE_INAT_LICENSES:
+                return {
+                    "url": photo_url_large(photo.get("url", "")),
+                    "attribution": photo.get("attribution", ""),
+                    "license": lic,
+                }
+
+    return None
+
+
+def fetch_obs_photos(existing: dict, delay: float,
+                     limit: int = 0) -> int:
+    """Find CC-licensed observation photos for species without one.
+
+    Checks species whose default taxon photo is missing or not CC-licensed.
+    Stores result in the `obs_photo` field of each species record.
+
+    Returns count of photos found.
+    """
+    print(f"\n{'='*60}")
+    print("Observation photo fallback")
+
+    need_photo = []
+    for sci, rec in existing.items():
+        inat_id = rec.get("inat_id")
+        if not inat_id:
+            continue
+        if rec.get("obs_photo"):
+            continue  # already have one
+        img_lic = rec.get("image_license", "")
+        if rec.get("image_url") and img_lic in ACCEPTABLE_INAT_LICENSES:
+            continue  # default taxon photo is CC
+        need_photo.append((sci, inat_id))
+
+    print(f"  Species needing observation photo lookup: {len(need_photo)}")
+
+    if not need_photo:
+        print("  Nothing to do!")
+        return 0
+
+    if limit:
+        need_photo = need_photo[:limit]
+        print(f"  Limited to {limit}")
+
+    found = 0
+    for i, (sci, inat_id) in enumerate(need_photo):
+        if is_shutting_down():
+            break
+
+        result = _fetch_obs_photo(inat_id, delay)
+        if result and result.get("url"):
+            existing[sci]["obs_photo"] = result
+            found += 1
+
+        if (i + 1) % 25 == 0:
+            print(f"  {i + 1}/{len(need_photo)} checked, {found} found")
+            save_json(existing, OUTPUT_FILE)
+
+        time.sleep(delay)
+
+    save_json(existing, OUTPUT_FILE)
+    print(f"  Found {found} CC-licensed photos from observations")
+    return found
+
+
 # ── CLI ────────────────────────────────────────────────────────────────
 
 def main():
@@ -732,6 +836,14 @@ def main():
     parser.add_argument(
         "--avilist-only", action="store_true",
         help="Only run AviList reconciliation (skip group fetching)"
+    )
+    parser.add_argument(
+        "--obs-photos-only", action="store_true",
+        help="Only run observation photo fallback (skip group fetching)"
+    )
+    parser.add_argument(
+        "--skip-obs-photos", action="store_true",
+        help="Skip observation photo fallback phase"
     )
     args = parser.parse_args()
 
@@ -790,7 +902,7 @@ def main():
     inat_cfg = cfg.get("inat", {})
     total_new = 0
 
-    if not args.avilist_only:
+    if not args.avilist_only and not args.obs_photos_only:
         for group in groups:
             if is_shutting_down():
                 break
@@ -799,7 +911,8 @@ def main():
             total_new += new
 
     # AviList reconciliation — find AviList species missing from iNat data
-    if not args.skip_avilist and not is_shutting_down():
+    if (not args.skip_avilist and not args.obs_photos_only
+            and not is_shutting_down()):
         avilist_new = reconcile_avilist(
             existing, cfg,
             delay=inat_cfg.get("request_delay", 1.1),
@@ -808,6 +921,14 @@ def main():
             save_every=args.save_every,
         )
         total_new += avilist_new
+
+    # Observation photo fallback — CC-licensed photos from observations
+    if not args.skip_obs_photos and not is_shutting_down():
+        obs_found = fetch_obs_photos(
+            existing,
+            delay=inat_cfg.get("request_delay", 1.1),
+            limit=args.limit,
+        )
 
     # Final stats
     print(f"\n{'='*60}")
