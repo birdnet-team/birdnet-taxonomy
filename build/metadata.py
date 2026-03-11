@@ -796,7 +796,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             entry["image_author"] = _parse_image_author(
                 inat_rec.get("image_attribution", ""), "inat")
             entry["image_license"] = lic
-            entry["image_source"] = "inat"
+            entry["image_source"] = "iNaturalist"
             img_stats["inat"] += 1
 
     ebird_imgs = load_ebird_images()
@@ -811,7 +811,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 entry["image_author"] = _parse_image_author(
                     eb["attribution"], "ebird")
                 entry["image_license"] = ""
-                entry["image_source"] = "ebird"
+                asset_id = eb["url"].rstrip("/").rsplit("/", 1)[-1]
+                entry["image_source"] = f"Macaulay Library ML{asset_id}"
                 img_stats["ebird"] += 1
 
     need_image = [sci for sci, e in taxonomy.items() if not e["image_url"]]
@@ -827,7 +828,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 taxonomy[sci]["image_url"] = info["url"]
                 taxonomy[sci]["image_author"] = info["attribution"]
                 taxonomy[sci]["image_license"] = info["license"]
-                taxonomy[sci]["image_source"] = "wikimedia"
+                taxonomy[sci]["image_source"] = "Wikimedia"
                 img_stats["wikimedia"] += 1
 
     # iNat observation photo fallback (non-birds only)
@@ -849,7 +850,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 taxonomy[sci]["image_author"] = _parse_image_author(
                     result["attribution"], "inat")
                 taxonomy[sci]["image_license"] = result["license"]
-                taxonomy[sci]["image_source"] = "inat"
+                taxonomy[sci]["image_source"] = "iNaturalist"
                 img_stats["inat_obs"] += 1
             if (i + 1) % 25 == 0:
                 print(f"      {i + 1}/{len(need_inat)} checked, "
@@ -1038,7 +1039,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     n_locales = len(set(
         loc for r in records for loc in r.get("common_names", {}).keys()
     ))
-    img_sources = Counter(r.get("image_source", "") or "none" for r in records)
+    img_sources = Counter(
+        (r.get("image_source", "") or "none").split(" ML")[0]
+        for r in records
+    )
 
     print(f"  {len(records)} species")
     for g, n in sorted(groups.items()):
