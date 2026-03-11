@@ -994,14 +994,11 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
 
         # Claude overlay — replace only the locales Claude provides
         claude_locales: list[str] = []
-        if cl.get("description_en"):
-            descriptions["en"] = cl["description_en"]
-            description_source = "claude"
-            claude_locales.append("en")
-            for loc, text in cl.get("translations", {}).items():
-                if text:
-                    descriptions[loc] = text
-                    claude_locales.append(loc)
+        cl_extracts = cl.get("extracts", {})
+        for loc, text in cl_extracts.items():
+            if text:
+                descriptions[loc] = text
+                claude_locales.append(loc)
 
         record = {
             "scientific_name": sci_name,

@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 """
-Generate and translate species descriptions using the Claude API.
+Translate and shorten species descriptions using the Claude API.
 
-Reads source text from ebird_data.json and wikipedia_data.json, then for
-each batch of species makes a **single** API call that both generates
-~100-word English descriptions and translates them to all configured
-locales.
-
-Source text is truncated to max_source_chars (config) to save input tokens.
+Reads Wikipedia extracts from wikipedia_data.json and:
+  Phase 1 — Shortens excessively long extracts (>max_extract_words)
+  Phase 2 — Translates missing locale extracts from the English source
 
 Output: raw_data/claude_data.json (incremental, resumable)
 
@@ -27,7 +24,7 @@ from urllib.error import HTTPError, URLError
 
 from tqdm import tqdm
 
-from config import load_config, get_locales, LOCALE_NAMES
+from config import load_config, LOCALE_NAMES
 from collectors._common import (
     ROOT, RAW_DIR, setup_shutdown, is_shutting_down,
     load_json, save_json,
@@ -35,8 +32,6 @@ from collectors._common import (
 
 setup_shutdown()
 
-INAT_DATA = RAW_DIR / "inat_data.json"
-EBIRD_DATA = RAW_DIR / "ebird_data.json"
 WIKI_DATA = RAW_DIR / "wikipedia_data.json"
 OUTPUT_FILE = RAW_DIR / "claude_data.json"
 
@@ -197,43 +192,88 @@ def _parse_json_response(text: str) -> dict:
     return {}
 
 
-# ── Core: describe + translate in one call ────────────────────────────
+# ── Core: shorten + translate ─────────────────────────────────────────
 
-def describe_and_translate(
-    species_list: list[tuple[str, str, str, str]],
-    target_locales: list[str],
-    max_source_chars: int = 500,
+def shorten_extracts(
+    items: list[tuple[str, str, str]],
+    target_words: int = 150,
     max_tokens: int = 16384,
 ) -> dict[str, dict[str, str]]:
-    """Generate descriptions AND translations in a single API call.
+    """Shorten excessively long extracts via Claude.
 
-    species_list: [(scientific_name, english_name, ebird_desc, wiki_extract)]
-    target_locales: list of locale codes including 'en'
-
-    Returns: {scientific_name: {"en": "desc", "de": "...", "fr": "...", ...}}
-
-    A single call handles both description generation and translation,
-    halving the number of API requests compared to describe-then-translate.
+    items: [(scientific_name, locale, extract_text)]
+    Returns: {scientific_name: {locale: shortened_text}}
     """
-    non_en = [l for l in target_locales if l != "en" and l in LOCALE_NAMES]
-    lang_list = ", ".join(f"{l} ({LOCALE_NAMES[l]})" for l in non_en)
+    if not items:
+        return {}
 
     system_prompt = (
-        "You are a concise natural history writer and professional translator.\n\n"
-        "TASK: For each species, write a ~100-word English description, then "
-        "translate it to all requested languages.\n\n"
-        "DESCRIPTION RULES:\n"
-        "- Exactly ~100 words, single flowing paragraph\n"
-        "- Cover: appearance, habitat, geographic range, one interesting fact\n"
+        "You are a concise natural history writer.\n\n"
+        "TASK: Shorten each extract to ~{target} words while preserving "
+        "key facts: appearance, habitat, geographic range, and behaviour.\n\n"
+        "RULES:\n"
+        "- Keep the SAME language as the input\n"
+        "- Single flowing paragraph, no bullet points, no markdown\n"
         "- Do not start with the species name\n"
-        "- No markdown, no bullet points\n\n"
-        "TRANSLATION RULES:\n"
+        "- Do not add information not present in the source\n\n"
+        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
+        "{\n"
+        '  "Scientific name": {"locale": "shortened text..."},\n'
+        "  ...\n"
+        "}"
+    ).replace("{target}", str(target_words))
+
+    entries = []
+    for sci, loc, text in items:
+        entries.append(f"- {sci} [{loc}]: {text}")
+
+    user_message = (
+        f"Shorten these {len(items)} extracts to ~{target_words} words each.\n\n"
+        + "\n\n".join(entries)
+    )
+
+    result = _call_claude(system_prompt, user_message, max_tokens=max_tokens)
+    if not result:
+        return {}
+
+    parsed = _parse_json_response(result)
+    out: dict[str, dict[str, str]] = {}
+    for sci, locales in parsed.items():
+        if isinstance(locales, dict):
+            for loc, text in locales.items():
+                if isinstance(text, str) and text.strip():
+                    out.setdefault(sci, {})[loc] = text.strip()
+    return out
+
+
+def translate_extracts(
+    items: list[tuple[str, str]],
+    target_locales: list[str],
+    max_source_chars: int = 3000,
+    max_tokens: int = 16384,
+) -> dict[str, dict[str, str]]:
+    """Translate English extracts to missing target locales.
+
+    items: [(scientific_name, english_extract)]
+    target_locales: locale codes to translate into (excluding 'en')
+    Returns: {scientific_name: {locale: translation}}
+    """
+    locales = [l for l in target_locales if l != "en" and l in LOCALE_NAMES]
+    if not locales or not items:
+        return {}
+
+    lang_list = ", ".join(f"{l} ({LOCALE_NAMES[l]})" for l in locales)
+
+    system_prompt = (
+        "You are a professional translator of natural history texts.\n\n"
+        "TASK: Translate each species description to all requested languages.\n\n"
+        "RULES:\n"
         "- Preserve meaning, tone, and approximate length\n"
-        "- Use natural phrasing in each language\n\n"
+        "- Use natural phrasing in each language\n"
+        "- Single flowing paragraph, no bullet points, no markdown\n\n"
         "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
         "{\n"
         '  "Scientific name": {\n'
-        '    "en": "English description...",\n'
         '    "de": "German translation...",\n'
         '    "fr": "French translation...",\n'
         "    ...\n"
@@ -243,18 +283,13 @@ def describe_and_translate(
     )
 
     entries = []
-    for sci, en, eb, wi in species_list:
-        source = ""
-        if eb:
-            source += f"eBird: {_truncate(eb, max_source_chars)} "
-        if wi:
-            source += f"Wikipedia: {_truncate(wi, max_source_chars)}"
-        entries.append(f"- {en} ({sci}): {source.strip()}")
+    for sci, text in items:
+        entries.append(f"- {sci}: {_truncate(text, max_source_chars)}")
 
     user_message = (
-        f"Describe and translate these {len(species_list)} species.\n"
-        f"Languages: en (English), {lang_list}\n\n"
-        + "\n".join(entries)
+        f"Translate these {len(items)} species descriptions.\n"
+        f"Languages: {lang_list}\n\n"
+        + "\n\n".join(entries)
     )
 
     result = _call_claude(system_prompt, user_message, max_tokens=max_tokens)
@@ -262,270 +297,211 @@ def describe_and_translate(
         return {}
 
     parsed = _parse_json_response(result)
-
-    # Validate structure: {str: {str: str}}
-    out = {}
-    valid_locales = {"en"} | set(non_en)
-    for sci, translations in parsed.items():
-        if isinstance(translations, dict):
-            out[sci] = {
-                k: v for k, v in translations.items()
-                if k in valid_locales and isinstance(v, str) and v.strip()
-            }
-
-    return out
-
-
-def translate_missing(
-    descriptions: dict[str, str],
-    missing_locales: list[str],
-    max_tokens: int = 8192,
-) -> dict[str, dict[str, str]]:
-    """Translate existing descriptions to specific missing locales only.
-
-    Used to fill gaps when some locales failed in the initial call.
-
-    descriptions: {scientific_name: english_description}
-    missing_locales: locale codes to translate to
-
-    Returns: {scientific_name: {locale: translation}}
-    """
-    locales = [l for l in missing_locales if l in LOCALE_NAMES]
-    if not locales or not descriptions:
-        return {}
-
-    lang_list = ", ".join(f"{l} ({LOCALE_NAMES[l]})" for l in locales)
-
-    system_prompt = (
-        "You are a professional translator of natural history texts. "
-        "Translate each description to all requested languages. "
-        "Preserve meaning, tone, and length.\n\n"
-        "Return ONLY valid JSON:\n"
-        '{"Scientific name": {"locale": "translation", ...}, ...}\n'
-        "No markdown, no code fences."
-    )
-
-    entries = [f"- {sci}: {desc}" for sci, desc in descriptions.items()]
-    user_message = (
-        f"Translate to: {lang_list}\n\n"
-        + "\n".join(entries)
-    )
-
-    result = _call_claude(system_prompt, user_message, max_tokens=max_tokens)
-    if not result:
-        return {}
-
-    parsed = _parse_json_response(result)
-    out = {}
+    out: dict[str, dict[str, str]] = {}
     locale_set = set(locales)
     for sci, trans in parsed.items():
         if isinstance(trans, dict):
-            out[sci] = {k: v for k, v in trans.items()
-                        if k in locale_set and isinstance(v, str) and v.strip()}
+            out[sci] = {
+                k: v for k, v in trans.items()
+                if k in locale_set and isinstance(v, str) and v.strip()
+            }
     return out
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────
 
+def _word_count(text: str) -> int:
+    """Count words in text (handles CJK by counting characters)."""
+    return len(text.split())
+
+
 def main():
     cfg = load_config()
-    locales = get_locales()
     claude_cfg = cfg.get("claude", {})
     delay = claude_cfg.get("request_delay", 0.5)
-    default_batch = claude_cfg.get("batch_size", 10)
-    max_src = claude_cfg.get("max_source_chars", 500)
+    default_batch = claude_cfg.get("batch_size", 5)
     max_tokens = claude_cfg.get("max_tokens", 16384)
+    max_words = claude_cfg.get("max_extract_words", 500)
+    target_words = claude_cfg.get("target_words", 150)
+    target_locales = claude_cfg.get("locales", ["en"])
+    target_non_en = [l for l in target_locales if l != "en"]
 
     parser = argparse.ArgumentParser(
-        description="Generate and translate species descriptions via Claude"
+        description="Translate and shorten species descriptions via Claude"
     )
     parser.add_argument("--limit", type=int, default=0,
                         help="Max species to process (0 = all)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be processed without calling API")
-    parser.add_argument("--skip-translate", action="store_true",
-                        help="Only generate English descriptions, skip translations")
+    parser.add_argument("--shorten-only", action="store_true",
+                        help="Only shorten long extracts, skip translations")
+    parser.add_argument("--translate-only", action="store_true",
+                        help="Only translate, skip shortening")
     parser.add_argument("--batch-size", type=int, default=default_batch,
                         help=f"Species per API call (default: {default_batch})")
     args = parser.parse_args()
 
     # Load source data
-    inat = load_json(INAT_DATA)
-    ebird = load_json(EBIRD_DATA)
     wiki = load_json(WIKI_DATA)
-
-    if not inat:
-        print("ERROR: inat_data.json not found. Run collectors/inat.py first.")
+    if not wiki:
+        print("ERROR: wikipedia_data.json not found. "
+              "Run collectors/wikipedia.py first.")
         raise SystemExit(1)
 
     existing = load_json(OUTPUT_FILE)
-    print(f"Loaded {len(inat)} species from iNat, "
-          f"{len(ebird)} from eBird, {len(wiki)} from Wikipedia")
+    print(f"Loaded {len(wiki)} species from Wikipedia")
     print(f"Already have Claude data for {len(existing)} species")
+    print(f"Target locales: {', '.join(target_locales)}")
+    print(f"Shorten threshold: >{max_words} words → ~{target_words} words")
 
-    target_non_en = [l for l in locales if l != "en"]
-    n_target = len(target_non_en)
-    # For --skip-translate, only use 'en'
-    effective_locales = ["en"] if args.skip_translate else locales
+    # ── Phase 1: Find extracts that need shortening ───────────────────
+    needs_shortening: list[tuple[str, str, str]] = []  # (sci, locale, text)
+    if not args.translate_only:
+        for sci, rec in wiki.items():
+            for loc, text in rec.get("extracts", {}).items():
+                if not text:
+                    continue
+                # Skip if already shortened by Claude
+                cl_entry = existing.get(sci, {})
+                if cl_entry.get("extracts", {}).get(loc):
+                    continue
+                if _word_count(text) > max_words:
+                    needs_shortening.append((sci, loc, text))
 
-    print(f"Target locales: {', '.join(effective_locales)}")
+    # ── Phase 2: Find species needing translation ─────────────────────
+    needs_translation: list[tuple[str, str]] = []  # (sci, english_extract)
+    if not args.shorten_only and target_non_en:
+        for sci, rec in wiki.items():
+            en_text = rec.get("extract") or rec.get("extracts", {}).get("en")
+            if not en_text:
+                continue
+            # Check which target locales are missing
+            wp_extracts = rec.get("extracts", {})
+            cl_extracts = existing.get(sci, {}).get("extracts", {})
+            missing = [
+                l for l in target_non_en
+                if not wp_extracts.get(l) and not cl_extracts.get(l)
+            ]
+            if missing:
+                needs_translation.append((sci, en_text))
 
-    # Build work list — categorize species by what they need
-    needs_everything = []    # no entry or no description
-    needs_translation = []   # has description but missing translations
-
-    for sci_name in inat:
-        ebird_desc = ebird.get(sci_name, {}).get("description", "") or ""
-        wiki_extract = wiki.get(sci_name, {}).get("extract", "") or ""
-        if not ebird_desc and not wiki_extract:
-            continue  # no source text
-
-        english_name = inat[sci_name].get("preferred_common_name", sci_name)
-        obs_count = inat[sci_name].get("observations_count", 0) or 0
-        item = (sci_name, english_name, ebird_desc, wiki_extract, obs_count)
-
-        entry = existing.get(sci_name)
-        if not entry or not entry.get("description_en"):
-            needs_everything.append(item)
-        elif not args.skip_translate:
-            trans = entry.get("translations", {})
-            if len(trans) < n_target:
-                needs_translation.append(item)
-
-    # Sort by observation count (most common first) so we can abort
-    # at any point and still have the most important species done
-    needs_everything.sort(key=lambda x: x[4], reverse=True)
-    needs_translation.sort(key=lambda x: x[4], reverse=True)
-
-    print(f"  New/retry: {len(needs_everything)}, "
-          f"partial translations: {len(needs_translation)}")
-
-    # Process in order: new/retry first, then partial translations
-    to_process = needs_everything + needs_translation
     if args.limit:
-        to_process = to_process[:args.limit]
+        needs_shortening = needs_shortening[:args.limit]
+        remaining = max(0, args.limit - len(needs_shortening))
+        needs_translation = needs_translation[:remaining]
 
-    batch_size = max(1, args.batch_size)
-    n_batches = (len(to_process) + batch_size - 1) // batch_size
+    n_shorten_batches = (len(needs_shortening) + args.batch_size - 1) // args.batch_size if needs_shortening else 0
+    n_translate_batches = (len(needs_translation) + args.batch_size - 1) // args.batch_size if needs_translation else 0
 
-    print(f"Will process {len(to_process)} species in {n_batches} batches of {batch_size}")
-    print(f"Estimated API calls: ~{n_batches} "
-          f"(single call per batch: describe + translate)")
+    print(f"\n  Phase 1 — Shorten: {len(needs_shortening)} extracts "
+          f"({n_shorten_batches} batches)")
+    print(f"  Phase 2 — Translate: {len(needs_translation)} species "
+          f"({n_translate_batches} batches)")
+    print(f"  Estimated API calls: ~{n_shorten_batches + n_translate_batches}")
 
     if args.dry_run:
-        for sci, en, eb, wi, obs in to_process[:20]:
-            sources = []
-            if eb:
-                sources.append("ebird")
-            if wi:
-                sources.append("wiki")
-            status = "new" if sci not in existing else "retry/partial"
-            obs_str = f"{obs:,}" if obs else "?"
-            print(f"  {sci} ({en}) — {status}, {obs_str} obs, sources: {', '.join(sources)}")
-        if len(to_process) > 20:
-            print(f"  ... and {len(to_process) - 20} more")
+        if needs_shortening:
+            print(f"\n  Extracts to shorten (>{max_words} words):")
+            for sci, loc, text in needs_shortening[:20]:
+                wc = _word_count(text)
+                print(f"    {sci} [{loc}]: {wc} words")
+            if len(needs_shortening) > 20:
+                print(f"    ... and {len(needs_shortening) - 20} more")
+        if needs_translation:
+            print(f"\n  Species to translate (first 20):")
+            for sci, text in needs_translation[:20]:
+                wp_ext = wiki[sci].get("extracts", {})
+                cl_ext = existing.get(sci, {}).get("extracts", {})
+                have = sorted(set(wp_ext) | set(cl_ext))
+                missing = [l for l in target_non_en
+                           if not wp_ext.get(l) and not cl_ext.get(l)]
+                print(f"    {sci}: have={','.join(have)}, "
+                      f"missing={','.join(missing)}")
+            if len(needs_translation) > 20:
+                print(f"    ... and {len(needs_translation) - 20} more")
         return
 
-    processed = 0
-    pbar = tqdm(total=len(to_process), desc="Claude", unit="sp")
+    batch_size = max(1, args.batch_size)
 
-    for batch_idx in range(n_batches):
-        if is_shutting_down():
-            break
+    # ── Phase 1: Shorten ──────────────────────────────────────────────
+    if needs_shortening:
+        print(f"\nPhase 1: Shortening {len(needs_shortening)} extracts...")
+        pbar = tqdm(total=len(needs_shortening), desc="Shorten", unit="ext")
 
-        batch_start = batch_idx * batch_size
-        batch = to_process[batch_start:batch_start + batch_size]
-
-        pbar.set_postfix_str(
-            f"batch {batch_idx + 1}/{n_batches}", refresh=False
-        )
-
-        # Strip obs_count from tuples (only used for sorting)
-        batch_4 = [(s, e, eb, wi) for s, e, eb, wi, _ in batch]
-
-        # Split: species needing full describe+translate vs translation-only
-        need_desc = [(s, e, eb, wi) for s, e, eb, wi in batch_4
-                     if not existing.get(s, {}).get("description_en")]
-        have_desc = [(s, e, eb, wi) for s, e, eb, wi in batch_4
-                     if existing.get(s, {}).get("description_en")]
-
-        # ── Full describe + translate for new species ──
-        results = {}
-        if need_desc:
-            results = describe_and_translate(
-                need_desc, effective_locales,
-                max_source_chars=max_src, max_tokens=max_tokens,
+        for i in range(0, len(needs_shortening), batch_size):
+            if is_shutting_down():
+                break
+            batch = needs_shortening[i:i + batch_size]
+            results = shorten_extracts(
+                batch, target_words=target_words, max_tokens=max_tokens,
             )
+
+            for sci, locales in results.items():
+                entry = existing.setdefault(sci, {})
+                entry_extracts = entry.setdefault("extracts", {})
+                for loc, text in locales.items():
+                    entry_extracts[loc] = text
+
+            pbar.update(len(batch))
+            save_json(existing, OUTPUT_FILE)
             time.sleep(delay)
 
-        # ── Translation-only for species with existing descriptions ──
-        if have_desc and not args.skip_translate:
-            descs_for_trans = {}
-            missing_per_species: dict[str, list[str]] = {}
+        pbar.close()
+        shortened = sum(
+            len(v.get("extracts", {})) for v in existing.values()
+        )
+        print(f"  Total extracts in Claude data: {shortened}")
+    else:
+        print("\nPhase 1: No extracts need shortening")
 
-            for sci, en, _, _ in have_desc:
-                entry = existing[sci]
-                desc = entry["description_en"]
-                existing_trans = set(entry.get("translations", {}).keys())
-                missing = [l for l in target_non_en if l not in existing_trans]
-                if missing:
-                    descs_for_trans[sci] = desc
-                    missing_per_species[sci] = missing
+    if is_shutting_down():
+        return
 
-            if descs_for_trans:
-                # Find the union of all missing locales
-                all_missing = sorted(
-                    set(l for locs in missing_per_species.values() for l in locs)
-                )
-                trans_results = translate_missing(
-                    descs_for_trans, all_missing, max_tokens=max_tokens,
-                )
-                # Merge into results format
-                for sci, trans in trans_results.items():
-                    results[sci] = {"en": descs_for_trans[sci]}
-                    results[sci].update(trans)
+    # ── Phase 2: Translate ────────────────────────────────────────────
+    if needs_translation:
+        print(f"\nPhase 2: Translating {len(needs_translation)} species...")
+        pbar = tqdm(total=len(needs_translation), desc="Translate", unit="sp")
 
-                time.sleep(delay)
+        for i in range(0, len(needs_translation), batch_size):
+            if is_shutting_down():
+                break
+            batch = needs_translation[i:i + batch_size]
 
-        # ── Save records ──
-        if not results and need_desc:
-            tqdm.write(f"  WARN: No results for batch {batch_idx + 1}")
-            for sci, _, _, _ in need_desc:
-                existing[sci] = {"description_en": None, "error": "no_response"}
+            # For this batch, find the union of missing locales
+            batch_missing: set[str] = set()
+            for sci, _ in batch:
+                wp_ext = wiki[sci].get("extracts", {})
+                cl_ext = existing.get(sci, {}).get("extracts", {})
+                for l in target_non_en:
+                    if not wp_ext.get(l) and not cl_ext.get(l):
+                        batch_missing.add(l)
 
-        for sci, en, _, _ in batch_4:
-            species_result = results.get(sci, {})
-            old = existing.get(sci, {})
-            desc_en = species_result.get("en") or old.get("description_en")
+            results = translate_extracts(
+                batch, sorted(batch_missing), max_tokens=max_tokens,
+            )
 
-            record = {"description_en": desc_en or None}
-            if not desc_en and sci in [s for s, _, _, _ in need_desc]:
-                record["error"] = "no_description"
+            for sci, trans in results.items():
+                entry = existing.setdefault(sci, {})
+                entry_extracts = entry.setdefault("extracts", {})
+                # Only store locales actually missing for this species
+                wp_ext = wiki.get(sci, {}).get("extracts", {})
+                for loc, text in trans.items():
+                    if not wp_ext.get(loc) and not entry_extracts.get(loc):
+                        entry_extracts[loc] = text
 
-            # Merge translations: keep old, overlay new
-            merged_trans = dict(old.get("translations", {}))
-            for locale, text in species_result.items():
-                if locale != "en" and text:
-                    merged_trans[locale] = text
-            if merged_trans:
-                record["translations"] = merged_trans
+            pbar.update(len(batch))
+            save_json(existing, OUTPUT_FILE)
+            time.sleep(delay)
 
-            existing[sci] = record
-            processed += 1
+        pbar.close()
+    else:
+        print("\nPhase 2: No translations needed")
 
-        pbar.update(len(batch))
-        save_json(existing, OUTPUT_FILE)
-
-    pbar.close()
-
-    with_desc = sum(1 for v in existing.values() if v.get("description_en"))
-    with_full_trans = sum(
-        1 for v in existing.values()
-        if len(v.get("translations", {})) >= n_target
-    )
-    print(f"\nDone! Processed {processed} species in {n_batches} batches.")
-    print(f"Total in {OUTPUT_FILE.name}: {len(existing)} entries "
-          f"({with_desc} with descriptions, {with_full_trans} fully translated)")
+    # Summary
+    n_species = len(existing)
+    n_extracts = sum(len(v.get("extracts", {})) for v in existing.values())
+    print(f"\nDone! {n_species} species, {n_extracts} total extracts "
+          f"in {OUTPUT_FILE.name}")
 
 
 if __name__ == "__main__":

@@ -426,6 +426,49 @@ def _run_phase1(titles: list[str], title_to_sci: dict[str, str],
     return english_data
 
 
+def _run_extract_backfill(existing: dict, pbar: tqdm) -> int:
+    """Backfill missing English extracts for species that have an en URL."""
+    to_backfill: list[tuple[str, str]] = []  # (sci_name, title)
+    for sci, rec in existing.items():
+        if rec.get("extract"):
+            continue
+        en_url = rec.get("wikipedia_urls", {}).get("en", "")
+        if not en_url:
+            continue
+        title = wiki_title_from_url(en_url)
+        if title:
+            to_backfill.append((sci, title.replace("_", " ")))
+
+    if not to_backfill:
+        pbar.close()
+        return 0
+
+    pbar.reset(total=len(to_backfill))
+    updated = 0
+
+    for batch in _chunks(to_backfill, BATCH_SIZE):
+        if is_shutting_down():
+            break
+        titles = [t for _, t in batch]
+        pages = _batch_query(EN_API, titles,
+            props="extracts",
+            extra_params={
+                "exintro": "1", "explaintext": "1",
+                "exlimit": str(BATCH_SIZE),
+            },
+        )
+        for sci, title in batch:
+            page = pages.get(title)
+            if page and page.get("extract"):
+                existing[sci]["extract"] = page["extract"]
+                existing[sci].setdefault("extracts", {})["en"] = page["extract"]
+                updated += 1
+        pbar.update(len(batch))
+
+    pbar.close()
+    return updated
+
+
 def _run_phase2(english_data: dict[str, dict],
                 existing_extracts: dict[str, dict[str, str]],
                 pbar: tqdm) -> dict[str, dict[str, str]]:
@@ -741,6 +784,18 @@ def main():
         print(f"  Saved {found} records after Phase 1")
     else:
         print(f"\nPhase 1: No new species to fetch")
+
+    if is_shutting_down():
+        return
+
+    # ── Phase 1b: Backfill missing English extracts ───────────────────
+    pbar1b = tqdm(total=0, desc="Phase 1b", unit="sp")
+    backfilled = _run_extract_backfill(existing, pbar1b)
+    if backfilled:
+        save_json(existing, OUTPUT_FILE)
+        print(f"  Backfilled {backfilled} English extracts")
+    else:
+        print(f"  No missing English extracts to backfill")
 
     if is_shutting_down():
         return
