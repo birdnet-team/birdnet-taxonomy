@@ -367,19 +367,31 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
     if source == "ebird" or (" - " in text and not text.startswith("(")):
         text = text.split(" - ", 1)[-1].strip()
         text = re.sub(r"\s*/\s*Macaulay Library.*", "", text, flags=re.IGNORECASE)
-        return text.strip() if text else ""
 
-    if source == "inat" or text.startswith("(c)"):
+    elif source == "inat" or text.startswith("(c)"):
         text = re.sub(r"^\(c\)\s*", "", text, flags=re.IGNORECASE)
-        text = re.sub(r",?\s*(some|all)\s+rights\s+reserved.*", "", text,
-                       flags=re.IGNORECASE)
         text = re.sub(r"\(CC[^)]*\)", "", text)
-        return text.strip(" ,.") if text.strip(" ,.") else ""
+        # "uploaded by X" → keep only X
+        m = re.search(r",?\s*uploaded\s+by\s+(.+)", text, flags=re.IGNORECASE)
+        if m:
+            text = m.group(1)
+        # Strip rights / copyright boilerplate
+        text = re.sub(r",?\s*(no|some|all)\s+(known\s+)?(copy)?rights?\s+"
+                       r"(reserved|restrictions).*", "", text,
+                       flags=re.IGNORECASE)
 
-    if source == "wikimedia":
-        return text
+    # Sanitise: strip bracketed content, emoji, and non-name characters
+    text = re.sub(r"\s*[\(\[][^)\]]*[\)\]]", "", text)   # (...) and [...]
+    text = re.sub(                                         # emoji & symbols
+        r"[\U0001F000-\U0001FFFF"
+        r"\U00002600-\U000027BF"
+        r"\U0000FE00-\U0000FE0F"
+        r"\U0000200D"
+        r"\U000E0020-\U000E007F]+", "", text)
+    text = re.sub(r"[<>{}|\\^~`]", "", text)              # stray markup chars
+    text = re.sub(r"\s+", " ", text)                       # collapse whitespace
 
-    return text
+    return text.strip(" ,.") if text.strip(" ,.") else ""
 
 
 def _commons_url(filename: str) -> str:
