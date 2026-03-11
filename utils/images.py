@@ -400,9 +400,10 @@ _STRIP_NON_PRINT = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def _clean_name(text: str) -> str:
-    """Normalise a name for use in filenames: NFC, strip control chars, collapse spaces."""
+    """Normalise a name for use in filenames: NFC, strip control chars and path separators, collapse spaces."""
     text = unicodedata.normalize("NFC", text)
     text = _STRIP_NON_PRINT.sub("", text)
+    text = text.replace("/", " ").replace("\\", " ")
     text = _COLLAPSE_SPACES.sub(" ", text).strip()
     return text
 

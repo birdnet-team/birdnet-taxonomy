@@ -40,6 +40,50 @@ from utils.images import (
     to_webp,
 )
 
+LOGO_PATH = ROOT / "birdnet-logo-circle.png"
+
+
+def _generate_dummy_images(base_dir: Path, sizes: dict[str, ImageSize],
+                           qualities: dict[str, int]) -> None:
+    """Generate grayscale dummy.webp fallback images with the BirdNET logo."""
+    try:
+        from PIL import Image
+    except ImportError:
+        print("WARN: Pillow not installed, skipping dummy image generation")
+        return
+
+    if not LOGO_PATH.exists():
+        print(f"WARN: Logo not found at {LOGO_PATH}, skipping dummy images")
+        return
+
+    logo_rgba = Image.open(LOGO_PATH).convert("RGBA")
+
+    for size_name, size in sizes.items():
+        out_dir = base_dir / size_name
+        dest = out_dir / "dummy.webp"
+        if dest.exists():
+            continue
+
+        # Create grayscale canvas with neutral gray background
+        canvas = Image.new("L", (size.width, size.height), 200)
+
+        # Scale logo to fit 60% of the smaller dimension
+        fit = int(min(size.width, size.height) * 0.6)
+        logo = logo_rgba.copy()
+        logo.thumbnail((fit, fit), Image.LANCZOS)
+
+        # Composite logo onto canvas using alpha as mask
+        logo_gray = logo.convert("L")
+        mask = logo.split()[3]  # alpha channel
+        x = (size.width - logo.width) // 2
+        y = (size.height - logo.height) // 2
+        canvas.paste(logo_gray, (x, y), mask)
+
+        quality = qualities.get(size_name, 60)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        canvas.save(dest, "WEBP", quality=quality)
+        print(f"  Generated {dest}")
+
 
 def _load_species(dev: bool) -> list[dict]:
     """Load species_metadata.json from dev/ or dist/."""
@@ -82,7 +126,20 @@ def _process_species(rec: dict, sizes: dict[str, ImageSize],
 
     img = download_image(url)
     if img is None:
-        return 0, len(sizes)
+        # Use dummy image as fallback for failed downloads
+        ok = 0
+        for size_name in sizes:
+            out_dir = base_dir / size_name
+            dummy = out_dir / "dummy.webp"
+            fname = image_filename(sci, common, "Stefan Kahl")
+            dest = out_dir / fname
+            if dest.exists():
+                ok += 1
+            elif dummy.exists():
+                import shutil
+                shutil.copy2(dummy, dest)
+                ok += 1
+        return ok, len(sizes) - ok
 
     fname = image_filename(sci, common, author)
     ok = 0
@@ -102,7 +159,14 @@ def _process_species(rec: dict, sizes: dict[str, ImageSize],
             tmp.replace(dest)
             ok += 1
         except Exception:
-            fail += 1
+            # Use dummy image as fallback for crop/convert failures
+            dummy = out_dir / "dummy.webp"
+            if dummy.exists():
+                import shutil
+                shutil.copy2(dummy, dest)
+                ok += 1
+            else:
+                fail += 1
     return ok, fail
 
 
@@ -127,6 +191,19 @@ def main():
         qualities = {k: args.quality for k in qualities}
 
     base_dir = ROOT / ("dev" if args.dev else "dist") / "images"
+
+    # Generate fallback dummy images
+    _generate_dummy_images(base_dir, sizes, qualities)
+
+    # Clean up non-webp files and .tmp leftovers
+    for size_name in sizes:
+        size_dir = base_dir / size_name
+        if not size_dir.is_dir():
+            continue
+        for f in size_dir.iterdir():
+            if f.is_file() and f.suffix not in (".webp",):
+                print(f"  Removing non-webp: {f}")
+                f.unlink()
 
     # Build work list: species that need at least one size
     work: list[tuple[dict, dict[str, ImageSize]]] = []

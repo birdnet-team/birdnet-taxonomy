@@ -215,13 +215,9 @@
 
 <div class="species-header">
     <div class="species-photo">
-        {% if s.image_url %}
         <img src="/api/image/{{ s.scientific_name }}?size=medium" alt="{{ s.common_name or s.scientific_name }}">
         {% if s.image_author %}
         <div class="attribution">{{ s.image_author }}{% if s.image_license %} ({{ s.image_license }}){% endif %}</div>
-        {% endif %}
-        {% else %}
-        <div class="no-img" style="height:280px; border-radius: var(--radius);">No image available</div>
         {% endif %}
     </div>
 

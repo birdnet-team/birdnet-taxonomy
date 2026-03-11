@@ -388,10 +388,61 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
         r"\U0000FE00-\U0000FE0F"
         r"\U0000200D"
         r"\U000E0020-\U000E007F]+", "", text)
-    text = re.sub(r"[<>{}|\\^~`]", "", text)              # stray markup chars
+    text = re.sub(r"[<>{}|\\^~`/]", "", text)             # stray markup/path chars
     text = re.sub(r"\s+", " ", text)                       # collapse whitespace
 
     return text.strip(" ,.") if text.strip(" ,.") else ""
+
+
+INAT_OBS_URL = "https://api.inaturalist.org/v1/observations"
+
+
+def _photo_url_large(url: str) -> str:
+    """Convert iNat photo URL from square/medium to large."""
+    if not url:
+        return ""
+    return url.replace("/square.", "/large.").replace("/medium.", "/large.")
+
+
+def _fetch_inat_cc_photo(inat_id: int) -> dict | None:
+    """Find the best CC-licensed photo for a taxon via the observations API.
+
+    Queries research-grade observations sorted by votes (most-faved first)
+    and returns the first photo with an acceptable license.
+    Returns {url, attribution, license} or None.
+    """
+    key = _cache_key("inat_obs_photo", str(inat_id))
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached if cached else None
+
+    url = (
+        f"{INAT_OBS_URL}?taxon_id={inat_id}"
+        f"&photos=true&photo_licensed=true"
+        f"&quality_grade=research&order_by=votes&per_page=5"
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+    except Exception:
+        _cache_put(key, {})
+        return None
+
+    for obs in data.get("results", []):
+        for photo in obs.get("photos", []):
+            lic = photo.get("license_code", "")
+            if lic and lic in ACCEPTABLE_INAT_LICENSES:
+                result = {
+                    "url": _photo_url_large(photo.get("url", "")),
+                    "attribution": photo.get("attribution", ""),
+                    "license": lic,
+                }
+                _cache_put(key, result)
+                return result
+
+    _cache_put(key, {})
+    return None
 
 
 def _commons_url(filename: str) -> str:
@@ -778,6 +829,34 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 taxonomy[sci]["image_license"] = info["license"]
                 taxonomy[sci]["image_source"] = "wikimedia"
                 img_stats["wikimedia"] += 1
+
+    # iNat observation photo fallback (non-birds only)
+    need_inat = [
+        (sci, inat.get(sci, {}).get("inat_id"))
+        for sci, e in taxonomy.items()
+        if not e["image_url"]
+        and e.get("taxon_group") != "Aves"
+        and inat.get(sci, {}).get("inat_id")
+    ]
+    if need_inat:
+        img_stats["inat_obs"] = 0
+        print(f"    Searching iNat observations for {len(need_inat)} "
+              f"non-bird species without images...")
+        for i, (sci, inat_id) in enumerate(need_inat):
+            result = _fetch_inat_cc_photo(inat_id)
+            if result and result.get("url"):
+                taxonomy[sci]["image_url"] = result["url"]
+                taxonomy[sci]["image_author"] = _parse_image_author(
+                    result["attribution"], "inat")
+                taxonomy[sci]["image_license"] = result["license"]
+                taxonomy[sci]["image_source"] = "inat"
+                img_stats["inat_obs"] += 1
+            if (i + 1) % 25 == 0:
+                print(f"      {i + 1}/{len(need_inat)} checked, "
+                      f"{img_stats['inat_obs']} found")
+            time.sleep(1.1)
+        print(f"    Found {img_stats['inat_obs']} CC-licensed photos "
+              f"from iNat observations")
 
     img_stats["none"] = sum(1 for e in taxonomy.values() if not e["image_url"])
     stats["images"] = img_stats

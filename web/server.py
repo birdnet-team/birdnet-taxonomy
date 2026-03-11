@@ -32,7 +32,7 @@ from urllib.request import Request, urlopen
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
 from pydantic import BaseModel, Field, field_validator
 from utils.images import ImageSize, image_filename, save_species_image
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -209,13 +209,40 @@ LOCALE_NAMES: dict[str, str] = {
 _species_list: list[dict] = []
 _species_by_name: dict[str, dict] = {}
 _species_by_common: dict[str, dict] = {}
+_species_by_ebird: dict[str, dict] = {}
+_species_by_inat_id: dict[int, dict] = {}
 _search_index: list[tuple[str, str, dict]] = []  # (lower_sci, lower_common, record)
 _all_locales: list[tuple[str, str]] = []  # (code, display_name) sorted
+
+
+def _find_species(identifier: str) -> dict | None:
+    """Resolve a species by scientific name, common name, eBird code, or iNat ID."""
+    # Scientific name (exact, case-insensitive)
+    rec = _species_by_name.get(identifier) or _species_by_name.get(identifier.lower())
+    if rec:
+        return rec
+    # Common name (case-insensitive)
+    rec = _species_by_common.get(identifier.lower())
+    if rec:
+        return rec
+    # eBird code (case-insensitive)
+    rec = _species_by_ebird.get(identifier.lower())
+    if rec:
+        return rec
+    # iNat taxon ID (numeric string)
+    try:
+        rec = _species_by_inat_id.get(int(identifier))
+        if rec:
+            return rec
+    except (ValueError, TypeError):
+        pass
+    return None
 
 
 def load_data(dev: bool = False):
     """Load species_metadata.json into memory."""
     global _species_list, _species_by_name, _species_by_common
+    global _species_by_ebird, _species_by_inat_id
     global _search_index, _all_locales
 
     for d in (["dev", "dist"] if dev else ["dist", "dev"]):
@@ -232,6 +259,8 @@ def load_data(dev: bool = False):
 
     _species_by_name = {}
     _species_by_common = {}
+    _species_by_ebird = {}
+    _species_by_inat_id = {}
     _search_index = []
 
     locale_set: set[str] = set()
@@ -244,6 +273,15 @@ def load_data(dev: bool = False):
             _species_by_name[sci.lower()] = rec
         if common:
             _species_by_common[common.lower()] = rec
+        for name in rec.get("common_names", {}).values():
+            if name:
+                _species_by_common.setdefault(name.lower(), rec)
+        ebird_code = rec.get("ebird_code", "")
+        if ebird_code:
+            _species_by_ebird[ebird_code.lower()] = rec
+        inat_id = rec.get("inat_id")
+        if inat_id:
+            _species_by_inat_id[int(inat_id)] = rec
         search_text = _normalise(f"{sci} {common}")
         for name in rec.get("common_names", {}).values():
             search_text += " " + _normalise(name)
@@ -337,13 +375,20 @@ async def image_proxy(scientific_name: str,
     if size not in _image_sizes:
         raise HTTPException(400, f"Invalid size '{size}'. Use: thumb, medium")
 
-    rec = _species_by_name.get(scientific_name) or \
-          _species_by_name.get(scientific_name.lower())
+    rec = _find_species(scientific_name)
     if not rec:
         raise HTTPException(404, "Species not found")
 
     source_url = rec.get("image_url", "")
     if not source_url:
+        # Serve dummy fallback image
+        dummy = _image_base / size / "dummy.webp"
+        if dummy.exists():
+            return Response(
+                content=dummy.read_bytes(),
+                media_type="image/webp",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
         raise HTTPException(404, "No image available for this species")
 
     sci = rec.get("scientific_name", "")
@@ -374,6 +419,15 @@ async def image_proxy(scientific_name: str,
     if saved and saved.exists():
         return Response(
             content=saved.read_bytes(),
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    # Serve dummy fallback image
+    dummy = _image_base / size / "dummy.webp"
+    if dummy.exists():
+        return Response(
+            content=dummy.read_bytes(),
             media_type="image/webp",
             headers={"Cache-Control": "public, max-age=86400"},
         )
@@ -425,11 +479,15 @@ async def home(request: FRequest, q: str = "", group: str = "",
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
          include_in_schema=False)
 async def species_page(request: FRequest, scientific_name: str):
-    """Species detail page."""
-    rec = _species_by_name.get(scientific_name) or \
-          _species_by_name.get(scientific_name.lower())
+    """Species detail page. Accepts scientific name, common name, eBird code, or iNat ID."""
+    rec = _find_species(scientific_name)
     if not rec:
         raise HTTPException(status_code=404, detail="Species not found")
+
+    # Redirect to canonical URL if accessed via alias
+    canonical = rec.get("scientific_name", "")
+    if canonical and scientific_name != canonical:
+        return RedirectResponse(url=f"/species/{canonical}", status_code=302)
 
     return templates.TemplateResponse("species.html", {
         "request": request,
@@ -775,9 +833,8 @@ async def api_species_detail(
     exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
 ):
-    """Get full metadata for one species by scientific name."""
-    rec = _species_by_name.get(scientific_name) or \
-          _species_by_name.get(scientific_name.lower())
+    """Get full metadata for one species by scientific name, common name, eBird code, or iNat ID."""
+    rec = _find_species(scientific_name)
     if not rec:
         raise HTTPException(status_code=404, detail="Species not found")
     return _project(rec, fields, exclude, locale)
