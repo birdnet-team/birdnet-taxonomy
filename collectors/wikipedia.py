@@ -593,17 +593,19 @@ def _assemble_records(
         if data:
             page_title = data.get("title", wiki_title)
             safe = quote(page_title, safe="/:@!$&'()*+,;=")
+            extract = data.get("extract") or prev.get("extract", "")
+            description = data.get("description") or prev.get("description", "")
+            wikipedia_urls = dict(prev.get("wikipedia_urls", {}))
+            wikipedia_urls["en"] = f"https://en.wikipedia.org/wiki/{safe}"
             record = {
                 "title": page_title,
-                "extract": data.get("extract", ""),
-                "description": data.get("description", ""),
-                "wikipedia_urls": {
-                    "en": f"https://en.wikipedia.org/wiki/{safe}",
-                },
+                "extract": extract,
+                "description": description,
+                "wikipedia_urls": wikipedia_urls,
                 "extracts": {},
             }
-            if data.get("extract"):
-                record["extracts"]["en"] = data["extract"]
+            if extract:
+                record["extracts"]["en"] = extract
 
             # Locale URLs and extracts
             for lang, info in data.get("langlinks", {}).items():
@@ -617,7 +619,7 @@ def _assemble_records(
             record["extracts"] = merged_extracts
 
             # Image + license (prefer new data, fall back to existing)
-            img_url = data.get("image_url", "")
+            img_url = data.get("image_url", "") or prev.get("image_url", "")
             if img_url:
                 record["image_url"] = img_url
                 lic = title_licenses.get(wiki_title, {})
@@ -639,6 +641,33 @@ def _assemble_records(
             }
 
         existing[sci_name] = record
+
+
+def _collect_incomplete_work(
+    species: dict[str, str],
+    existing: dict,
+    queued_species: set[str],
+) -> list[tuple[str, str]]:
+    """Find species that already have Phase 1 data but still need completion."""
+    incomplete: list[tuple[str, str]] = []
+    for sci, url in species.items():
+        if sci in queued_species:
+            continue
+        rec = existing.get(sci)
+        if not rec or not rec.get("extract"):
+            continue
+        title = wiki_title_from_url(url)
+        if not title:
+            continue
+        needs_locales = len(rec.get("extracts", {})) < len(
+            rec.get("wikipedia_urls", {})
+        )
+        needs_license = (
+            rec.get("image_url") and not rec.get("image_license")
+        )
+        if needs_locales or needs_license:
+            incomplete.append((sci, title))
+    return incomplete
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
@@ -706,24 +735,8 @@ def main():
 
     # Find incomplete species that need Phase 2 (locale extracts) or
     # Phase 3 (image licenses) but already have Phase 1 data
-    incomplete = []
-    for sci, url in species.items():
-        if sci in {s for s, _ in work}:
-            continue  # already in new work list
-        rec = existing.get(sci)
-        if not rec or not rec.get("extract"):
-            continue  # no Phase 1 data
-        title = wiki_title_from_url(url)
-        if not title:
-            continue
-        needs_locales = len(rec.get("extracts", {})) < len(
-            rec.get("wikipedia_urls", {})
-        )
-        needs_license = (
-            rec.get("image_url") and not rec.get("image_license")
-        )
-        if needs_locales or needs_license:
-            incomplete.append((sci, title))
+    queued_species = {s for s, _ in work}
+    incomplete = _collect_incomplete_work(species, existing, queued_species)
 
     if args.limit:
         remaining = max(0, args.limit - len(work))
@@ -799,6 +812,12 @@ def main():
 
     if is_shutting_down():
         return
+
+    queued_species = {s for s, _ in work}
+    incomplete = _collect_incomplete_work(species, existing, queued_species)
+    if args.limit:
+        remaining = max(0, args.limit - len(work))
+        incomplete = incomplete[:remaining]
 
     # Reconstruct english_data for incomplete species from existing records
     # so Phase 2/3 can generate work for them
