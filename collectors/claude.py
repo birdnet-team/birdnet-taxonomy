@@ -18,7 +18,9 @@ Requires ANTHROPIC_API_KEY in .env file.
 import argparse
 import json
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -34,9 +36,13 @@ setup_shutdown()
 
 WIKI_DATA = RAW_DIR / "wikipedia_data.json"
 OUTPUT_FILE = RAW_DIR / "claude_data.json"
+JOURNAL_FILE = RAW_DIR / "claude_journal.jsonl"
 
 _api_key = None
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
+_request_delay = 0.0
+_request_gate = threading.Lock()
+_next_request_time = 0.0
 
 
 # ── API layer ─────────────────────────────────────────────────────────
@@ -61,6 +67,19 @@ def _load_api_key() -> str:
     raise RuntimeError("ANTHROPIC_API_KEY not found in .env file")
 
 
+def _acquire_request_slot():
+    """Throttle Claude request start times across worker threads."""
+    global _next_request_time
+    if _request_delay <= 0:
+        return
+    with _request_gate:
+        now = time.monotonic()
+        if now < _next_request_time:
+            time.sleep(_next_request_time - now)
+            now = time.monotonic()
+        _next_request_time = now + _request_delay
+
+
 def _call_claude(system_prompt: str, user_message: str,
                  max_tokens: int = 4096) -> str | None:
     """Make a request to the Claude API. Returns text or None on error."""
@@ -83,6 +102,7 @@ def _call_claude(system_prompt: str, user_message: str,
 
     for attempt in range(4):
         try:
+            _acquire_request_slot()
             with urlopen(req, timeout=300) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 content = data.get("content", [])
@@ -315,6 +335,122 @@ def _word_count(text: str) -> int:
     return len(text.split())
 
 
+def _batch_by_char_budget(items: list, text_getter, char_budget: int,
+                          max_items: int) -> list[list]:
+    """Split items into batches bounded by char budget and item count."""
+    batches: list[list] = []
+    batch: list = []
+    used_chars = 0
+    limit = max(1, char_budget)
+    max_batch_items = max(1, max_items)
+
+    for item in items:
+        text_len = max(1, len(text_getter(item)))
+        if batch and (len(batch) >= max_batch_items or used_chars + text_len > limit):
+            batches.append(batch)
+            batch = []
+            used_chars = 0
+        batch.append(item)
+        used_chars += text_len
+
+    if batch:
+        batches.append(batch)
+    return batches
+
+
+def _missing_translation_locales(
+    wiki_extracts: dict[str, str],
+    claude_extracts: dict[str, str],
+    target_locales: list[str],
+) -> tuple[str, ...]:
+    """Return the exact set of locales still missing for one species."""
+    return tuple(
+        loc for loc in target_locales
+        if not wiki_extracts.get(loc) and not claude_extracts.get(loc)
+    )
+
+
+def _build_translation_batches(
+    items: list[tuple[str, str, tuple[str, ...]]],
+    max_batch_size: int,
+    char_budget: int,
+    max_source_chars: int,
+) -> list[tuple[tuple[str, ...], list[tuple[str, str]]]]:
+    """Group translation work by exact locale signature, then char-budget batch."""
+    grouped: dict[tuple[str, ...], list[tuple[str, str]]] = {}
+    for sci, en_text, missing_locales in items:
+        grouped.setdefault(missing_locales, []).append((sci, en_text))
+
+    batches: list[tuple[tuple[str, ...], list[tuple[str, str]]]] = []
+    sort_key = lambda item: (-len(item[1]), -len(item[0]), item[0])
+    for missing_locales, grouped_items in sorted(grouped.items(), key=sort_key):
+        grouped_batches = _batch_by_char_budget(
+            grouped_items,
+            text_getter=lambda item: _truncate(item[1], max_source_chars),
+            char_budget=char_budget,
+            max_items=max_batch_size,
+        )
+        for batch in grouped_batches:
+            batches.append((missing_locales, batch))
+    return batches
+
+
+def _save_if_needed(existing: dict, batches_since_save: int, save_every: int) -> int:
+    """Checkpoint Claude output periodically instead of after every batch."""
+    if batches_since_save >= save_every:
+        _checkpoint_state(existing)
+        return 0
+    return batches_since_save
+
+
+def _merge_updates(target: dict, updates: dict[str, dict[str, str]]):
+    """Merge batch updates into the in-memory Claude output structure."""
+    for sci, extracts in updates.items():
+        entry = target.setdefault(sci, {})
+        entry_extracts = entry.setdefault("extracts", {})
+        entry_extracts.update(extracts)
+
+
+def _append_journal(updates: dict[str, dict[str, str]]):
+    """Persist one completed batch to an append-only journal for resume safety."""
+    if not updates:
+        return
+    with JOURNAL_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(updates, ensure_ascii=False) + "\n")
+
+
+def _load_existing_outputs() -> dict:
+    """Load the main Claude output file and replay any unsnapshotted journal."""
+    existing = load_json(OUTPUT_FILE)
+    if not JOURNAL_FILE.exists():
+        return existing
+
+    replayed = 0
+    with JOURNAL_FILE.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                updates = json.loads(line)
+            except json.JSONDecodeError:
+                tqdm.write("  WARN: Skipping malformed Claude journal line")
+                continue
+            if isinstance(updates, dict):
+                _merge_updates(existing, updates)
+                replayed += 1
+    if replayed:
+        tqdm.write(f"  Replayed {replayed} Claude journal batches")
+    return existing
+
+
+def _checkpoint_state(existing: dict):
+    """Write the full Claude output and clear the batch journal."""
+    save_json(existing, OUTPUT_FILE)
+    if JOURNAL_FILE.exists():
+        JOURNAL_FILE.unlink()
+
+
 def main():
     cfg = load_config()
     claude_cfg = cfg.get("claude", {})
@@ -324,6 +460,10 @@ def main():
     max_words = claude_cfg.get("max_extract_words", 500)
     target_words = claude_cfg.get("target_words", 150)
     target_locales = claude_cfg.get("locales", ["en"])
+    translate_workers = claude_cfg.get("translate_workers", 4)
+    save_every = claude_cfg.get("save_every", 10)
+    source_char_budget = claude_cfg.get("source_char_budget", 12000)
+    max_source_chars = claude_cfg.get("max_source_chars", 3000)
     target_non_en = [l for l in target_locales if l != "en"]
 
     parser = argparse.ArgumentParser(
@@ -339,7 +479,18 @@ def main():
                         help="Only translate, skip shortening")
     parser.add_argument("--batch-size", type=int, default=default_batch,
                         help=f"Species per API call (default: {default_batch})")
+    parser.add_argument("--workers", type=int, default=translate_workers,
+                        help=f"Parallel translation workers (default: {translate_workers})")
+    parser.add_argument("--save-every", type=int, default=save_every,
+                        help=f"Save claude_data.json every N completed batches (default: {save_every})")
+    parser.add_argument("--char-budget", type=int, default=source_char_budget,
+                        help=f"Approximate source-character budget per API call (default: {source_char_budget})")
+    parser.add_argument("--max-source-chars", type=int, default=max_source_chars,
+                        help=f"Max source chars per species sent to Claude (default: {max_source_chars})")
     args = parser.parse_args()
+
+    global _request_delay
+    _request_delay = max(0.0, float(delay))
 
     # Load source data
     wiki = load_json(WIKI_DATA)
@@ -348,7 +499,7 @@ def main():
               "Run collectors/wikipedia.py first.")
         raise SystemExit(1)
 
-    existing = load_json(OUTPUT_FILE)
+    existing = _load_existing_outputs()
     print(f"Loaded {len(wiki)} species from Wikipedia")
     print(f"Already have Claude data for {len(existing)} species")
     print(f"Target locales: {', '.join(target_locales)}")
@@ -369,7 +520,7 @@ def main():
                     needs_shortening.append((sci, loc, text))
 
     # ── Phase 2: Find species needing translation ─────────────────────
-    needs_translation: list[tuple[str, str]] = []  # (sci, english_extract)
+    needs_translation: list[tuple[str, str, tuple[str, ...]]] = []
     if not args.shorten_only and target_non_en:
         for sci, rec in wiki.items():
             en_text = rec.get("extract") or rec.get("extracts", {}).get("en")
@@ -378,26 +529,42 @@ def main():
             # Check which target locales are missing
             wp_extracts = rec.get("extracts", {})
             cl_extracts = existing.get(sci, {}).get("extracts", {})
-            missing = [
-                l for l in target_non_en
-                if not wp_extracts.get(l) and not cl_extracts.get(l)
-            ]
+            missing = _missing_translation_locales(
+                wp_extracts, cl_extracts, target_non_en,
+            )
             if missing:
-                needs_translation.append((sci, en_text))
+                needs_translation.append((sci, en_text, missing))
 
     if args.limit:
         needs_shortening = needs_shortening[:args.limit]
         remaining = max(0, args.limit - len(needs_shortening))
         needs_translation = needs_translation[:remaining]
 
-    n_shorten_batches = (len(needs_shortening) + args.batch_size - 1) // args.batch_size if needs_shortening else 0
-    n_translate_batches = (len(needs_translation) + args.batch_size - 1) // args.batch_size if needs_translation else 0
+    batch_size = max(1, args.batch_size)
+    save_every = max(1, args.save_every)
+    char_budget = max(1, args.char_budget)
+    max_source_chars = max(500, args.max_source_chars)
+
+    shorten_batches = _batch_by_char_budget(
+        needs_shortening,
+        text_getter=lambda item: item[2],
+        char_budget=char_budget,
+        max_items=batch_size,
+    )
+    translation_batches = _build_translation_batches(
+        needs_translation,
+        max_batch_size=batch_size,
+        char_budget=char_budget,
+        max_source_chars=max_source_chars,
+    )
+    locale_signatures = {missing for _, _, missing in needs_translation}
 
     print(f"\n  Phase 1 — Shorten: {len(needs_shortening)} extracts "
-          f"({n_shorten_batches} batches)")
+          f"({len(shorten_batches)} batches)")
     print(f"  Phase 2 — Translate: {len(needs_translation)} species "
-          f"({n_translate_batches} batches)")
-    print(f"  Estimated API calls: ~{n_shorten_batches + n_translate_batches}")
+          f"({len(translation_batches)} batches across "
+          f"{len(locale_signatures)} locale sets)")
+    print(f"  Estimated API calls: ~{len(shorten_batches) + len(translation_batches)}")
 
     if args.dry_run:
         if needs_shortening:
@@ -409,44 +576,44 @@ def main():
                 print(f"    ... and {len(needs_shortening) - 20} more")
         if needs_translation:
             print(f"\n  Species to translate (first 20):")
-            for sci, text in needs_translation[:20]:
+            for sci, text, missing in needs_translation[:20]:
                 wp_ext = wiki[sci].get("extracts", {})
                 cl_ext = existing.get(sci, {}).get("extracts", {})
                 have = sorted(set(wp_ext) | set(cl_ext))
-                missing = [l for l in target_non_en
-                           if not wp_ext.get(l) and not cl_ext.get(l)]
                 print(f"    {sci}: have={','.join(have)}, "
                       f"missing={','.join(missing)}")
             if len(needs_translation) > 20:
                 print(f"    ... and {len(needs_translation) - 20} more")
         return
 
-    batch_size = max(1, args.batch_size)
-
     # ── Phase 1: Shorten ──────────────────────────────────────────────
     if needs_shortening:
         print(f"\nPhase 1: Shortening {len(needs_shortening)} extracts...")
         pbar = tqdm(total=len(needs_shortening), desc="Shorten", unit="ext")
+        pending_saves = 0
 
-        for i in range(0, len(needs_shortening), batch_size):
+        for batch in shorten_batches:
             if is_shutting_down():
                 break
-            batch = needs_shortening[i:i + batch_size]
             results = shorten_extracts(
                 batch, target_words=target_words, max_tokens=max_tokens,
             )
+            batch_updates: dict[str, dict[str, str]] = {}
 
             for sci, locales in results.items():
-                entry = existing.setdefault(sci, {})
-                entry_extracts = entry.setdefault("extracts", {})
                 for loc, text in locales.items():
-                    entry_extracts[loc] = text
+                    batch_updates.setdefault(sci, {})[loc] = text
+
+            _merge_updates(existing, batch_updates)
+            _append_journal(batch_updates)
 
             pbar.update(len(batch))
-            save_json(existing, OUTPUT_FILE)
-            time.sleep(delay)
+            pending_saves += 1
+            pending_saves = _save_if_needed(existing, pending_saves, save_every)
 
         pbar.close()
+        if pending_saves:
+            _checkpoint_state(existing)
         shortened = sum(
             len(v.get("extracts", {})) for v in existing.values()
         )
@@ -461,39 +628,56 @@ def main():
     if needs_translation:
         print(f"\nPhase 2: Translating {len(needs_translation)} species...")
         pbar = tqdm(total=len(needs_translation), desc="Translate", unit="sp")
+        pending_saves = 0
 
-        for i in range(0, len(needs_translation), batch_size):
-            if is_shutting_down():
-                break
-            batch = needs_translation[i:i + batch_size]
-
-            # For this batch, find the union of missing locales
-            batch_missing: set[str] = set()
-            for sci, _ in batch:
-                wp_ext = wiki[sci].get("extracts", {})
-                cl_ext = existing.get(sci, {}).get("extracts", {})
-                for l in target_non_en:
-                    if not wp_ext.get(l) and not cl_ext.get(l):
-                        batch_missing.add(l)
-
+        def _translate_batch(missing_locales: tuple[str, ...], batch: list[tuple[str, str]]):
             results = translate_extracts(
-                batch, sorted(batch_missing), max_tokens=max_tokens,
+                batch,
+                list(missing_locales),
+                max_source_chars=max_source_chars,
+                max_tokens=max_tokens,
             )
+            return missing_locales, batch, results
 
-            for sci, trans in results.items():
-                entry = existing.setdefault(sci, {})
-                entry_extracts = entry.setdefault("extracts", {})
-                # Only store locales actually missing for this species
-                wp_ext = wiki.get(sci, {}).get("extracts", {})
-                for loc, text in trans.items():
-                    if not wp_ext.get(loc) and not entry_extracts.get(loc):
-                        entry_extracts[loc] = text
+        max_workers = max(1, args.workers)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(_translate_batch, missing_locales, batch): (missing_locales, batch)
+                for missing_locales, batch in translation_batches
+            }
+            for future in as_completed(futures):
+                if is_shutting_down():
+                    break
+                missing_locales, batch = futures[future]
+                try:
+                    _, _, results = future.result()
+                except Exception as exc:
+                    tqdm.write(
+                        f"  Claude translation batch failed for locales "
+                        f"{','.join(missing_locales)}: {exc}"
+                    )
+                    pbar.update(len(batch))
+                    continue
 
-            pbar.update(len(batch))
-            save_json(existing, OUTPUT_FILE)
-            time.sleep(delay)
+                batch_updates: dict[str, dict[str, str]] = {}
+
+                for sci, trans in results.items():
+                    wp_ext = wiki.get(sci, {}).get("extracts", {})
+                    for loc, text in trans.items():
+                        current = existing.get(sci, {}).get("extracts", {})
+                        if not wp_ext.get(loc) and not current.get(loc):
+                            batch_updates.setdefault(sci, {})[loc] = text
+
+                _merge_updates(existing, batch_updates)
+                _append_journal(batch_updates)
+
+                pbar.update(len(batch))
+                pending_saves += 1
+                pending_saves = _save_if_needed(existing, pending_saves, save_every)
 
         pbar.close()
+        if pending_saves:
+            _checkpoint_state(existing)
     else:
         print("\nPhase 2: No translations needed")
 

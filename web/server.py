@@ -63,9 +63,11 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
         "license": "cc-by-sa",
     },
     "description_source": "wikipedia",
+    "claude_locales": ["pt"],
     "descriptions": {
         "en": "This large, familiar duck inhabits diverse aquatic environments...",
         "de": "Diese große, bekannte Ente bewohnt vielfältige Gewässer...",
+        "pt": "Este pato grande e familiar habita diversos ambientes aquáticos...",
     },
     "wikipedia_urls": {
         "en": "https://en.wikipedia.org/wiki/Mallard",
@@ -111,6 +113,11 @@ class SpeciesRecord(BaseModel):
         }],
     )
     description_source: Optional[str] = Field(None, examples=["wikipedia"])
+    claude_locales: Optional[list[str]] = Field(
+        None,
+        description="Locales whose description text is provided by Claude rather than the base source",
+        examples=[["pt"]],
+    )
     descriptions: Optional[dict[str, str]] = Field(None, examples=[{"en": "A large, familiar duck...", "de": "Eine große, bekannte Ente..."}])
     wikipedia_urls: Optional[dict[str, str]] = Field(None, examples=[{"en": "https://en.wikipedia.org/wiki/Mallard", "de": "https://de.wikipedia.org/wiki/Stockente"}])
     common_names: Optional[dict[str, str]] = Field(None, examples=[{"en": "Mallard", "de": "Stockente", "fr": "Canard colvert"}])

@@ -18,15 +18,15 @@ taxon_groups:
   - name: Insecta
     taxon_id: 47158
     sounds_only: true
-    min_observations: 10
+    min_observations: 1
   - name: Reptilia
     taxon_id: 26036
     sounds_only: true
-    min_observations: 10
+    min_observations: 1
   - name: Amphibia
     taxon_id: 20978
     sounds_only: true
-    min_observations: 10
+    min_observations: 1
 
 # iNaturalist API settings
 inat:
@@ -89,11 +89,15 @@ claude:
     - zh         # Chinese
     - ru         # Russian
     - ar         # Arabic
-  batch_size: 5           # species per API call
+  batch_size: 12          # max species per API call (char budget may reduce this)
+  translate_workers: 4    # parallel translation workers
+  save_every: 10          # save claude_data.json every N completed batches
+  source_char_budget: 12000  # approx source chars per API call
+  max_source_chars: 3000     # per-species source truncation for translation
   max_tokens: 16384       # max output tokens per API call
   max_extract_words: 500  # shorten extracts longer than this
   target_words: 150       # target length for shortened extracts
-  request_delay: 0.5
+  request_delay: 0.5      # minimum seconds between Claude request starts
 
 # Image settings (served via /api/image endpoint)
 images:

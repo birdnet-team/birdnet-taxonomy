@@ -91,13 +91,14 @@ Downloads the AviList Global Avian Checklist (XLSX), converts to CSV. Provides a
 
 Paginates the iNat taxa API to fetch all species for each taxon group. For birds, fetches all species. For other groups, queries the iNat sounds API to find species with audio observations meeting the `min_observations` threshold. Collects taxonomy, common names (all locales when `all_names: true`), observation counts, default photos, and Wikipedia URLs.
 
-After group fetching, runs an **observation photo fallback** phase: for any species whose default taxon photo is missing or not CC-licensed, queries the iNat observations API for a CC-licensed photo from a research-grade observation (sorted by community votes). The result is stored in the `obs_photo` field.
+After group fetching, runs an **observation photo fallback** phase: for any species whose default taxon photo is missing or not CC-licensed, queries the iNat observations API for a CC-licensed photo from a research-grade observation (sorted by community votes). The result is stored in the `obs_photo` field, and unsuccessful lookups are cached in `inat_data.json` so later runs do not repeat the same slow checks.
 
 ```bash
 python -m collectors.inat                   # fetch all groups + obs photos
 python -m collectors.inat --group Aves      # fetch only birds
 python -m collectors.inat --obs-photos-only # only run observation photo fallback
 python -m collectors.inat --skip-obs-photos # skip observation photo fallback
+python -m collectors.inat --refresh-obs-photos # recheck species cached as no obs photo
 python -m collectors.inat --limit 100       # cap new species per group
 python -m collectors.inat --dry-run         # preview without fetching
 ```
@@ -164,13 +165,17 @@ Uses the Claude API (Sonnet 4) for two tasks on existing Wikipedia extracts — 
 
 Claude's output is stored separately in `claude_data.json` and overlaid on top of Wikipedia extracts during the build step. Claude only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
 
+Translation batches are grouped by the exact set of missing locales for each species, then packed by source-text size. This keeps prompts smaller and makes parallel API calls practical on large repair runs.
+
 **Claude locales:** en, de, fr, es, pt, it, nl, zh, ru, ar (subset of Wikipedia locales)
 
 ```bash
 python -m collectors.claude                   # run both phases
 python -m collectors.claude --shorten-only    # only shorten long extracts
 python -m collectors.claude --translate-only  # only translate missing locales
-python -m collectors.claude --batch-size 3    # species per API call
+python -m collectors.claude --batch-size 12   # max species per API call
+python -m collectors.claude --workers 4       # parallel translation workers
+python -m collectors.claude --char-budget 12000  # source chars per API call
 python -m collectors.claude --limit 50        # cap total work items
 python -m collectors.claude --dry-run         # preview without API calls
 ```

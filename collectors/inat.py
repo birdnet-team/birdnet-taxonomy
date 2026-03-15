@@ -37,7 +37,7 @@ from urllib.error import HTTPError, URLError
 from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
-    load_json, save_json,
+    is_full_species_name, load_json, save_json,
 )
 
 OUTPUT_FILE = RAW_DIR / "inat_data.json"
@@ -159,9 +159,12 @@ def fetch_sound_species(taxon_id: int, min_obs: int,
                 break
 
             taxon = r.get("taxon", {})
+            sci_name = taxon.get("name", "")
+            if not is_full_species_name(sci_name):
+                continue
             species.append({
                 "id": taxon.get("id"),
-                "name": taxon.get("name", ""),
+                "name": sci_name,
                 "sound_count": sound_count,
                 "observations_count": taxon.get("observations_count", 0),
             })
@@ -675,7 +678,12 @@ def reconcile_avilist(existing: dict, cfg: dict, delay: float,
             # Use the AviList name if the iNat name matches one of our targets
             if tid in batch_names:
                 sci_name = batch_names[tid]
-            if not sci_name or sci_name in existing:
+            if (
+                not sci_name
+                or sci_name in existing
+                or result.get("rank") != "species"
+                or not is_full_species_name(sci_name)
+            ):
                 continue
 
             record = extract_record(result, "Aves", sound_count=0)
@@ -708,6 +716,26 @@ ACCEPTABLE_INAT_LICENSES = {
 }
 
 INAT_OBS_URL = "https://api.inaturalist.org/v1/observations"
+OBS_PHOTO_LOOKUP_KEY = "obs_photo_lookup"
+
+
+def _obs_photo_lookup_state(record: dict) -> dict:
+    """Return persisted observation-photo lookup state for a species."""
+    state = record.get(OBS_PHOTO_LOOKUP_KEY)
+    return state if isinstance(state, dict) else {}
+
+
+def _obs_photo_checked(record: dict) -> bool:
+    """Return True if observation-photo fallback was already attempted."""
+    return bool(_obs_photo_lookup_state(record).get("checked_at"))
+
+
+def _mark_obs_photo_lookup(record: dict, status: str):
+    """Persist the outcome of an observation-photo lookup attempt."""
+    record[OBS_PHOTO_LOOKUP_KEY] = {
+        "status": status,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _fetch_obs_photo(inat_id: int, delay: float) -> dict | None:
@@ -745,7 +773,8 @@ def _fetch_obs_photo(inat_id: int, delay: float) -> dict | None:
 
 
 def fetch_obs_photos(existing: dict, delay: float,
-                     limit: int = 0) -> int:
+                     limit: int = 0,
+                     refresh: bool = False) -> int:
     """Find CC-licensed observation photos for species without one.
 
     Checks species whose default taxon photo is missing or not CC-licensed.
@@ -757,18 +786,24 @@ def fetch_obs_photos(existing: dict, delay: float,
     print("Observation photo fallback")
 
     need_photo = []
+    already_checked = 0
     for sci, rec in existing.items():
         inat_id = rec.get("inat_id")
         if not inat_id:
             continue
         if rec.get("obs_photo"):
             continue  # already have one
+        if not refresh and _obs_photo_checked(rec):
+            already_checked += 1
+            continue
         img_lic = rec.get("image_license", "")
         if rec.get("image_url") and img_lic in ACCEPTABLE_INAT_LICENSES:
             continue  # default taxon photo is CC
         need_photo.append((sci, inat_id))
 
     print(f"  Species needing observation photo lookup: {len(need_photo)}")
+    if already_checked:
+        print(f"  Skipping {already_checked} species already checked earlier")
 
     if not need_photo:
         print("  Nothing to do!")
@@ -786,7 +821,10 @@ def fetch_obs_photos(existing: dict, delay: float,
         result = _fetch_obs_photo(inat_id, delay)
         if result and result.get("url"):
             existing[sci]["obs_photo"] = result
+            _mark_obs_photo_lookup(existing[sci], "found")
             found += 1
+        else:
+            _mark_obs_photo_lookup(existing[sci], "not_found")
 
         if (i + 1) % 25 == 0:
             print(f"  {i + 1}/{len(need_photo)} checked, {found} found")
@@ -844,6 +882,10 @@ def main():
     parser.add_argument(
         "--skip-obs-photos", action="store_true",
         help="Skip observation photo fallback phase"
+    )
+    parser.add_argument(
+        "--refresh-obs-photos", action="store_true",
+        help="Ignore cached observation photo lookup results and recheck species"
     )
     args = parser.parse_args()
 
@@ -928,6 +970,7 @@ def main():
             existing,
             delay=inat_cfg.get("request_delay", 1.1),
             limit=args.limit,
+            refresh=args.refresh_obs_photos,
         )
 
     # Final stats

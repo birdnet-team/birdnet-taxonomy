@@ -12,6 +12,7 @@ Provides common infrastructure used by all collectors and build steps:
 import hashlib
 import json
 import os
+import re
 import signal
 import threading
 import time
@@ -100,6 +101,14 @@ def save_json(data, path: Path):
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+
+
+_FULL_SPECIES_NAME_RE = re.compile(r"^[A-Z][A-Za-z.-]+ [a-z][A-Za-z.-]+$")
+
+
+def is_full_species_name(name: str) -> bool:
+    """Return True for canonical binomial species names only."""
+    return bool(_FULL_SPECIES_NAME_RE.match((name or "").strip()))
 
 
 # ---------------------------------------------------------------------------

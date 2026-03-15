@@ -39,7 +39,7 @@ from tqdm import tqdm
 from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
-    RateLimiter, load_json, save_json,
+    RateLimiter, is_full_species_name, load_json, save_json,
 )
 
 INAT_DATA = RAW_DIR / "inat_data.json"
@@ -138,6 +138,8 @@ def load_species_with_wikipedia() -> dict[str, str]:
     species = {}
     for sci_name, record in inat_data.items():
         if record.get("inat_id") is None:
+            continue
+        if not is_full_species_name(sci_name):
             continue
         wiki_url = (record.get("wikipedia_url") or "").strip()
         if wiki_url:

@@ -39,7 +39,7 @@ from collections import Counter
 from pathlib import Path
 
 from config import load_config
-from collectors._common import ROOT, RAW_DIR, load_json, save_json
+from collectors._common import ROOT, RAW_DIR, is_full_species_name, load_json, save_json
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -200,11 +200,14 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
 
     matched_sci = set()
     stats = {"direct": 0, "common_name": 0, "wikidata": 0, "inat_only": 0,
-             "avilist_only": 0, "non_bird": 0}
+             "avilist_only": 0, "non_bird": 0, "excluded_non_species": 0}
 
     # Pass 1: Process all iNat species
     for sci_name, rec in inat.items():
         if rec.get("inat_id") is None:
+            continue
+        if not is_full_species_name(sci_name):
+            stats["excluded_non_species"] += 1
             continue
 
         is_bird = rec.get("taxon_group") == "Aves"
@@ -431,6 +434,8 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     print(f"    Match rate:       {matched_birds}/{inat_birds} "
           f"iNat birds ({100 * matched_birds / max(1, inat_birds):.1f}%)")
     print(f"  Non-birds:     {stats['non_bird']}")
+    if stats.get("excluded_non_species"):
+        print(f"  Excluded:      {stats['excluded_non_species']} non-species iNat taxa")
 
     # Wikidata identifiers
     wd_ids = stats.get("wikidata_ids", {})
@@ -493,6 +498,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         claude = {}
 
     for sci_name, tax in taxonomy.items():
+        if not is_full_species_name(sci_name):
+            continue
         wp = wiki.get(sci_name, {})
         eb = ebird.get(sci_name, {})
         cl = claude.get(sci_name, {})
@@ -509,11 +516,9 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         if wp.get("extract"):
             descriptions["en"] = wp["extract"]
             description_source = "wikipedia"
-            desc_sources["wikipedia"] += 1
         elif wp_extracts:
             # No English extract but locale extracts exist
             description_source = "wikipedia"
-            desc_sources["wikipedia"] += 1
 
         if description_source == "wikipedia":
             for loc, text in wp_extracts.items():
@@ -527,9 +532,6 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             if eb.get("description"):
                 descriptions["en"] = eb["description"]
                 description_source = "ebird"
-                desc_sources["ebird"] += 1
-            else:
-                desc_sources["none"] += 1
 
         # Claude overlay — replace only the locales Claude provides
         claude_locales: list[str] = []
@@ -539,6 +541,11 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                 descriptions[loc] = text
                 claude_locales.append(loc)
 
+        if descriptions.get("en") and "en" in cl_extracts and cl_extracts["en"]:
+            description_source = "claude"
+
+        desc_sources[description_source or "none"] += 1
+
         record = {
             "scientific_name": sci_name,
             "common_name": tax.get("preferred_common_name", ""),
@@ -546,7 +553,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "common_names": tax.get("common_names", {}),
             "descriptions": descriptions,
             "description_source": description_source,
-            "claude_locales": claude_locales,
+            "claude_locales": sorted(claude_locales),
             "wikipedia_urls": wikipedia_urls,
             "image_url": tax.get("image_url", ""),
             "image_author": tax.get("image_author", ""),

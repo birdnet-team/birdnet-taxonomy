@@ -30,7 +30,7 @@ import urllib.request
 
 from config import load_config
 from collectors._common import (
-    RAW_DIR, USER_AGENT, load_json, save_json,
+    RAW_DIR, USER_AGENT, is_full_species_name, load_json, save_json,
     cache_key, cache_get, cache_put,
 )
 
@@ -389,7 +389,7 @@ def _load_species_list(cfg: dict) -> dict[str, int | None]:
         inat = load_json(INAT_FILE)
         for sci, rec in inat.items():
             inat_id = rec.get("inat_id")
-            if inat_id is not None:
+            if inat_id is not None and is_full_species_name(sci):
                 species[sci] = inat_id
 
     # From AviList CSV (adds species not in iNat)
