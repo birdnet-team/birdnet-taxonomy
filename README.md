@@ -20,6 +20,16 @@ For Claude translations and shortening, add your API key to a `.env` file:
 ANTHROPIC_API_KEY=...
 ```
 
+For sub-path deployment behind a reverse proxy (e.g. `https://example.com/taxonomy/`),
+add the URL prefix:
+
+```
+ROOT_PATH=/taxonomy
+```
+
+The web app will then generate links under that prefix and accepts deployments where
+the reverse proxy either preserves the prefix or strips it before forwarding.
+
 ## Project Structure
 
 ```
@@ -199,9 +209,9 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 4. Collects common names from eBird (62 locales) and Wikidata labels
 5. Selects the best image for each species through a priority chain:
    - **iNaturalist taxon photo** — default photo if CC-licensed
-   - **iNaturalist observation photo** — CC-licensed photo from research-grade observations (all species)
    - **Macaulay Library** — eBird image (source tagged as "Macaulay Library ML{asset_id}")
    - **Wikimedia Commons** — Wikidata P18 image if CC/PD/GFDL licensed
+   - **iNaturalist observation photo** — CC-licensed photo from research-grade observations (last resort)
 
 **Merge phase:**
 Assembles per-species descriptions from multiple sources with the following priority:

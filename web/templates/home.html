@@ -3,7 +3,7 @@
 {% block title %}Browse Species — BirdNET{% endblock %}
 
 {% block content %}
-<form class="search-bar" method="get" action="/">
+<form class="search-bar" method="get" action="{{ base }}/">
     <input type="text" name="q" value="{{ query }}" placeholder="Search by scientific or common name..." autofocus>
     <select name="group">
         <option value="">All groups</option>
@@ -40,9 +40,9 @@
 <div class="species-grid">
     {% for s in species %}
     <div class="species-card">
-        <a href="/species/{{ s.scientific_name }}">
+        <a href="{{ base }}/species/{{ quote_path(s.scientific_name) }}">
             {% set display_name = s.common_names.get(lang, s.common_name) if lang and s.common_names else s.common_name %}
-            <img src="/api/image/{{ s.scientific_name }}?size=medium" alt="{{ display_name or s.scientific_name }}" loading="lazy">
+            <img src="{{ base }}/api/image/{{ quote_path(s.scientific_name) }}?size=medium" alt="{{ display_name or s.scientific_name }}" loading="lazy">
             <div class="card-body">
                 {% if display_name %}
                 <div class="common-name">{{ display_name }}</div>
@@ -63,19 +63,19 @@
 {% if total_pages > 1 %}
 <div class="pagination">
     {% if page > 1 %}
-    <a href="?q={{ query }}&group={{ group }}&lang={{ lang }}&sort={{ sort }}&page={{ page - 1 }}">&laquo; Prev</a>
+    <a href="{{ base }}/?q={{ query }}&group={{ group }}&lang={{ lang }}&sort={{ sort }}&page={{ page - 1 }}">&laquo; Prev</a>
     {% endif %}
     {% for p in range(1, total_pages + 1) %}
         {% if p == page %}
         <span class="active">{{ p }}</span>
         {% elif p <= 3 or p > total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
-        <a href="?q={{ query }}&group={{ group }}&lang={{ lang }}&sort={{ sort }}&page={{ p }}">{{ p }}</a>
+        <a href="{{ base }}/?q={{ query }}&group={{ group }}&lang={{ lang }}&sort={{ sort }}&page={{ p }}">{{ p }}</a>
         {% elif p == 4 or p == total_pages - 2 %}
         <span>&hellip;</span>
         {% endif %}
     {% endfor %}
     {% if page < total_pages %}
-    <a href="?q={{ query }}&group={{ group }}&lang={{ lang }}&sort={{ sort }}&page={{ page + 1 }}">Next &raquo;</a>
+    <a href="{{ base }}/?q={{ query }}&group={{ group }}&lang={{ lang }}&sort={{ sort }}&page={{ page + 1 }}">Next &raquo;</a>
     {% endif %}
 </div>
 {% endif %}

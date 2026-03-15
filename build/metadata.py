@@ -333,13 +333,13 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
     stats["wikidata_labels"] = wd_label_counts
 
     # Pass 6: Default image selection
-    # Priority: iNat taxon → iNat observation → eBird → Wikimedia Commons
-    img_stats = {"inat": 0, "inat_obs": 0, "ebird": 0, "wikimedia": 0,
+    # Priority: iNat taxon (licensed) → eBird → Wikimedia → iNat observation
+    img_stats = {"inat": 0, "ebird": 0, "wikimedia": 0, "inat_obs": 0,
                  "none": 0}
 
     print("\n  Selecting default images...")
 
-    # 6a: iNat taxon photo (CC-licensed)
+    # 6a: iNat taxon photo — only if CC-licensed
     for sci, entry in taxonomy.items():
         inat_rec = inat.get(sci, {})
         url = inat_rec.get("image_url", "")
@@ -352,21 +352,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             entry["image_source"] = "iNaturalist"
             img_stats["inat"] += 1
 
-    # 6b: iNat observation photo fallback (all species)
-    for sci, entry in taxonomy.items():
-        if entry["image_url"]:
-            continue
-        inat_rec = inat.get(sci, {})
-        obs_photo = inat_rec.get("obs_photo")
-        if obs_photo and obs_photo.get("url"):
-            entry["image_url"] = obs_photo["url"]
-            entry["image_author"] = _parse_image_author(
-                obs_photo.get("attribution", ""), "inat")
-            entry["image_license"] = obs_photo.get("license", "")
-            entry["image_source"] = "iNaturalist"
-            img_stats["inat_obs"] += 1
-
-    # 6c: eBird / Macaulay Library
+    # 6b: eBird / Macaulay Library
     ebird_imgs = load_ebird_images()
     if ebird_imgs:
         for sci, entry in taxonomy.items():
@@ -383,7 +369,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 entry["image_source"] = f"Macaulay Library ML{asset_id}"
                 img_stats["ebird"] += 1
 
-    # 6d: Wikimedia Commons (from wikidata_data.json)
+    # 6c: Wikimedia Commons (from wikidata_data.json)
     for sci, entry in taxonomy.items():
         if entry["image_url"]:
             continue
@@ -395,6 +381,20 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             entry["image_license"] = wd_img.get("license", "")
             entry["image_source"] = "Wikimedia"
             img_stats["wikimedia"] += 1
+
+    # 6d: iNat observation photo (CC-licensed fallback from observations API)
+    for sci, entry in taxonomy.items():
+        if entry["image_url"]:
+            continue
+        inat_rec = inat.get(sci, {})
+        obs_photo = inat_rec.get("obs_photo")
+        if obs_photo and obs_photo.get("url"):
+            entry["image_url"] = obs_photo["url"]
+            entry["image_author"] = _parse_image_author(
+                obs_photo.get("attribution", ""), "inat")
+            entry["image_license"] = obs_photo.get("license", "")
+            entry["image_source"] = "iNaturalist"
+            img_stats["inat_obs"] += 1
 
     img_stats["none"] = sum(1 for e in taxonomy.values() if not e["image_url"])
     stats["images"] = img_stats
@@ -461,13 +461,13 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
 
     # Images
     img = stats.get("images", {})
-    total_with_img = (img.get("inat", 0) + img.get("inat_obs", 0)
-                      + img.get("ebird", 0) + img.get("wikimedia", 0))
+    total_with_img = (img.get("inat", 0) + img.get("ebird", 0)
+                      + img.get("wikimedia", 0) + img.get("inat_obs", 0))
     print(f"\n  Default images ({total_with_img}/{total} species):")
     print(f"    iNat (taxon photo):    {img.get('inat', 0)}")
-    print(f"    iNat (observation):    {img.get('inat_obs', 0)}")
     print(f"    eBird:                 {img.get('ebird', 0)}")
     print(f"    Wikimedia Commons:     {img.get('wikimedia', 0)}")
+    print(f"    iNat (observation):    {img.get('inat_obs', 0)}")
     print(f"    No image:              {img.get('none', 0)}")
 
 

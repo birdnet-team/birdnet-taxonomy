@@ -207,7 +207,7 @@
 {% endblock %}
 
 {% block content %}
-<p style="margin-bottom: 1rem;"><a href="/" id="backLink">&larr; Back to browse</a></p>
+<p style="margin-bottom: 1rem;"><a href="{{ base }}/" id="backLink">&larr; Back to browse</a></p>
 <script>{
     const u = sessionStorage.getItem('browseUrl');
     if (u) document.getElementById('backLink').href = u;
@@ -215,7 +215,7 @@
 
 <div class="species-header">
     <div class="species-photo">
-        <img src="/api/image/{{ s.scientific_name }}?size=medium" alt="{{ s.common_name or s.scientific_name }}">
+        <img src="{{ base }}/api/image/{{ quote_path(s.scientific_name) }}?size=medium" alt="{{ s.common_name or s.scientific_name }}">
         {% if s.image_author %}
         <div class="attribution">{{ s.image_author }}{% if s.image_license %} ({{ s.image_license }}){% endif %}</div>
         {% endif %}
@@ -248,7 +248,7 @@
 <div class="json-overlay" id="jsonOverlay" onclick="if(event.target===this)hideJson()">
     <div class="json-modal">
         <div class="json-modal-header">
-            <span>/api/species/{{ s.scientific_name }}</span>
+            <span>{{ base }}/api/species/{{ quote_path(s.scientific_name) }}</span>
             <button onclick="hideJson()">&times;</button>
         </div>
         <div class="json-modal-body">
@@ -351,7 +351,7 @@ function showJson() {
     document.getElementById('jsonOverlay').classList.add('active');
     document.body.style.overflow = 'hidden';
     if (!jsonLoaded) {
-        fetch('/api/species/{{ s.scientific_name }}')
+        fetch('{{ base }}/api/species/{{ quote_path(s.scientific_name) }}')
             .then(r => r.json())
             .then(data => {
                 const pretty = JSON.stringify(data, null, 2);

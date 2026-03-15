@@ -21,19 +21,20 @@ import argparse
 import csv
 import io
 import json
+import os
 import re
 import unicodedata
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
 from pydantic import BaseModel, Field, field_validator
 from utils.images import ImageSize, image_filename, save_species_image
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config import load_config
@@ -169,6 +170,36 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
+
+def _load_root_path() -> str:
+    """Load and normalize the deployment URL prefix from .env or env vars."""
+    root_path = ""
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith("ROOT_PATH="):
+                root_path = line.split("=", 1)[1].strip().strip("\"'")
+                break
+    if not root_path:
+        root_path = os.environ.get("ROOT_PATH", "").strip().strip("\"'")
+    if not root_path or root_path == "/":
+        return ""
+    return "/" + root_path.strip("/")
+
+
+def _with_root_path(path: str) -> str:
+    """Prefix a local path with the configured deployment root."""
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{_root_path}{path}" if _root_path else path
+
+
+def _quote_path(value: Any) -> str:
+    """Quote a path segment for safe inclusion in URLs."""
+    return quote(str(value), safe="")
+
+
+_root_path = _load_root_path()
 
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"
 
@@ -342,6 +373,7 @@ async def lifespan(application: FastAPI):
     if not _species_list:
         load_data()
     _init_image_config(dev=_dev_mode)
+    templates.env.globals["quote_path"] = _quote_path
     yield
 
 
@@ -350,10 +382,65 @@ app = FastAPI(
     description="Browse and query species metadata for BirdNET models.",
     version="1.0.0",
     lifespan=lifespan,
+    root_path=_root_path,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.middleware("http")
+async def normalize_root_path(request: FRequest, call_next):
+    """Support proxies that either strip or preserve the configured prefix."""
+    if _root_path:
+        path = request.scope.get("path", "")
+        prefix = _root_path
+        if path == prefix or path.startswith(f"{prefix}/"):
+            request.scope["root_path"] = prefix
+            stripped = path[len(prefix):] or "/"
+            request.scope["path"] = stripped
+            raw_path = request.scope.get("raw_path")
+            if raw_path:
+                prefix_bytes = prefix.encode("utf-8")
+                if raw_path == prefix_bytes or raw_path.startswith(prefix_bytes + b"/"):
+                    request.scope["raw_path"] = raw_path[len(prefix_bytes):] or b"/"
+    return await call_next(request)
+
+
+def _template_context(request: FRequest, **context: Any) -> dict[str, Any]:
+    """Inject common template values that must respect the deployment prefix."""
+    return {
+        "request": request,
+        "base": request.scope.get("root_path") or _root_path,
+        **context,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Static files
+# ---------------------------------------------------------------------------
+
+@app.get("/static/{file_path:path}", include_in_schema=False)
+async def static_file(file_path: str):
+    """Serve static files."""
+    safe = Path(file_path).name
+    local = STATIC_DIR / safe
+    if not local.exists() or not local.is_file():
+        raise HTTPException(404, "Not found")
+    suffix = local.suffix.lower()
+    media = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml", ".ico": "image/x-icon",
+        ".css": "text/css", ".js": "application/javascript",
+        ".webp": "image/webp",
+    }.get(suffix, "application/octet-stream")
+    return Response(
+        content=local.read_bytes(),
+        media_type=media,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -468,20 +555,20 @@ async def home(request: FRequest, q: str = "", group: str = "",
 
     groups = sorted(set(r.get("taxon_group", "") for r in _species_list if r.get("taxon_group")))
 
-    return templates.TemplateResponse("home.html", {
-        "request": request,
-        "species": page_results,
-        "query": q,
-        "group": group,
-        "lang": lang,
-        "sort": sort,
-        "locales": _all_locales,
-        "groups": groups,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "total_pages": total_pages,
-    })
+    return templates.TemplateResponse("home.html", _template_context(
+        request,
+        species=page_results,
+        query=q,
+        group=group,
+        lang=lang,
+        sort=sort,
+        locales=_all_locales,
+        groups=groups,
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    ))
 
 
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
@@ -495,12 +582,15 @@ async def species_page(request: FRequest, scientific_name: str):
     # Redirect to canonical URL if accessed via alias
     canonical = rec.get("scientific_name", "")
     if canonical and scientific_name != canonical:
-        return RedirectResponse(url=f"/species/{canonical}", status_code=302)
+        return RedirectResponse(
+            url=_with_root_path(f"/species/{_quote_path(canonical)}"),
+            status_code=302,
+        )
 
-    return templates.TemplateResponse("species.html", {
-        "request": request,
-        "s": rec,
-    })
+    return templates.TemplateResponse("species.html", _template_context(
+        request,
+        s=rec,
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -545,8 +635,8 @@ def _api_record(record: dict) -> dict:
 
     if url and sci:
         img: dict[str, str] = {
-            "thumb": f"/api/image/{sci}?size=thumb",
-            "medium": f"/api/image/{sci}?size=medium",
+            "thumb": _with_root_path(f"/api/image/{_quote_path(sci)}?size=thumb"),
+            "medium": _with_root_path(f"/api/image/{_quote_path(sci)}?size=medium"),
         }
         if source:
             img["source"] = source

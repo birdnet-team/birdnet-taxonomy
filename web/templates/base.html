@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}BirdNET Species Metadata{% endblock %}</title>
-    <link rel="icon" type="image/png" href="/static/logo.png">
+    <link rel="icon" type="image/png" href="{{ base }}/static/logo.png">
     <style>
         :root {
             --bg: #f8f9fa;
@@ -173,12 +173,12 @@
 <body>
     <header>
         <div class="container">
-            <a href="/"><img class="logo" src="/static/logo.png" alt="BirdNET"></a>
-            <h1><a href="/">BirdNET Species Metadata</a></h1>
+            <a href="{{ base }}/"><img class="logo" src="{{ base }}/static/logo.png" alt="BirdNET"></a>
+            <h1><a href="{{ base }}/">BirdNET Species Metadata</a></h1>
             <nav>
-                <a href="/">Browse</a>
-                <a href="/docs">API Docs</a>
-                <a href="/redoc">ReDoc</a>
+                <a href="{{ base }}/">Browse</a>
+                <a href="{{ base }}/docs">API Docs</a>
+                <a href="{{ base }}/redoc">ReDoc</a>
             </nav>
         </div>
     </header>
@@ -188,7 +188,7 @@
     <footer>
         <div class="container">
             BirdNET Species Metadata &middot;
-            <a href="/docs">REST API</a> &middot;
+            <a href="{{ base }}/docs">REST API</a> &middot;
             <a href="https://github.com/birdnet-team/species-data">GitHub</a>
         </div>
     </footer>
