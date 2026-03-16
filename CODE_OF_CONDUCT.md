@@ -1,16 +1,20 @@
 # Code of Conduct
 
+This Code of Conduct is adapted from the Contributor Covenant, version 2.1:
+https://www.contributor-covenant.org/version/2/1/code_of_conduct/
+
 This project expects respectful, constructive collaboration.
 
-## Expected Behavior
+## Our Standards
 
 - be respectful in language and tone
 - assume good intent and discuss disagreements technically
 - keep feedback specific, actionable, and relevant to the work
 - welcome contributors with different backgrounds and experience levels
 - focus on improving the project, not scoring points
+- show empathy toward other community members
 
-## Unacceptable Behavior
+Examples of unacceptable behavior include:
 
 - harassment, threats, or intimidation
 - personal attacks, insults, or derogatory language
@@ -18,16 +22,22 @@ This project expects respectful, constructive collaboration.
 - deliberate disruption of discussions or review processes
 - sharing private information without permission
 
-## Maintainer Responsibilities
+## Enforcement Responsibilities
 
-Project maintainers may edit, remove, or reject contributions and comments that do not meet these standards.
+Project maintainers are responsible for clarifying and enforcing these standards.
 
 Maintainers may also pause or end discussions that are no longer constructive.
+
+Maintainers may edit, remove, or reject contributions, comments, or other interactions that do not meet these standards.
+
+## Scope
+
+This Code of Conduct applies to repository discussions, issues, pull requests, code review, and other project communication channels.
 
 ## Reporting
 
 If you experience or witness a serious problem, open a private channel with the maintainers rather than escalating publicly in issue or pull request threads.
 
-## Scope
+## Enforcement
 
-This code of conduct applies to repository discussions, issues, pull requests, and review interactions related to this project.
+Maintainers may take any action they consider appropriate in response to unacceptable behavior, including warning, temporary restriction, or removal from project spaces.
