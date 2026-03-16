@@ -3,6 +3,9 @@
 # Central configuration for all scripts. Edit this file to change
 # locales, taxon groups, API settings, etc.
 
+taxonomy:
+  version: "v0.1"
+
 # iNaturalist iconic taxon groups to fetch.
 # sounds_only: if true, only fetch species with sound observations on iNat.
 #   min_observations then refers to minimum sound observation count.

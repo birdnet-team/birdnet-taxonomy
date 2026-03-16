@@ -38,6 +38,11 @@ def get_taxon_groups() -> list[dict]:
     return load_config()["taxon_groups"]
 
 
+def get_taxonomy_version() -> str:
+    """Shorthand: return the taxonomy version string."""
+    return str(load_config().get("taxonomy", {}).get("version", "")).strip()
+
+
 # Map locale codes to human-readable language names (used by Claude translations).
 LOCALE_NAMES = {
     "en": "English", "de": "German", "fr": "French", "es": "Spanish",

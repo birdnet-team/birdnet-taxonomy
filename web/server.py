@@ -37,7 +37,7 @@ from utils.images import ImageSize, save_species_image
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from config import load_config
+from config import get_taxonomy_version, load_config
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +45,7 @@ from config import load_config
 # ---------------------------------------------------------------------------
 
 _SPECIES_EXAMPLE: dict[str, Any] = {
+    "taxonomy_version": "v2025-11Jun",
     "scientific_name": "Anas platyrhynchos",
     "common_name": "Mallard",
     "taxon_group": "Aves",
@@ -82,9 +83,14 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
     },
 }
 
+_SPECIES_LIST_EXAMPLE: dict[str, Any] = {
+    k: v for k, v in _SPECIES_EXAMPLE.items() if k != "taxonomy_version"
+}
+
 
 class SpeciesRecord(BaseModel):
     """Full species metadata record."""
+    taxonomy_version: Optional[str] = Field(None, examples=["v2025-11Jun"])
     scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
     common_name: str = Field("", examples=["Mallard"])
     taxon_group: str = Field("", examples=["Aves"])
@@ -134,6 +140,7 @@ class SpeciesRecord(BaseModel):
 
 class PaginatedSpecies(BaseModel):
     """Paginated list of species records."""
+    taxonomy_version: str = Field(..., examples=["v2025-11Jun"])
     total: int = Field(..., examples=[13361])
     page: int = Field(..., examples=[1])
     per_page: int = Field(..., examples=[50])
@@ -142,10 +149,11 @@ class PaginatedSpecies(BaseModel):
     model_config = {
         "json_schema_extra": {
             "examples": [{
+                "taxonomy_version": "v2025-11Jun",
                 "total": 13361,
                 "page": 1,
                 "per_page": 2,
-                "results": [_SPECIES_EXAMPLE],
+                "results": [_SPECIES_LIST_EXAMPLE],
             }],
         },
     }
@@ -159,10 +167,11 @@ class SearchResponse(PaginatedSpecies):
         "json_schema_extra": {
             "examples": [{
                 "query": "mallard",
+                "taxonomy_version": "v2025-11Jun",
                 "total": 1,
                 "page": 1,
                 "per_page": 50,
-                "results": [_SPECIES_EXAMPLE],
+                "results": [_SPECIES_LIST_EXAMPLE],
             }],
         },
     }
@@ -170,6 +179,7 @@ class SearchResponse(PaginatedSpecies):
 
 class StatsResponse(BaseModel):
     """Dataset statistics."""
+    taxonomy_version: str = Field(..., examples=["v2025-11Jun"])
     total_species: int = Field(..., examples=[13361])
     groups: dict[str, int] = Field(..., examples=[{"Aves": 11157, "Mammalia": 1087, "Insecta": 566, "Amphibia": 540, "Reptilia": 11}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
@@ -228,6 +238,8 @@ def _quote_path(value: Any) -> str:
 
 _root_path = _load_root_path()
 _host_name = _load_host_name()
+_taxonomy_version = get_taxonomy_version()
+_site_title = f"BirdNET+ Taxonomy {_taxonomy_version}".strip()
 
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"
 
@@ -406,7 +418,7 @@ async def lifespan(application: FastAPI):
 
 
 app = FastAPI(
-    title="BirdNET Species Metadata API",
+    title=f"BirdNET Species Metadata API {_taxonomy_version}".strip(),
     description="Browse and query species metadata for BirdNET models.",
     version="1.0.0",
     lifespan=lifespan,
@@ -442,6 +454,8 @@ def _template_context(request: FRequest, **context: Any) -> dict[str, Any]:
     return {
         "request": request,
         "base": request.scope.get("root_path") or _root_path,
+        "taxonomy_version": _taxonomy_version,
+        "site_title": _site_title,
         **context,
     }
 
@@ -833,6 +847,7 @@ async def api_stats():
     from collections import Counter
     groups = Counter(r.get("taxon_group", "unknown") for r in _species_list)
     return {
+        "taxonomy_version": _taxonomy_version,
         "total_species": len(_species_list),
         "groups": dict(sorted(groups.items())),
         "locales": [code for code, _ in _all_locales],
@@ -900,6 +915,7 @@ async def api_search(
         )
 
     return {
+        "taxonomy_version": _taxonomy_version,
         "query": q,
         "total": total,
         "page": page,
@@ -948,6 +964,7 @@ async def api_species_list(
         )
 
     return {
+        "taxonomy_version": _taxonomy_version,
         "total": total,
         "page": page,
         "per_page": per_page,
@@ -968,7 +985,9 @@ async def api_species_detail(
     rec = _find_species(scientific_name)
     if not rec:
         raise HTTPException(status_code=404, detail="Species not found")
-    return _project(rec, fields, exclude, locale)
+    out = _project(rec, fields, exclude, locale)
+    out["taxonomy_version"] = _taxonomy_version
+    return out
 
 
 # ---------------------------------------------------------------------------
