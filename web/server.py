@@ -53,6 +53,8 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
     "observations_count": 829418,
     "inat_id": 6930,
     "ebird_code": "mallar3",
+    "ml_taxon_code": "mallar3",
+    "xc_name": "Anas platyrhynchos",
     "gbif_id": 9761484,
     "ncbi_id": 8839,
     "avibase_id": "Anas-platyrhynchos",
@@ -98,6 +100,8 @@ class SpeciesRecord(BaseModel):
     observations_count: Optional[int] = Field(None, examples=[829418])
     inat_id: Optional[int] = Field(None, examples=[6930])
     ebird_code: Optional[str] = Field(None, examples=["mallar3"])
+    ml_taxon_code: Optional[str] = Field(None, examples=["mallar3"])
+    xc_name: Optional[str] = Field(None, examples=["Anas platyrhynchos"])
     gbif_id: Optional[int] = Field(None, examples=[9761484])
     ncbi_id: Optional[int] = Field(None, examples=[8839])
     avibase_id: Optional[str] = Field(None, examples=["Anas-platyrhynchos"])
@@ -229,6 +233,8 @@ _species_list: list[dict] = []
 _species_by_name: dict[str, dict] = {}
 _species_by_common: dict[str, dict] = {}
 _species_by_ebird: dict[str, dict] = {}
+_species_by_ml_code: dict[str, dict] = {}
+_species_by_xc: dict[str, dict] = {}
 _species_by_inat_id: dict[int, dict] = {}
 _search_index: list[tuple[str, str, dict]] = []  # (lower_sci, lower_common, record)
 _all_locales: list[tuple[str, str]] = []  # (code, display_name) sorted
@@ -248,6 +254,14 @@ def _find_species(identifier: str) -> dict | None:
     rec = _species_by_ebird.get(identifier.lower())
     if rec:
         return rec
+    # ML taxon code (case-insensitive)
+    rec = _species_by_ml_code.get(identifier.lower())
+    if rec:
+        return rec
+    # XC scientific name (case-insensitive)
+    rec = _species_by_xc.get(identifier.lower())
+    if rec:
+        return rec
     # iNat taxon ID (numeric string)
     try:
         rec = _species_by_inat_id.get(int(identifier))
@@ -261,7 +275,7 @@ def _find_species(identifier: str) -> dict | None:
 def load_data(dev: bool = False):
     """Load species_metadata.json into memory."""
     global _species_list, _species_by_name, _species_by_common
-    global _species_by_ebird, _species_by_inat_id
+    global _species_by_ebird, _species_by_ml_code, _species_by_xc, _species_by_inat_id
     global _search_index, _all_locales
 
     for d in (["dev", "dist"] if dev else ["dist", "dev"]):
@@ -279,6 +293,8 @@ def load_data(dev: bool = False):
     _species_by_name = {}
     _species_by_common = {}
     _species_by_ebird = {}
+    _species_by_ml_code = {}
+    _species_by_xc = {}
     _species_by_inat_id = {}
     _search_index = []
 
@@ -298,6 +314,12 @@ def load_data(dev: bool = False):
         ebird_code = rec.get("ebird_code", "")
         if ebird_code:
             _species_by_ebird[ebird_code.lower()] = rec
+        ml_code = rec.get("ml_taxon_code", "")
+        if ml_code and ml_code != ebird_code:
+            _species_by_ml_code[ml_code.lower()] = rec
+        xc_name = rec.get("xc_name", "")
+        if xc_name and xc_name != sci:
+            _species_by_xc[xc_name.lower()] = rec
         inat_id = rec.get("inat_id")
         if inat_id:
             _species_by_inat_id[int(inat_id)] = rec

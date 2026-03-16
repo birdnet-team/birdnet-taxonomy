@@ -317,10 +317,16 @@
 </div>
 {% endif %}
 
-{% if s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id %}
+{% if s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name %}
 <div class="section">
     <h3>External Identifiers</h3>
     <table class="info-table">
+        {% if s.ml_taxon_code %}
+        <tr><td>Macaulay Library</td><td><a href="https://search.macaulaylibrary.org/catalog?taxonCode={{ s.ml_taxon_code }}&mediaType=audio" target="_blank">{{ s.ml_taxon_code }}</a></td></tr>
+        {% endif %}
+        {% if s.xc_name %}
+        <tr><td>Xeno-Canto</td><td><a href="https://xeno-canto.org/species/{{ s.xc_name | replace(' ', '-') }}" target="_blank">{{ s.xc_name }}</a></td></tr>
+        {% endif %}
         {% if s.gbif_id %}
         <tr><td>GBIF</td><td><a href="https://www.gbif.org/species/{{ s.gbif_id }}" target="_blank">{{ s.gbif_id }}</a></td></tr>
         {% endif %}
