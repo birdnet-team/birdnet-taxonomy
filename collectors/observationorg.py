@@ -21,6 +21,7 @@ import argparse
 import json
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tqdm import tqdm
 
@@ -43,8 +44,8 @@ GBIF_SYNONYMS_URL = "https://api.gbif.org/v1/species/{key}/synonyms"
 _OBS_USER_AGENT = ("Mozilla/5.0 (compatible; BirdNET/1.0; "
                    "+https://github.com/birdnet-team/species-data)")
 
-_rate = RateLimiter(3)  # be conservative — no documented rate limit
-_gbif_rate = RateLimiter(10)
+_rate = RateLimiter(10)   # no documented rate limit
+_gbif_rate = RateLimiter(20)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +163,10 @@ def main() -> None:
                         help="Max species to process (0 = all)")
     parser.add_argument("--group", type=str, default="",
                         help="Only process this taxon group (e.g. Aves)")
+    parser.add_argument("--workers", type=int, default=8,
+                        help="Parallel workers (default: 8)")
+    parser.add_argument("--save-every", type=int, default=200,
+                        help="Save every N completed species (default: 200)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be done without saving")
     parser.add_argument("--new-only", action="store_true",
@@ -213,15 +218,31 @@ def main() -> None:
     remaining = [(s, r) for s, r in to_process if s not in existing]
     if remaining:
         print(f"\n  Phase 1: Direct API search ({len(remaining)} species)...")
-        for sci, rec in tqdm(remaining, desc="  observation.org",
-                             disable=None):
-            if is_shutting_down():
-                break
-            obs_id = _obs_lookup(sci)
-            if obs_id is not None:
-                existing[sci] = {"observationorg_id": obs_id}
-                phase1_hits += 1
-            # Don't mark as None yet — GBIF phase may resolve it
+        unsaved = 0
+        pbar = tqdm(total=len(remaining), desc="  observation.org",
+                    disable=None)
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {}
+            for sci, rec in remaining:
+                if is_shutting_down():
+                    break
+                futures[pool.submit(_obs_lookup, sci)] = sci
+
+            for future in as_completed(futures):
+                sci = futures[future]
+                try:
+                    obs_id = future.result()
+                    if obs_id is not None:
+                        existing[sci] = {"observationorg_id": obs_id}
+                        phase1_hits += 1
+                except Exception as exc:
+                    tqdm.write(f"  ERROR {sci}: {exc}")
+                pbar.update(1)
+                unsaved += 1
+                if unsaved >= args.save_every:
+                    save_json(existing, OUTPUT_FILE)
+                    unsaved = 0
+        pbar.close()
         save_json(existing, OUTPUT_FILE)
         print(f"    Matched: {phase1_hits}")
 
@@ -235,24 +256,47 @@ def main() -> None:
     unresolved = [(s, r) for s, r in to_process
                   if s not in existing]
     phase2_hits = 0
+
+    def _resolve_via_gbif(sci: str) -> tuple[str, int | None]:
+        """Try GBIF synonyms → observation.org lookup. Returns (sci, id)."""
+        synonyms = _gbif_get_synonyms(sci)
+        for alt in synonyms:
+            obs_id = _obs_lookup(alt)
+            if obs_id is not None:
+                return sci, obs_id
+        return sci, None
+
     if unresolved:
         print(f"\n  Phase 2: GBIF synonym fallback ({len(unresolved)} "
               f"species)...")
-        for sci, rec in tqdm(unresolved, desc="  GBIF→obs.org",
-                             disable=None):
-            if is_shutting_down():
-                break
-            synonyms = _gbif_get_synonyms(sci)
-            found = False
-            for alt in synonyms:
-                obs_id = _obs_lookup(alt)
-                if obs_id is not None:
-                    existing[sci] = {"observationorg_id": obs_id}
-                    phase2_hits += 1
-                    found = True
+        unsaved = 0
+        pbar = tqdm(total=len(unresolved), desc="  GBIF→obs.org",
+                    disable=None)
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            futures = {}
+            for sci, rec in unresolved:
+                if is_shutting_down():
                     break
-            if not found:
-                existing[sci] = {"observationorg_id": None}
+                futures[pool.submit(_resolve_via_gbif, sci)] = sci
+
+            for future in as_completed(futures):
+                sci = futures[future]
+                try:
+                    _, obs_id = future.result()
+                    if obs_id is not None:
+                        existing[sci] = {"observationorg_id": obs_id}
+                        phase2_hits += 1
+                    else:
+                        existing[sci] = {"observationorg_id": None}
+                except Exception as exc:
+                    tqdm.write(f"  ERROR {sci}: {exc}")
+                    existing[sci] = {"observationorg_id": None}
+                pbar.update(1)
+                unsaved += 1
+                if unsaved >= args.save_every:
+                    save_json(existing, OUTPUT_FILE)
+                    unsaved = 0
+        pbar.close()
         save_json(existing, OUTPUT_FILE)
         print(f"    Matched: {phase2_hits}")
 
