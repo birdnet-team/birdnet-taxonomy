@@ -13,6 +13,27 @@
 
 Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
 
+## Table of Contents
+
+- [Setup](#setup)
+- [Contributing](#contributing)
+- [Project Structure](#project-structure)
+- [Taxon Groups](#taxon-groups)
+- [Pipeline](#pipeline)
+- [Step 1 - AviList](#step-1--avilist)
+- [Step 2 - iNaturalist](#step-2--inaturalist)
+- [Step 3 - eBird](#step-3--ebird)
+- [Step 4 - Wikidata](#step-4--wikidata)
+- [Step 5 - Wikipedia](#step-5--wikipedia)
+- [Step 6 - Claude](#step-6--claude)
+- [Step 7 - Images](#step-7--images)
+- [Step 8 - Build](#step-8--build)
+- [Web Server](#web-server)
+- [Data Sources](#data-sources)
+- [License](#license)
+- [Funding](#funding)
+- [Partners](#partners)
+
 ## Setup
 
 ```bash
@@ -68,7 +89,7 @@ Current manual override support covers image replacement and manual crop anchori
 
 ```
 config.py               # Configuration loader (reads config.yml)
-config.yml              # All settings: locales, taxon groups, API params
+config.yml              # All settings: taxonomy version, locales, groups, API params
 utils/
     images.py           # Image pipeline (download, YOLO crop, WebP convert)
 collectors/
@@ -96,9 +117,9 @@ Configured in `config.yml`. Birds include all species; other groups are limited 
 |-------|---------------|------|------------------------|
 | Aves | 3 | All species | — |
 | Mammalia | 40151 | Sounds only | 1 |
-| Insecta | 47158 | Sounds only | 10 |
-| Reptilia | 26036 | Sounds only | 10 |
-| Amphibia | 20978 | Sounds only | 10 |
+| Insecta | 47158 | Sounds only | 5 |
+| Reptilia | 26036 | Sounds only | 1 |
+| Amphibia | 20978 | Sounds only | 5 |
 
 ## Pipeline
 

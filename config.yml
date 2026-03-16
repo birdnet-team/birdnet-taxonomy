@@ -21,7 +21,7 @@ taxon_groups:
   - name: Insecta
     taxon_id: 47158
     sounds_only: true
-    min_observations: 1
+    min_observations: 5
   - name: Reptilia
     taxon_id: 26036
     sounds_only: true
@@ -29,7 +29,7 @@ taxon_groups:
   - name: Amphibia
     taxon_id: 20978
     sounds_only: true
-    min_observations: 1
+    min_observations: 5
 
 # iNaturalist API settings
 inat:
