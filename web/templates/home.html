@@ -84,7 +84,7 @@
         <option value="{{ code }}" {% if code == lang %}selected{% endif %}>{{ name }}</option>
         {% endfor %}
     </select>
-    <select name="sort" form="search-form">
+    <select name="sort" id="sort-select" form="search-form">
         <option value="">Sort by</option>
         <option value="a-z" {% if sort == 'a-z' %}selected{% endif %}>Name A–Z</option>
         <option value="z-a" {% if sort == 'z-a' %}selected{% endif %}>Name Z–A</option>
@@ -234,6 +234,7 @@ sessionStorage.setItem('browseUrl', location.href);
 
     clear.addEventListener('click', function() {
         selects.forEach(s => s.value = '');
+        document.getElementById('sort-select').value = 'obs';
         updateDot();
         document.getElementById('search-form').submit();
     });
