@@ -148,21 +148,28 @@ Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions
 
 Downloads the AviList Global Avian Checklist (XLSX), converts to CSV. Provides authoritative bird taxonomy and AviList IDs.
 
+| Flag | Description |
+|------|-------------|
+| `--force` | Re-download even if CSV already exists |
+
 ### Step 2 — iNaturalist
 
 Paginates the iNat taxa API to fetch all species for each taxon group. For birds, fetches all species. For other groups, queries the iNat sounds API to find species with audio observations meeting the `min_observations` threshold. Collects taxonomy, common names (all locales when `all_names: true`), observation counts, default photos, and Wikipedia URLs.
 
 After group fetching, runs an **observation photo fallback** phase: for any species whose default taxon photo is missing or not CC-licensed, queries the iNat observations API for a CC-licensed photo from a research-grade observation (sorted by community votes). The result is stored in the `obs_photo` field, and unsuccessful lookups are cached in `inat_data.json` so later runs do not repeat the same slow checks.
 
-```bash
-python -m collectors.inat                   # fetch all groups + obs photos
-python -m collectors.inat --group Aves      # fetch only birds
-python -m collectors.inat --obs-photos-only # only run observation photo fallback
-python -m collectors.inat --skip-obs-photos # skip observation photo fallback
-python -m collectors.inat --refresh-obs-photos # recheck species cached as no obs photo
-python -m collectors.inat --limit 100       # cap new species per group
-python -m collectors.inat --dry-run         # preview without fetching
-```
+| Flag | Description |
+|------|-------------|
+| `--group NAME` | Fetch only this taxon group |
+| `--limit N` | Cap new species per group (0 = all) |
+| `--save-every N` | Save progress every N new species (default: 500) |
+| `--refresh` | Bypass cached Phase 1 data and re-fetch from API |
+| `--obs-photos-only` | Only run observation photo fallback |
+| `--skip-obs-photos` | Skip observation photo fallback |
+| `--refresh-obs-photos` | Recheck species cached as having no obs photo |
+| `--avilist-only` | Only run AviList reconciliation |
+| `--skip-avilist` | Skip AviList reconciliation phase |
+| `--dry-run` | Preview without fetching |
 
 ### Step 3 — eBird
 
@@ -171,15 +178,14 @@ Collects eBird species data in two phases:
 - **Phase 1 — Scraper:** Scrapes eBird species pages for English descriptions (`og:description`) and Macaulay Library images (`og:image`). Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps). Only for bird species with an eBird code.
 - **Phase 2 — Common names:** Downloads the eBird taxonomy CSV for 62 locales to collect common names in all available languages. Each locale download is cached to avoid re-fetching.
 
-```bash
-python -m collectors.ebird                  # run both phases
-python -m collectors.ebird --names-only     # only download common names (Phase 2)
-python -m collectors.ebird --skip-names     # skip common names, scrape only
-python -m collectors.ebird --limit 100      # cap new species for scraping
-python -m collectors.ebird --workers 8      # parallel scrapers
-python -m collectors.ebird --rps 10         # custom rate limit
-python -m collectors.ebird --dry-run        # preview without fetching
-```
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap new species for scraping (0 = all) |
+| `--workers N` | Parallel scrapers (default: 4) |
+| `--rps N` | Max requests per second (default: 5) |
+| `--names-only` | Only download common names (Phase 2) |
+| `--skip-names` | Skip common names, scrape only |
+| `--dry-run` | Preview without fetching |
 
 ### Step 4 — Wikidata
 
@@ -190,12 +196,11 @@ Fetches species identifiers, common name labels, and images from Wikidata and Wi
 - **Phase 3 — Labels:** Fetches `rdfs:label` common names in all available languages.
 - **Phase 4 — Images:** Fetches Wikidata P18 images and checks Wikimedia Commons licenses (CC, PD, GFDL).
 
-```bash
-python -m collectors.wikidata              # fetch all phases
-python -m collectors.wikidata --new-only   # only species not yet in wikidata_data.json
-python -m collectors.wikidata --no-cache   # bypass request cache
-python -m collectors.wikidata --dry-run    # show species count without querying
-```
+| Flag | Description |
+|------|-------------|
+| `--new-only` | Only species not yet in wikidata_data.json |
+| `--no-cache` | Bypass request cache |
+| `--dry-run` | Show species count without querying |
 
 ### Step 5 — Wikipedia
 
@@ -210,14 +215,13 @@ Rate-limited (default 25 rps), with exponential backoff on 429s and server error
 
 **Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, ar, ja, ko, tr, sw
 
-```bash
-python -m collectors.wikipedia              # fetch all
-python -m collectors.wikipedia --new-only   # only species not yet in wikipedia_data.json
-python -m collectors.wikipedia --limit 100  # cap at 100 new species
-python -m collectors.wikipedia --refetch    # re-fetch species with few locale extracts
-python -m collectors.wikipedia --rps 10     # custom rate limit
-python -m collectors.wikipedia --dry-run    # preview without fetching
-```
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap new species (0 = all) |
+| `--rps N` | Max requests per second (default: 25) |
+| `--new-only` | Only species not yet in wikipedia_data.json |
+| `--refetch` | Re-fetch species with few locale extracts (conflicts with `--new-only`) |
+| `--dry-run` | Preview without fetching |
 
 ### Step 6 — Claude
 
@@ -232,16 +236,17 @@ Translation batches are grouped by the exact set of missing locales for each spe
 
 **Claude locales:** en, de, fr, es, pt, it, nl, zh, ru, ar (subset of Wikipedia locales)
 
-```bash
-python -m collectors.claude                   # run both phases
-python -m collectors.claude --shorten-only    # only shorten long extracts
-python -m collectors.claude --translate-only  # only translate missing locales
-python -m collectors.claude --batch-size 12   # max species per API call
-python -m collectors.claude --workers 4       # parallel translation workers
-python -m collectors.claude --char-budget 12000  # source chars per API call
-python -m collectors.claude --limit 50        # cap total work items
-python -m collectors.claude --dry-run         # preview without API calls
-```
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap total work items (0 = all) |
+| `--batch-size N` | Species per API call (default: 12) |
+| `--workers N` | Parallel translation workers (default: 4) |
+| `--char-budget N` | Source-character budget per API call (default: 12000) |
+| `--max-source-chars N` | Max source chars per species sent to Claude |
+| `--save-every N` | Save every N completed batches |
+| `--shorten-only` | Only shorten long extracts |
+| `--translate-only` | Only translate missing locales |
+| `--dry-run` | Preview without API calls |
 
 ### Step 7 — Images
 
@@ -264,14 +269,14 @@ When `image_crop_anchor` is set in `overrides/species_overrides.csv`, smart crop
 
 The collector also prunes obsolete cached `.webp` files and stale `.state` metadata left behind by older naming schemes or old fallback files.
 
-```bash
-python -m collectors.images              # download to dist/images/
-python -m collectors.images --new-only   # only species with no cached image files yet
-python -m collectors.images --dev        # download to dev/images/
-python -m collectors.images --workers 8  # parallel downloaders
-python -m collectors.images --limit 100  # cap at 100 species
-python -m collectors.images --dry-run    # preview without downloading
-```
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap species to process (0 = all) |
+| `--workers N` | Parallel download threads (default: 4) |
+| `--quality N` | WebP quality 1–100 (default: from config.yml) |
+| `--dev` | Save to dev/images/ instead of dist/images/ |
+| `--new-only` | Only species with no cached image files yet |
+| `--dry-run` | Preview without downloading |
 
 ### Step 8 — Build
 
@@ -303,13 +308,12 @@ Image fields in the final metadata:
 - JSON metadata stores an `image` object with `src`, `thumb`, and `medium`
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 
-```bash
-python -m build.metadata              # full rebuild → dist/species_metadata.{json,csv,zip}
-python -m build.metadata --merge-only # skip taxonomy, re-merge only
-python -m build.metadata --dev        # write to dev/ instead of dist/
-python -m build.metadata --no-zip     # skip zip archive
-python -m build.metadata --dry-run    # show stats without writing
-```
+| Flag | Description |
+|------|-------------|
+| `--dev` | Write to dev/ instead of dist/ |
+| `--merge-only` | Skip taxonomy rebuild, re-merge only |
+| `--no-zip` | Skip zip archive creation |
+| `--dry-run` | Show stats without writing |
 
 The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
 
@@ -317,11 +321,12 @@ The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archive
 
 Browse and search the dataset through a web UI and REST API.
 
-```bash
-python -m web.server              # serve from dist/species_metadata.json
-python -m web.server --dev        # serve from dev/species_metadata.json
-python -m web.server --port 8888  # custom port
-```
+| Flag | Description |
+|------|-------------|
+| `--host ADDR` | Bind address (default: 127.0.0.1) |
+| `--port N` | Bind port (default: 8000) |
+| `--dev` | Load metadata from dev/ instead of dist/ |
+| `--reload` | Auto-reload on code changes |
 
 Or with hot-reload during development:
 
