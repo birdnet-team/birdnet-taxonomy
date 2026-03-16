@@ -25,35 +25,16 @@ taxon_groups:
   - name: Reptilia           # reptiles
     taxon_id: 26036
     sounds_only: true
-    min_observations: 1
+    min_observations: 5
   - name: Amphibia           # amphibians (frogs, toads, salamanders)
     taxon_id: 20978
     sounds_only: true
     min_observations: 5
-  - name: Actinopterygii     # ray-finned fishes
-    taxon_id: 47178
-    sounds_only: true
-    min_observations: 1
-  - name: Chondrichthyes     # sharks, rays, skates
-    taxon_id: 196614
-    sounds_only: true
-    min_observations: 1
-  - name: Malacostraca       # crustaceans (crabs, shrimp, lobsters)
-    taxon_id: 47187
-    sounds_only: true
-    min_observations: 1
-  - name: Arachnida          # arachnids (spiders, scorpions, ticks)
-    taxon_id: 47119
-    sounds_only: true
-    min_observations: 1
-  - name: Gastropoda         # snails, slugs
-    taxon_id: 47114
-    sounds_only: true
-    min_observations: 1
-  - name: Cephalopoda        # octopuses, squid, cuttlefish
-    taxon_id: 47459
-    sounds_only: true
-    min_observations: 1
+
+# Disabled taxon groups (cached data retained but excluded from builds):
+#   Actinopterygii (47178), Chondrichthyes (196614),
+#   Malacostraca (47187), Arachnida (47119), Gastropoda (47114),
+#   Cephalopoda (47459)
 
 # iNaturalist API settings
 inat:

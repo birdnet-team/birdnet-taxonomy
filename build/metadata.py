@@ -265,10 +265,13 @@ def print_manual_override_stats(overrides: dict[str, dict]):
 # Phase 1: Build taxonomy
 # ---------------------------------------------------------------------------
 
-def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
+def build_taxonomy(inat: dict, avilist_rows: list[dict],
+                   allowed_groups: set[str] | None = None) -> tuple[dict, dict]:
     """Cross-reference iNat, AviList, Wikidata, and eBird to build a taxonomy.
 
     All data is read from pre-collected JSON files — no API calls.
+    If allowed_groups is provided, only species in those taxon groups are
+    included (plus AviList-only birds when "Aves" is allowed).
     Returns (taxonomy_dict, stats_dict).
     """
     taxonomy = {}
@@ -292,7 +295,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
     matched_sci = set()
     stats = {"direct": 0, "common_name": 0, "wikidata": 0,
              "avilist_only": 0, "non_bird": 0, "excluded_non_species": 0,
-             "excluded_extinct": 0, "excluded_bird_no_avilist": 0}
+             "excluded_extinct": 0, "excluded_bird_no_avilist": 0,
+             "excluded_group": 0}
 
     # Pass 1: Process all iNat species
     for sci_name, rec in inat.items():
@@ -303,6 +307,9 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             continue
         if rec.get("extinct"):
             stats["excluded_extinct"] += 1
+            continue
+        if allowed_groups and rec.get("taxon_group") not in allowed_groups:
+            stats["excluded_group"] += 1
             continue
 
         is_bird = rec.get("taxon_group") == "Aves"
@@ -592,6 +599,8 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
         print(f"  Excluded:      {stats['excluded_extinct']} extinct species")
     if stats.get("excluded_bird_no_avilist"):
         print(f"  Excluded:      {stats['excluded_bird_no_avilist']} birds not on AviList")
+    if stats.get("excluded_group"):
+        print(f"  Excluded:      {stats['excluded_group']} species from disabled taxon groups")
 
     # Wikidata identifiers
     wd_ids = stats.get("wikidata_ids", {})
@@ -744,7 +753,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         record = {
             "birdnet_id": None,
             "scientific_name": sci_name,
-            "common_name": tax.get("preferred_common_name", ""),
+            "common_name": tax.get("preferred_common_name", "") or sci_name,
             "common_name_alt": tax.get("common_name_alt", ""),
             "taxon_group": tax.get("taxon_group", ""),
             "common_names": tax.get("common_names", {}),
@@ -909,7 +918,8 @@ def main():
         print(f"  AviList:     {len(avilist_rows)} bird species")
 
         print("\nBuilding taxonomy...")
-        taxonomy, stats = build_taxonomy(inat, avilist_rows)
+        allowed_groups = {g["name"] for g in cfg.get("taxon_groups", [])}
+        taxonomy, stats = build_taxonomy(inat, avilist_rows, allowed_groups)
         print_taxonomy_stats(taxonomy, stats)
 
         if not args.dry_run:
