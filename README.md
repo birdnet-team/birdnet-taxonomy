@@ -94,6 +94,7 @@ Current manual override support covers image replacement and manual crop anchori
 config.py                  # Configuration helpers for config.yml access
 config.yml                 # Project settings: taxonomy version, groups, filters, API params
 requirements.txt           # Python dependencies
+bn_ids.json                # Persistent BirdNET species ID registry (git-tracked)
 build/
     metadata.py            # Merge collected sources into final metadata outputs
 collectors/
@@ -350,6 +351,9 @@ Image fields in the final metadata:
 - JSON metadata stores an `image` object with `src`, `thumb`, and `medium`
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 
+**BirdNET species IDs:**
+Each species receives a permanent BirdNET ID in the format `BN{5 digits}` (e.g. `BN00498`). IDs are assigned once during the first build and stored in the git-tracked `bn_ids.json` registry. New species receive the next available number; removed species keep their ID reserved and it is never reassigned. This ensures stable, machine-readable identifiers that never change regardless of taxonomic renames or reordering.
+
 | Flag | Description |
 |------|-------------|
 | `--dev` | Write to dev/ instead of dist/ |
@@ -379,6 +383,7 @@ uvicorn web.server:app --reload
 **Species lookup** supports multiple identifier types. The `/species/{name}` and `/api/species/{name}` endpoints accept any of:
 - Scientific name (e.g., `Turdus merula`)
 - Common name in any locale (e.g., `Amsel`, `Merle noir`)
+- BirdNET ID (e.g., `BN10600`)
 - eBird species code (e.g., `eurblk1`)
 - iNaturalist taxon ID (e.g., `12727`)
 

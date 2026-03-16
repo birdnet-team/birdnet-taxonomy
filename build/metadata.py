@@ -59,6 +59,7 @@ MACAULAY_DATA_FILE = RAW_DIR / "macaulay_data.json"
 XC_DATA_FILE = RAW_DIR / "xc_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
+BN_IDS_FILE = ROOT / "bn_ids.json"
 
 
 
@@ -570,6 +571,25 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
 # Phase 2: Merge into final metadata
 # ---------------------------------------------------------------------------
 
+def _load_bn_ids() -> dict[str, int]:
+    """Load persistent BirdNET species ID mapping."""
+    if BN_IDS_FILE.exists():
+        with open(BN_IDS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def _save_bn_ids(bn_ids: dict[str, int]) -> None:
+    """Save BirdNET species ID mapping (atomic write)."""
+    tmp = BN_IDS_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(bn_ids, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, BN_IDS_FILE)
+
+
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    claude: dict = None,
                    manual_overrides: dict | None = None) -> list[dict]:
@@ -680,6 +700,23 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         }
         records.append(record)
 
+    # Assign BirdNET species IDs (persistent, append-only)
+    bn_ids = _load_bn_ids()
+    next_id = max(bn_ids.values(), default=0) + 1
+    new_count = 0
+    for rec in records:
+        sci = rec["scientific_name"]
+        if sci not in bn_ids:
+            bn_ids[sci] = next_id
+            next_id += 1
+            new_count += 1
+        rec["birdnet_id"] = f"BN{bn_ids[sci]:05d}"
+    if new_count:
+        _save_bn_ids(bn_ids)
+        print(f"  BirdNET IDs: {new_count} new (total {len(bn_ids)})")
+    else:
+        print(f"  BirdNET IDs: {len(bn_ids)} (no new)")
+
     # Sort: taxon group, then observations descending
     group_order = {"Aves": 0, "Mammalia": 1, "Reptilia": 2,
                    "Amphibia": 3, "Insecta": 4}
@@ -735,6 +772,7 @@ def records_to_csv(records: list[dict]) -> str:
         "description_source",
         "image_url",
         "image_author", "image_license", "image_source",
+        "birdnet_id",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "ml_taxon_code", "xc_name",
         "observations_count",

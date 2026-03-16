@@ -226,6 +226,9 @@
         <div class="sci-name">{{ s.scientific_name }}</div>
 
         <table class="info-table">
+            {% if s.birdnet_id %}
+            <tr><td>BirdNET ID</td><td>{{ s.birdnet_id }}</td></tr>
+            {% endif %}
             <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
             {% if s.inat_id %}
             <tr><td>iNaturalist</td><td><a href="https://www.inaturalist.org/taxa/{{ s.inat_id }}" target="_blank">#{{ s.inat_id }}</a></td></tr>
