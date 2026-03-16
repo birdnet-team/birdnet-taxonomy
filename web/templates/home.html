@@ -2,29 +2,96 @@
 
 {% block title %}Browse Species — {{ site_title }}{% endblock %}
 
+{% block extra_head %}
+<style>
+    .search-wrap { position: relative; flex: 1; min-width: 200px; }
+    .search-wrap input[type="text"] { width: 100%; }
+    .ac-list {
+        position: absolute; top: 100%; left: 0; right: 0; z-index: 50;
+        background: var(--card); border: 1px solid var(--border);
+        border-top: none; border-radius: 0 0 var(--radius) var(--radius);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        display: none; max-height: 360px; overflow-y: auto;
+    }
+    .ac-list.open { display: block; }
+    .ac-item {
+        display: flex; align-items: center; gap: 0.6rem;
+        padding: 0.5rem 0.8rem; cursor: pointer; text-decoration: none;
+        color: var(--text); font-size: 0.9rem;
+    }
+    .ac-item:hover, .ac-item.active { background: var(--bg); text-decoration: none; }
+    .ac-item img {
+        width: 40px; height: 28px; object-fit: cover;
+        border-radius: 4px; background: #e9ecef; flex-shrink: 0;
+    }
+    .ac-item .ac-common { font-weight: 500; }
+    .ac-item .ac-sci { font-size: 0.8rem; font-style: italic; color: var(--muted); }
+
+    .filter-btn {
+        display: flex; align-items: center; justify-content: center;
+        padding: 0.6rem 0.8rem; background: white;
+        border: 1px solid var(--border); border-radius: var(--radius);
+        cursor: pointer; position: relative; font-size: 1rem; color: var(--muted);
+    }
+    .filter-btn:hover { color: var(--accent); border-color: var(--accent); }
+    .filter-btn.has-filters { color: var(--accent); border-color: var(--accent); }
+    .filter-btn .filter-dot {
+        position: absolute; top: 4px; right: 4px;
+        width: 7px; height: 7px; border-radius: 50%;
+        background: var(--accent); display: none;
+    }
+    .filter-btn.has-filters .filter-dot { display: block; }
+
+    .filter-panel {
+        display: none; gap: 0.5rem; flex-wrap: wrap;
+        padding: 0.8rem 0; align-items: center;
+    }
+    .filter-panel.open { display: flex; }
+    .filter-panel select {
+        padding: 0.5rem 0.7rem; border: 1px solid var(--border);
+        border-radius: var(--radius); font-size: 0.9rem; background: white;
+    }
+    .filter-panel .filter-clear {
+        font-size: 0.85rem; color: var(--muted); cursor: pointer;
+        text-decoration: underline; margin-left: 0.3rem;
+    }
+    .filter-panel .filter-clear:hover { color: var(--accent); }
+</style>
+{% endblock %}
+
 {% block content %}
-<form class="search-bar" method="get" action="{{ base }}/">
-    <input type="text" name="q" value="{{ query }}" placeholder="Search by scientific or common name..." autofocus>
-    <select name="group">
+<form class="search-bar" method="get" action="{{ base }}/" id="search-form">
+    <div class="search-wrap">
+        <input type="text" name="q" value="{{ query }}" placeholder="Search by scientific or common name..." autofocus autocomplete="off">
+        <div class="ac-list" id="ac-list"></div>
+    </div>
+    <div class="filter-btn {{ 'has-filters' if group or lang or sort }}" id="filter-toggle" title="Filters">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+        <span class="filter-dot"></span>
+    </div>
+    <button type="submit">Search</button>
+</form>
+<div class="filter-panel {{ 'open' if group or lang or sort }}" id="filter-panel">
+    <select name="group" form="search-form">
         <option value="">All groups</option>
         {% for g in groups %}
         <option value="{{ g }}" {% if g == group %}selected{% endif %}>{{ g }}</option>
         {% endfor %}
     </select>
-    <select name="lang">
+    <select name="lang" form="search-form">
         <option value="">Common name language</option>
         {% for code, name in locales %}
         <option value="{{ code }}" {% if code == lang %}selected{% endif %}>{{ name }}</option>
         {% endfor %}
     </select>
-    <select name="sort">
+    <select name="sort" form="search-form">
         <option value="">Sort by</option>
         <option value="a-z" {% if sort == 'a-z' %}selected{% endif %}>Name A–Z</option>
         <option value="z-a" {% if sort == 'z-a' %}selected{% endif %}>Name Z–A</option>
         <option value="obs" {% if sort == 'obs' %}selected{% endif %}>Most observed</option>
     </select>
-    <button type="submit">Search</button>
-</form>
+    <span class="filter-clear" id="filter-clear">Clear filters</span>
+</div>
 
 <p class="stats">
     {% if query or group %}
@@ -88,5 +155,89 @@
     {% if query or group %}No species found.{% else %}No data loaded. Run <code>python -m build.metadata</code> first.{% endif %}
 </p>
 {% endif %}
-<script>sessionStorage.setItem('browseUrl', location.href);</script>
+<script>
+sessionStorage.setItem('browseUrl', location.href);
+(function() {
+    const base = '{{ base }}';
+    const input = document.querySelector('.search-wrap input[name="q"]');
+    const list = document.getElementById('ac-list');
+    let debounce = null, active = -1, items = [];
+
+    function encodePath(name) {
+        return name.split('/').map(encodeURIComponent).join('/');
+    }
+
+    function render(results) {
+        items = results;
+        active = -1;
+        if (!results.length) { list.classList.remove('open'); return; }
+        list.innerHTML = results.map((r, i) =>
+            `<a class="ac-item" href="${base}/species/${encodePath(r.scientific_name)}" data-idx="${i}">
+                <img src="${base}/api/image/${encodePath(r.scientific_name)}?size=thumb" alt="" loading="lazy">
+                <div>
+                    <div class="ac-common">${r.common_name || ''}</div>
+                    <div class="ac-sci">${r.scientific_name}</div>
+                </div>
+            </a>`
+        ).join('');
+        list.classList.add('open');
+    }
+
+    input.addEventListener('input', function() {
+        const q = this.value.trim();
+        clearTimeout(debounce);
+        if (q.length < 2) { list.classList.remove('open'); return; }
+        debounce = setTimeout(() => {
+            fetch(`${base}/api/suggest?q=${encodeURIComponent(q)}`)
+                .then(r => r.json()).then(render)
+                .catch(() => list.classList.remove('open'));
+        }, 200);
+    });
+
+    input.addEventListener('keydown', function(e) {
+        const els = list.querySelectorAll('.ac-item');
+        if (!els.length) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); active = Math.min(active + 1, els.length - 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); active = Math.max(active - 1, 0); }
+        else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); els[active].click(); return; }
+        else if (e.key === 'Escape') { list.classList.remove('open'); return; }
+        else return;
+        els.forEach((el, i) => el.classList.toggle('active', i === active));
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.search-wrap')) list.classList.remove('open');
+    });
+
+    input.addEventListener('focus', function() {
+        if (items.length && this.value.trim().length >= 2) list.classList.add('open');
+    });
+})();
+
+// Filter panel toggle
+(function() {
+    const toggle = document.getElementById('filter-toggle');
+    const panel = document.getElementById('filter-panel');
+    const selects = panel.querySelectorAll('select');
+    const clear = document.getElementById('filter-clear');
+
+    function updateDot() {
+        const active = Array.from(selects).some(s => s.value);
+        toggle.classList.toggle('has-filters', active);
+    }
+
+    toggle.addEventListener('click', function(e) {
+        e.preventDefault();
+        panel.classList.toggle('open');
+    });
+
+    clear.addEventListener('click', function() {
+        selects.forEach(s => s.value = '');
+        updateDot();
+        document.getElementById('search-form').submit();
+    });
+
+    selects.forEach(s => s.addEventListener('change', updateDot));
+})();
+</script>
 {% endblock %}

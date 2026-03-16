@@ -942,6 +942,25 @@ async def api_search(
     }
 
 
+@app.get("/api/suggest", tags=["API"],
+         summary="Autocomplete suggestions for species search")
+async def api_suggest(
+    q: str = Query("", description="Search prefix"),
+    limit: int = Query(8, ge=1, le=20, description="Max suggestions"),
+):
+    """Return lightweight suggestions for search-as-you-type."""
+    if len(q) < 2:
+        return []
+    results = _search(q, "")
+    suggestions = []
+    for rec in results[:limit]:
+        suggestions.append({
+            "scientific_name": rec.get("scientific_name", ""),
+            "common_name": rec.get("common_name", ""),
+        })
+    return suggestions
+
+
 @app.get("/api/species", tags=["API"],
          response_model=PaginatedSpecies,
          response_model_exclude_none=True)
