@@ -243,6 +243,7 @@ def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
         "observations_count": result.get("observations_count", 0),
         "sound_observations_count": sound_count,
         "preferred_common_name": result.get("preferred_common_name", ""),
+        "extinct": bool(result.get("extinct", False)),
     }
 
 

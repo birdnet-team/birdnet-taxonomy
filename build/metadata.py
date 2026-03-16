@@ -289,8 +289,9 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
         print(f"  eBird names: {len(ebird_names)} species codes")
 
     matched_sci = set()
-    stats = {"direct": 0, "common_name": 0, "wikidata": 0, "inat_only": 0,
-             "avilist_only": 0, "non_bird": 0, "excluded_non_species": 0}
+    stats = {"direct": 0, "common_name": 0, "wikidata": 0,
+             "avilist_only": 0, "non_bird": 0, "excluded_non_species": 0,
+             "excluded_extinct": 0, "excluded_bird_no_avilist": 0}
 
     # Pass 1: Process all iNat species
     for sci_name, rec in inat.items():
@@ -298,6 +299,9 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             continue
         if not is_full_species_name(sci_name):
             stats["excluded_non_species"] += 1
+            continue
+        if rec.get("extinct"):
+            stats["excluded_extinct"] += 1
             continue
 
         is_bird = rec.get("taxon_group") == "Aves"
@@ -327,8 +331,9 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                         match_source = "wikidata"
                         stats["wikidata"] += 1
                     else:
-                        match_source = "inat_only"
-                        stats["inat_only"] += 1
+                        # Bird not on AviList — skip it
+                        stats["excluded_bird_no_avilist"] += 1
+                        continue
         else:
             match_source = "non_bird"
             stats["non_bird"] += 1
@@ -532,9 +537,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
 def print_taxonomy_stats(taxonomy: dict, stats: dict):
     """Print summary statistics for the taxonomy build."""
     total_birds = (stats["direct"] + stats["common_name"] + stats["wikidata"]
-                   + stats["inat_only"] + stats["avilist_only"])
+                   + stats["avilist_only"])
     matched_birds = stats["direct"] + stats["common_name"] + stats["wikidata"]
-    inat_birds = matched_birds + stats["inat_only"]
     total = len(taxonomy)
 
     print(f"\n  Total species: {total}")
@@ -542,13 +546,16 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     print(f"    Direct match:     {stats['direct']}")
     print(f"    Common name:      {stats['common_name']}")
     print(f"    Wikidata:         {stats['wikidata']}")
-    print(f"    iNat only:        {stats['inat_only']} (no eBird code)")
     print(f"    AviList only:     {stats['avilist_only']} (no iNat ID)")
-    print(f"    Match rate:       {matched_birds}/{inat_birds} "
-          f"iNat birds ({100 * matched_birds / max(1, inat_birds):.1f}%)")
+    print(f"    Match rate:       {matched_birds}/{matched_birds + stats.get('excluded_bird_no_avilist', 0)} "
+          f"iNat birds ({100 * matched_birds / max(1, matched_birds + stats.get('excluded_bird_no_avilist', 0)):.1f}%)")
     print(f"  Non-birds:     {stats['non_bird']}")
     if stats.get("excluded_non_species"):
         print(f"  Excluded:      {stats['excluded_non_species']} non-species iNat taxa")
+    if stats.get("excluded_extinct"):
+        print(f"  Excluded:      {stats['excluded_extinct']} extinct species")
+    if stats.get("excluded_bird_no_avilist"):
+        print(f"  Excluded:      {stats['excluded_bird_no_avilist']} birds not on AviList")
 
     # Wikidata identifiers
     wd_ids = stats.get("wikidata_ids", {})
@@ -872,18 +879,12 @@ def main():
             print(f"\n  Saved: {TAXONOMY_FILE} ({size_mb:.1f} MB)")
 
     if args.dry_run:
-        # Show unmatched examples
+        # Show excluded bird examples
         if not args.merge_only:
-            unmatched = [(k, v) for k, v in taxonomy.items()
-                         if v["taxon_group"] == "Aves"
-                         and v["match_source"] == "inat_only"]
-            if unmatched:
-                unmatched.sort(key=lambda x: -x[1].get("observations_count", 0))
-                print(f"\n  Top unmatched iNat birds (by observations):")
-                for sci, rec in unmatched[:15]:
-                    cn = rec.get("preferred_common_name", "")
-                    obs = rec.get("observations_count", 0)
-                    print(f"    {sci} — {cn} ({obs:,} obs)")
+            if stats.get("excluded_bird_no_avilist"):
+                print(f"\n  Excluded {stats['excluded_bird_no_avilist']} iNat birds not on AviList")
+            if stats.get("excluded_extinct"):
+                print(f"\n  Excluded {stats['excluded_extinct']} extinct species")
         return
 
     # Phase 2: Merge with descriptions → final output

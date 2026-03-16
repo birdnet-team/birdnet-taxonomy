@@ -11,25 +11,49 @@ taxonomy:
 #   min_observations then refers to minimum sound observation count.
 # If false (e.g. Aves), fetch ALL species from the taxa API.
 taxon_groups:
-  - name: Aves
+  - name: Aves              # birds
     taxon_id: 3
     sounds_only: false      # fetch all bird species
-  - name: Mammalia
+  - name: Mammalia           # mammals
     taxon_id: 40151
     sounds_only: true
     min_observations: 1    # min sound obs
-  - name: Insecta
+  - name: Insecta            # insects
     taxon_id: 47158
     sounds_only: true
     min_observations: 5
-  - name: Reptilia
+  - name: Reptilia           # reptiles
     taxon_id: 26036
     sounds_only: true
     min_observations: 1
-  - name: Amphibia
+  - name: Amphibia           # amphibians (frogs, toads, salamanders)
     taxon_id: 20978
     sounds_only: true
     min_observations: 5
+  - name: Actinopterygii     # ray-finned fishes
+    taxon_id: 47178
+    sounds_only: true
+    min_observations: 1
+  - name: Chondrichthyes     # sharks, rays, skates
+    taxon_id: 196614
+    sounds_only: true
+    min_observations: 1
+  - name: Malacostraca       # crustaceans (crabs, shrimp, lobsters)
+    taxon_id: 47187
+    sounds_only: true
+    min_observations: 1
+  - name: Arachnida          # arachnids (spiders, scorpions, ticks)
+    taxon_id: 47119
+    sounds_only: true
+    min_observations: 1
+  - name: Gastropoda         # snails, slugs
+    taxon_id: 47114
+    sounds_only: true
+    min_observations: 1
+  - name: Cephalopoda        # octopuses, squid, cuttlefish
+    taxon_id: 47459
+    sounds_only: true
+    min_observations: 1
 
 # iNaturalist API settings
 inat:
