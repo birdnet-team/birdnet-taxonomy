@@ -38,7 +38,7 @@
         header .logo { height: 32px; width: 32px; border-radius: 50%; }
         header h1 { font-size: 1.4rem; font-weight: 600; }
         header a { color: white; }
-        header nav { display: flex; gap: 1rem; font-size: 0.9rem; }
+        header nav { display: flex; gap: 1rem; font-size: 0.9rem; margin-left: auto; }
         header nav a { opacity: 0.85; }
         header nav a:hover { opacity: 1; text-decoration: none; }
 
@@ -175,6 +175,7 @@
         <div class="container">
             <a href="{{ base }}/"><img class="logo" src="{{ base }}/static/logo.png" alt="BirdNET"></a>
             <h1><a href="{{ base }}/">{{ site_title }}</a></h1>
+            {% if taxonomy_version %}<span style="font-size: 0.7rem; opacity: 0.75; background: rgba(255,255,255,0.15); padding: 0.15rem 0.5rem; border-radius: 10px;">{{ taxonomy_version }}</span>{% endif %}
             <nav>
                 <a href="{{ base }}/">Browse</a>
                 <a href="{{ base }}/download">Download</a>

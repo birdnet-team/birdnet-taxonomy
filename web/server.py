@@ -223,7 +223,7 @@ def _quote_path(value: Any) -> str:
 _root_path = load_root_path()
 _host_name = load_host_name()
 _taxonomy_version = get_taxonomy_version()
-_site_title = f"BirdNET+ Taxonomy {_taxonomy_version}".strip()
+_site_title = "BirdNET+ Taxonomy"
 
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"
 
@@ -239,7 +239,7 @@ _species_by_ml_code: dict[str, dict] = {}
 _species_by_xc: dict[str, dict] = {}
 _species_by_birdnet: dict[str, dict] = {}
 _species_by_inat_id: dict[int, dict] = {}
-_search_index: list[tuple[str, str, dict]] = []  # (lower_sci, lower_common, record)
+_search_index: list[tuple[str, str, str, dict]] = []  # (lower_sci, lower_common, search_text, record)
 _all_locales: list[tuple[str, str]] = []  # (code, display_name) sorted
 
 
@@ -334,10 +334,11 @@ def load_data(dev: bool = False):
         inat_id = rec.get("inat_id")
         if inat_id:
             _species_by_inat_id[int(inat_id)] = rec
+        common_lower = _normalise(common)
         search_text = _normalise(f"{sci} {common}")
         for name in rec.get("common_names", {}).values():
             search_text += " " + _normalise(name)
-        _search_index.append((sci.lower(), search_text, rec))
+        _search_index.append((sci.lower(), common_lower, search_text, rec))
         locale_set.update(rec.get("common_names", {}).keys())
 
     locale_set.discard("en")
@@ -1026,21 +1027,49 @@ def _search(q: str, group: str = "") -> list[dict]:
     terms = q_norm.split()
 
     scored = []
-    for sci_lower, search_text, rec in _search_index:
+    for sci_lower, common_lower, search_text, rec in _search_index:
         if group and rec.get("taxon_group", "").lower() != group.lower():
             continue
-        if all(t in search_text for t in terms):
-            score = 0
-            if q_norm == sci_lower:
-                score = 100
-            elif sci_lower.startswith(q_norm):
-                score = 80
-            elif q_norm in sci_lower:
-                score = 60
-            else:
-                score = 40
-            score += min(rec.get("observations_count", 0) / 1_000_000, 10)
-            scored.append((score, rec))
+        if not all(t in search_text for t in terms):
+            continue
+
+        score = 0
+        common_words = common_lower.split()
+        sci_words = sci_lower.split()
+
+        # Exact match on common or scientific name
+        if q_norm == common_lower or q_norm == sci_lower:
+            score = 200
+        # Common name starts with query (word boundary)
+        elif common_lower.startswith(q_norm + " "):
+            score = 160
+        # Query is an exact word in the common name
+        elif q_norm in common_words:
+            score = 140
+        # All terms are exact words in the common name
+        elif all(t in common_words for t in terms):
+            score = 130
+        # Scientific name starts with query
+        elif sci_lower.startswith(q_norm):
+            score = 120
+        # Query is an exact word in the scientific name
+        elif q_norm in sci_words:
+            score = 110
+        # All terms appear as word prefixes in common name
+        elif all(any(w.startswith(t) for w in common_words) for t in terms):
+            score = 90
+        # Substring match in common name
+        elif q_norm in common_lower:
+            score = 70
+        # Substring match in scientific name
+        elif q_norm in sci_lower:
+            score = 60
+        # Matched only in translated names
+        else:
+            score = 30
+
+        score += min(rec.get("observations_count", 0) / 1_000_000, 10)
+        scored.append((score, rec))
 
     scored.sort(key=lambda x: -x[0])
     return [r for _, r in scored]
