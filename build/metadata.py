@@ -726,17 +726,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     # Assign BirdNET species IDs (persistent, append-only)
     if reassign_ids:
         # Re-sort and reassign all IDs from scratch (pre-release only)
-        group_order_bn = {"Aves": 0, "Mammalia": 1, "Reptilia": 2,
-                          "Amphibia": 3, "Insecta": 4}
-        sorted_names = sorted(
-            [r["scientific_name"] for r in records],
-            key=lambda s: (
-                group_order_bn.get(
-                    next((r["taxon_group"] for r in records
-                          if r["scientific_name"] == s), ""), 99),
-                s,
-            ),
-        )
+        sorted_names = sorted(r["scientific_name"] for r in records)
         bn_ids = {name: i for i, name in enumerate(sorted_names, start=1)}
         _save_bn_ids(bn_ids)
         for rec in records:
