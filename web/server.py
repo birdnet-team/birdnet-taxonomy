@@ -32,7 +32,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
 from pydantic import BaseModel, Field, field_validator
 from utils.images import ImageSize, save_species_image
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from config import (
@@ -596,6 +596,34 @@ async def home(request: FRequest, q: str = "", group: str = "",
     ))
 
 
+def _format_size(path: Path) -> str:
+    """Human-readable file size."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return ""
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+@app.get("/download", response_class=HTMLResponse, include_in_schema=False)
+async def download_page(request: FRequest):
+    """Download page."""
+    dd = _data_dir()
+    locale_count = len(_all_locales)
+    return templates.TemplateResponse("download.html", _template_context(
+        request,
+        total_species=len(_species_list),
+        locale_count=locale_count,
+        csv_size=_format_size(dd / "species_metadata.csv"),
+        json_size=_format_size(dd / "species_metadata.json"),
+        zip_size=_format_size(dd / "species_metadata.zip"),
+    ))
+
+
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
          include_in_schema=False)
 async def species_page(request: FRequest, scientific_name: str):
@@ -1016,6 +1044,45 @@ def _search(q: str, group: str = "") -> list[dict]:
 
     scored.sort(key=lambda x: -x[0])
     return [r for _, r in scored]
+
+
+# ---------------------------------------------------------------------------
+# Download endpoints
+# ---------------------------------------------------------------------------
+
+def _data_dir() -> Path:
+    return ROOT / ("dev" if _dev_mode else "dist")
+
+def _download_filename(ext: str) -> str:
+    v = _taxonomy_version.lstrip("v") if _taxonomy_version else "unknown"
+    return f"birdnet_taxonomy_{v}.{ext}"
+
+@app.get("/api/download/csv", tags=["Download"],
+         summary="Download species metadata as CSV")
+async def download_csv():
+    path = _data_dir() / "species_metadata.csv"
+    if not path.exists():
+        raise HTTPException(404, "CSV file not available. Run build first.")
+    return FileResponse(path, media_type="text/csv",
+                        filename=_download_filename("csv"))
+
+@app.get("/api/download/json", tags=["Download"],
+         summary="Download species metadata as JSON")
+async def download_json():
+    path = _data_dir() / "species_metadata.json"
+    if not path.exists():
+        raise HTTPException(404, "JSON file not available. Run build first.")
+    return FileResponse(path, media_type="application/json",
+                        filename=_download_filename("json"))
+
+@app.get("/api/download/zip", tags=["Download"],
+         summary="Download species metadata as ZIP (CSV + JSON)")
+async def download_zip():
+    path = _data_dir() / "species_metadata.zip"
+    if not path.exists():
+        raise HTTPException(404, "ZIP file not available. Run build with --no-zip disabled.")
+    return FileResponse(path, media_type="application/zip",
+                        filename=_download_filename("zip"))
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Download — {{ site_title }}{% endblock %}
+
+{% block extra_head %}
+<style>
+    .dl-hero {
+        margin-bottom: 2rem;
+    }
+    .dl-hero h2 {
+        font-size: 1.6rem;
+        margin-bottom: 0.5rem;
+    }
+    .dl-hero p {
+        color: var(--muted);
+        font-size: 0.95rem;
+        max-width: 680px;
+        line-height: 1.7;
+    }
+    .dl-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+    .dl-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.4rem;
+        display: flex;
+        flex-direction: column;
+    }
+    .dl-card h3 {
+        font-size: 1.1rem;
+        margin-bottom: 0.3rem;
+    }
+    .dl-card .dl-desc {
+        font-size: 0.88rem;
+        color: var(--muted);
+        flex: 1;
+        margin-bottom: 1rem;
+        line-height: 1.6;
+    }
+    .dl-card .dl-meta {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-bottom: 0.8rem;
+    }
+    .dl-btn {
+        display: inline-block;
+        padding: 0.5rem 1.2rem;
+        background: var(--accent);
+        color: white;
+        border-radius: var(--radius);
+        font-size: 0.9rem;
+        font-weight: 500;
+        text-decoration: none;
+        text-align: center;
+    }
+    .dl-btn:hover {
+        background: var(--accent-light);
+        color: white;
+        text-decoration: none;
+    }
+    .dl-info {
+        margin-top: 1rem;
+        font-size: 0.88rem;
+        color: var(--muted);
+        line-height: 1.7;
+    }
+    .dl-info h3 {
+        font-size: 1.05rem;
+        color: var(--text);
+        margin-bottom: 0.4rem;
+    }
+    .dl-info ul {
+        margin: 0.3rem 0 0 1.2rem;
+    }
+    .dl-info li {
+        margin-bottom: 0.2rem;
+    }
+    .dl-info code {
+        background: #e9ecef;
+        padding: 0.1rem 0.35rem;
+        border-radius: 4px;
+        font-size: 0.82rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dl-hero">
+    <h2>Download</h2>
+    <p>
+        The BirdNET taxonomy dataset contains structured metadata for
+        <strong>{{ total_species|default(0, true) }}</strong> species,
+        including scientific and common names, taxonomy, external identifiers,
+        observation counts, descriptions, images, and translations in
+        {{ locale_count }} languages.
+        Version <strong>{{ taxonomy_version }}</strong>.
+    </p>
+</div>
+
+<div class="dl-cards">
+    <div class="dl-card">
+        <h3>CSV</h3>
+        <div class="dl-desc">
+            Flat tabular format. One row per species, one column per field.
+            Common names for each locale are in separate columns.
+            Easy to open in Excel, R, pandas, or any spreadsheet tool.
+        </div>
+        {% if csv_size %}<div class="dl-meta">{{ csv_size }}</div>{% endif %}
+        <a href="{{ base }}/api/download/csv" class="dl-btn">Download CSV</a>
+    </div>
+    <div class="dl-card">
+        <h3>JSON</h3>
+        <div class="dl-desc">
+            Structured format with nested common names per locale.
+            Ideal for programmatic use, web applications, or integration
+            with other tools and APIs.
+        </div>
+        {% if json_size %}<div class="dl-meta">{{ json_size }}</div>{% endif %}
+        <a href="{{ base }}/api/download/json" class="dl-btn">Download JSON</a>
+    </div>
+    <div class="dl-card">
+        <h3>ZIP</h3>
+        <div class="dl-desc">
+            Both CSV and JSON bundled in a single compressed archive.
+        </div>
+        {% if zip_size %}<div class="dl-meta">{{ zip_size }}</div>{% endif %}
+        <a href="{{ base }}/api/download/zip" class="dl-btn">Download ZIP</a>
+    </div>
+</div>
+
+<div class="dl-info">
+    <h3>What's included</h3>
+    <ul>
+        <li><strong>Identifiers</strong> — BirdNET ID, iNaturalist, eBird, GBIF, NCBI, Avibase, BirdLife, Macaulay Library, Xeno-Canto</li>
+        <li><strong>Taxonomy</strong> — scientific name, common name, taxon group</li>
+        <li><strong>Observations</strong> — iNaturalist observation counts</li>
+        <li><strong>Descriptions</strong> — species descriptions with source attribution</li>
+        <li><strong>Images</strong> — image URLs, attribution, and license info</li>
+        <li><strong>Translations</strong> — common names in {{ locale_count }} languages</li>
+    </ul>
+</div>
+
+<div class="dl-info" style="margin-top: 1.5rem;">
+    <h3>API access</h3>
+    <p>
+        You can also query the data programmatically via the
+        <a href="{{ base }}/docs" target="_blank" rel="noopener noreferrer">REST API</a>.
+    </p>
+</div>
+{% endblock %}
