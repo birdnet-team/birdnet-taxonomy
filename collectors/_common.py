@@ -139,3 +139,25 @@ def cache_put(key: Path, value):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(value, f, ensure_ascii=False)
     os.replace(tmp, key)
+
+
+# ---------------------------------------------------------------------------
+# Shared constants
+# ---------------------------------------------------------------------------
+
+# Normalize locale codes across sources to canonical forms.
+LOCALE_NORMALIZE: dict[str, str] = {
+    "nb": "no",
+    "pt-br": "pt",
+}
+
+# Acceptable photo licenses (CC variants, public domain, GFDL).
+ACCEPTABLE_LICENSES = frozenset({
+    "cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa",
+    "cc-by-nd", "cc-by-nc-nd", "pd", "gfdl",
+})
+
+
+def strip_html_tags(text: str) -> str:
+    """Remove HTML tags from text."""
+    return re.sub(r"<[^>]+>", "", text).strip()

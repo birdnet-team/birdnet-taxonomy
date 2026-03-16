@@ -39,8 +39,11 @@ from collections import Counter
 from pathlib import Path
 
 from urllib.parse import quote
-from config import load_config
-from collectors._common import ROOT, RAW_DIR, is_full_species_name, load_json, save_json
+from config import load_config, image_url_prefix
+from collectors._common import (
+    ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE,
+    is_full_species_name, load_json, save_json,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -55,58 +58,12 @@ CLAUDE_DATA_FILE = RAW_DIR / "claude_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 
-# Acceptable iNat photo licenses (NC is fine; only "all rights reserved" rejected)
-ACCEPTABLE_INAT_LICENSES = {
-    "cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa",
-    "cc-by-nd", "cc-by-nc-nd", "pd", "gfdl",
-}
 
-# Normalize locale codes across sources to canonical forms.
-LOCALE_NORMALIZE: dict[str, str] = {
-    "nb": "no",
-    "pt-br": "pt",
-}
-
-
-def _load_env_value(name: str) -> str:
-    """Load a single env value from .env first, then process env vars."""
-    env_file = ROOT / ".env"
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith(f"{name}="):
-                return line.split("=", 1)[1].strip().strip("\"'")
-    return os.environ.get(name, "").strip().strip("\"'")
-
-
-def _load_root_path() -> str:
-    """Load and normalize the deployment URL prefix."""
-    root_path = _load_env_value("ROOT_PATH")
-    if not root_path or root_path == "/":
-        return ""
-    return "/" + root_path.strip("/")
-
-
-def _load_host_name() -> str:
-    """Load and normalize the public host name used for absolute URLs."""
-    return _load_env_value("HOST_NAME").rstrip("/")
-
-
-def _image_url_prefix() -> str:
-    """Absolute image URL prefix, or a relative root-path prefix if no host is set."""
-    host = _load_host_name()
-    root_path = _load_root_path()
-    if host:
-        return f"{host}{root_path}"
-    return root_path
 
 
 # ---------------------------------------------------------------------------
 # Image helpers
 # ---------------------------------------------------------------------------
-
-def _strip_html_tags(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", text).strip()
-
 
 def _parse_image_author(attribution: str, source: str = "") -> str:
     """Extract author name from attribution strings."""
@@ -457,7 +414,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
         inat_rec = inat.get(sci, {})
         url = inat_rec.get("image_url", "")
         lic = inat_rec.get("image_license", "")
-        if url and lic in ACCEPTABLE_INAT_LICENSES:
+        if url and lic in ACCEPTABLE_LICENSES:
             entry["image_url"] = url
             entry["image_author"] = _parse_image_author(
                 inat_rec.get("image_attribution", ""), "inat")
@@ -610,7 +567,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     if manual_overrides is None:
         manual_overrides = {}
 
-    image_prefix = _image_url_prefix()
+    image_prefix = image_url_prefix()
 
     for sci_name, tax in taxonomy.items():
         if not is_full_species_name(sci_name):

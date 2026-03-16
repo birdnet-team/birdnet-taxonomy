@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
 """
 Translate and shorten species descriptions using the Claude API.
 
@@ -14,6 +13,7 @@ Usage:
 
 Requires ANTHROPIC_API_KEY in .env file.
 """
+from __future__ import annotations
 
 import argparse
 import json

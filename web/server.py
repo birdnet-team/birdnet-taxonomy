@@ -21,15 +21,13 @@ import argparse
 import csv
 import io
 import json
-import os
 import re
 import unicodedata
+from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
 from pydantic import BaseModel, Field, field_validator
@@ -37,7 +35,10 @@ from utils.images import ImageSize, save_species_image
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from config import get_taxonomy_version, load_config
+from config import (
+    ROOT, LOCALE_NAMES, get_taxonomy_version, load_config,
+    load_root_path, load_host_name,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -190,32 +191,9 @@ class GroupCount(BaseModel):
     name: str = Field(..., examples=["Aves"])
     count: int = Field(..., examples=[11157])
 
-ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
-
-def _load_env_value(name: str) -> str:
-    """Load a single env value from .env first, then process env vars."""
-    env_file = ROOT / ".env"
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith(f"{name}="):
-                return line.split("=", 1)[1].strip().strip("\"'")
-    return os.environ.get(name, "").strip().strip("\"'")
-
-
-def _load_root_path() -> str:
-    """Load and normalize the deployment URL prefix from .env or env vars."""
-    root_path = _load_env_value("ROOT_PATH")
-    if not root_path or root_path == "/":
-        return ""
-    return "/" + root_path.strip("/")
-
-
-def _load_host_name() -> str:
-    """Load and normalize the public host name used for absolute image URLs."""
-    return _load_env_value("HOST_NAME").rstrip("/")
 
 
 def _with_root_path(path: str) -> str:
@@ -236,42 +214,12 @@ def _quote_path(value: Any) -> str:
     return quote(str(value), safe="")
 
 
-_root_path = _load_root_path()
-_host_name = _load_host_name()
+_root_path = load_root_path()
+_host_name = load_host_name()
 _taxonomy_version = get_taxonomy_version()
 _site_title = f"BirdNET+ Taxonomy {_taxonomy_version}".strip()
 
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"
-
-# ---------------------------------------------------------------------------
-# Known locale display names (for UI).  Dynamically extended at load time
-# from whatever locales appear in the data.
-# ---------------------------------------------------------------------------
-LOCALE_NAMES: dict[str, str] = {
-    "af": "Afrikaans", "ar": "Arabic", "bg": "Bulgarian", "bn": "Bengali",
-    "ca": "Catalan", "cs": "Czech", "da": "Danish", "de": "German",
-    "el": "Greek", "en": "English", "es": "Spanish",
-    "es_AR": "Spanish (Argentina)", "es_CL": "Spanish (Chile)",
-    "es_CR": "Spanish (Costa Rica)", "es_CU": "Spanish (Cuba)",
-    "es_DO": "Spanish (Dominican Republic)", "es_EC": "Spanish (Ecuador)",
-    "es_ES": "Spanish (Spain)", "es_MX": "Spanish (Mexico)",
-    "es_PA": "Spanish (Panama)", "es_PR": "Spanish (Puerto Rico)",
-    "et": "Estonian", "eu": "Basque", "fa": "Persian", "fi": "Finnish",
-    "fr": "French", "gl": "Galician", "gu": "Gujarati",
-    "he": "Hebrew", "hi": "Hindi", "hr": "Croatian", "hu": "Hungarian",
-    "hy": "Armenian", "id": "Indonesian", "is": "Icelandic", "it": "Italian",
-    "ja": "Japanese", "ka": "Georgian", "kk": "Kazakh", "kn": "Kannada",
-    "ko": "Korean", "lt": "Lithuanian", "lv": "Latvian",
-    "ml": "Malayalam", "mn": "Mongolian", "mr": "Marathi", "ms": "Malay",
-    "nl": "Dutch", "no": "Norwegian", "pl": "Polish",
-    "pt": "Portuguese", "pt_PT": "Portuguese (Portugal)",
-    "ro": "Romanian", "ru": "Russian",
-    "sk": "Slovak", "sl": "Slovenian", "sq": "Albanian", "sr": "Serbian",
-    "sv": "Swedish", "ta": "Tamil", "te": "Telugu", "th": "Thai",
-    "tr": "Turkish", "uk": "Ukrainian", "vi": "Vietnamese",
-    "zh": "Chinese (Simplified)", "zh_TRA": "Chinese (Traditional)",
-    "zu": "Zulu",
-}
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -854,7 +802,6 @@ def _to_csv(records: list[dict], fields: str | None = None) -> str:
 @app.get("/api/stats", tags=["API"], response_model=StatsResponse)
 async def api_stats():
     """Pipeline statistics: total species, counts per taxon group."""
-    from collections import Counter
     groups = Counter(r.get("taxon_group", "unknown") for r in _species_list)
     return {
         "taxonomy_version": _taxonomy_version,
@@ -867,7 +814,6 @@ async def api_stats():
 @app.get("/api/groups", tags=["API"], response_model=list[GroupCount])
 async def api_groups():
     """List available taxon groups with species counts."""
-    from collections import Counter
     groups = Counter(r.get("taxon_group", "unknown") for r in _species_list)
     return [{"name": g, "count": c} for g, c in sorted(groups.items())]
 

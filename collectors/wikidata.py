@@ -30,8 +30,9 @@ import urllib.request
 
 from config import load_config
 from collectors._common import (
-    RAW_DIR, USER_AGENT, is_full_species_name, load_json, save_json,
-    cache_key, cache_get, cache_put,
+    RAW_DIR, USER_AGENT, LOCALE_NORMALIZE,
+    is_full_species_name, load_json, save_json,
+    strip_html_tags, cache_key, cache_get, cache_put,
 )
 
 INAT_FILE = RAW_DIR / "inat_data.json"
@@ -52,12 +53,6 @@ WD_IDENTIFIERS = {
     "ncbi_id": "P685",
     "avibase_id": "P2426",
     "birdlife_id": "P5257",
-}
-
-# Normalize locale codes across sources to canonical forms.
-LOCALE_NORMALIZE: dict[str, str] = {
-    "nb": "no",
-    "pt-br": "pt",
 }
 
 
@@ -255,10 +250,6 @@ def _is_commons_license_ok(license_short: str) -> bool:
     return any(x in low for x in ("cc", "public domain", "pd", "gfdl"))
 
 
-def _strip_html_tags(text: str) -> str:
-    return re.sub(r"<[^>]+>", "", text).strip()
-
-
 def query_images(species_names: list[str]) -> dict[str, str]:
     """Query Wikidata P18 (image) → {scientific_name: Commons filename}."""
     if not species_names:
@@ -355,7 +346,7 @@ def check_commons_licenses(
             license_short = meta.get("LicenseShortName", {}).get("value", "")
             license_url = meta.get("LicenseUrl", {}).get("value", "")
             artist_html = meta.get("Artist", {}).get("value", "")
-            artist = _strip_html_tags(artist_html) if artist_html else ""
+            artist = strip_html_tags(artist_html) if artist_html else ""
 
             if not _is_commons_license_ok(license_short):
                 continue

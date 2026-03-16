@@ -24,8 +24,6 @@ from urllib.error import HTTPError, URLError
 from config import load_config
 from collectors._common import ROOT, RAW_DIR, USER_AGENT
 
-RAW_DATA = RAW_DIR
-
 
 def download_xlsx(url: str) -> bytes:
     """Download the AviList XLSX file."""
@@ -74,7 +72,7 @@ def main():
         print("ERROR: avilist.url and avilist.csv_file must be set in config.yml")
         raise SystemExit(1)
 
-    csv_path = RAW_DATA / csv_name
+    csv_path = RAW_DIR / csv_name
 
     parser = argparse.ArgumentParser(description="Download and convert AviList checklist")
     parser.add_argument("--force", action="store_true",
@@ -86,13 +84,13 @@ def main():
         print("  Use --force to re-download.")
         return
 
-    RAW_DATA.mkdir(parents=True, exist_ok=True)
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
 
     xlsx_data = download_xlsx(url)
 
     # Also save the xlsx for reference
     xlsx_name = url.rsplit("/", 1)[-1]
-    xlsx_path = RAW_DATA / xlsx_name
+    xlsx_path = RAW_DIR / xlsx_name
     xlsx_path.write_bytes(xlsx_data)
     print(f"  Saved XLSX as {xlsx_path.name}")
 

@@ -30,13 +30,15 @@ import csv
 import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from config import load_config
 from collectors._common import (
-    RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
+    RAW_DIR, USER_AGENT, ACCEPTABLE_LICENSES,
+    setup_shutdown, is_shutting_down,
     is_full_species_name, load_json, save_json,
 )
 
@@ -70,7 +72,7 @@ def photo_url_large(url: str) -> str:
 
 # ── Cache helpers ──────────────────────────────────────────────────────
 
-def _cache_path(kind: str, taxon_id: int) -> 'Path':
+def _cache_path(kind: str, taxon_id: int) -> Path:
     """Return path for a cache file, e.g. raw_data/cache/sound_counts_3.json."""
     return CACHE_DIR / f"{kind}_{taxon_id}.json"
 
@@ -709,12 +711,6 @@ def reconcile_avilist(existing: dict, cfg: dict, delay: float,
 
 # ── Observation photo fallback ─────────────────────────────────────────
 
-# Acceptable iNat photo licenses (NC is fine; only "all rights reserved" rejected)
-ACCEPTABLE_INAT_LICENSES = {
-    "cc0", "cc-by", "cc-by-sa", "cc-by-nc", "cc-by-nc-sa",
-    "cc-by-nd", "cc-by-nc-nd", "pd", "gfdl",
-}
-
 INAT_OBS_URL = "https://api.inaturalist.org/v1/observations"
 OBS_PHOTO_LOOKUP_KEY = "obs_photo_lookup"
 
@@ -762,7 +758,7 @@ def _fetch_obs_photo(inat_id: int, delay: float) -> dict | None:
     for obs in data.get("results", []):
         for photo in obs.get("photos", []):
             lic = photo.get("license_code", "")
-            if lic and lic in ACCEPTABLE_INAT_LICENSES:
+            if lic and lic in ACCEPTABLE_LICENSES:
                 return {
                     "url": photo_url_large(photo.get("url", "")),
                     "attribution": photo.get("attribution", ""),
@@ -797,7 +793,7 @@ def fetch_obs_photos(existing: dict, delay: float,
             already_checked += 1
             continue
         img_lic = rec.get("image_license", "")
-        if rec.get("image_url") and img_lic in ACCEPTABLE_INAT_LICENSES:
+        if rec.get("image_url") and img_lic in ACCEPTABLE_LICENSES:
             continue  # default taxon photo is CC
         need_photo.append((sci, inat_id))
 
