@@ -359,6 +359,7 @@ Each species receives a permanent BirdNET ID in the format `BN{5 digits}` (e.g. 
 | `--dev` | Write to dev/ instead of dist/ |
 | `--merge-only` | Skip taxonomy rebuild, re-merge only |
 | `--no-zip` | Skip zip archive creation |
+| `--reassign-ids` | Regenerate all BirdNET IDs from scratch (pre-release only) |
 | `--dry-run` | Show stats without writing |
 
 The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.

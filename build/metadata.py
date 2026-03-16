@@ -592,7 +592,8 @@ def _save_bn_ids(bn_ids: dict[str, int]) -> None:
 
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    claude: dict = None,
-                   manual_overrides: dict | None = None) -> list[dict]:
+                   manual_overrides: dict | None = None,
+                   reassign_ids: bool = False) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
     Each record:
@@ -701,21 +702,40 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         records.append(record)
 
     # Assign BirdNET species IDs (persistent, append-only)
-    bn_ids = _load_bn_ids()
-    next_id = max(bn_ids.values(), default=0) + 1
-    new_count = 0
-    for rec in records:
-        sci = rec["scientific_name"]
-        if sci not in bn_ids:
-            bn_ids[sci] = next_id
-            next_id += 1
-            new_count += 1
-        rec["birdnet_id"] = f"BN{bn_ids[sci]:05d}"
-    if new_count:
+    if reassign_ids:
+        # Re-sort and reassign all IDs from scratch (pre-release only)
+        group_order_bn = {"Aves": 0, "Mammalia": 1, "Reptilia": 2,
+                          "Amphibia": 3, "Insecta": 4}
+        sorted_names = sorted(
+            [r["scientific_name"] for r in records],
+            key=lambda s: (
+                group_order_bn.get(
+                    next((r["taxon_group"] for r in records
+                          if r["scientific_name"] == s), ""), 99),
+                s,
+            ),
+        )
+        bn_ids = {name: i for i, name in enumerate(sorted_names, start=1)}
         _save_bn_ids(bn_ids)
-        print(f"  BirdNET IDs: {new_count} new (total {len(bn_ids)})")
+        for rec in records:
+            rec["birdnet_id"] = f"BN{bn_ids[rec['scientific_name']]:05d}"
+        print(f"  BirdNET IDs: reassigned {len(bn_ids)} IDs")
     else:
-        print(f"  BirdNET IDs: {len(bn_ids)} (no new)")
+        bn_ids = _load_bn_ids()
+        next_id = max(bn_ids.values(), default=0) + 1
+        new_count = 0
+        for rec in records:
+            sci = rec["scientific_name"]
+            if sci not in bn_ids:
+                bn_ids[sci] = next_id
+                next_id += 1
+                new_count += 1
+            rec["birdnet_id"] = f"BN{bn_ids[sci]:05d}"
+        if new_count:
+            _save_bn_ids(bn_ids)
+            print(f"  BirdNET IDs: {new_count} new (total {len(bn_ids)})")
+        else:
+            print(f"  BirdNET IDs: {len(bn_ids)} (no new)")
 
     # Sort: taxon group, then observations descending
     group_order = {"Aves": 0, "Mammalia": 1, "Reptilia": 2,
@@ -810,6 +830,9 @@ def main():
                         help="Write to dev/ instead of dist/")
     parser.add_argument("--no-zip", action="store_true",
                         help="Skip zip archive creation")
+    parser.add_argument("--reassign-ids", action="store_true",
+                        help="Regenerate all BirdNET IDs from scratch "
+                             "(pre-release only, breaks existing IDs)")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -878,7 +901,8 @@ def main():
     print_manual_override_stats(manual_overrides)
 
     print("\nMerging...")
-    records = build_metadata(taxonomy, ebird, wiki, claude, manual_overrides)
+    records = build_metadata(taxonomy, ebird, wiki, claude, manual_overrides,
+                              reassign_ids=args.reassign_ids)
 
     # Write JSON (atomic)
     json_path = out_dir / "species_metadata.json"
