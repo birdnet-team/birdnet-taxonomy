@@ -424,7 +424,7 @@ app = FastAPI(
     lifespan=lifespan,
     root_path=_root_path,
     docs_url="/docs",
-    redoc_url="/redoc",
+    redoc_url=None,
     openapi_url="/openapi.json",
 )
 
