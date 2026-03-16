@@ -565,7 +565,7 @@ async def image_proxy(scientific_name: str,
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def home(request: FRequest, q: str = "", group: str = "",
-               lang: str = "", sort: str = "", page: int = 1, per_page: int = 51):
+               lang: str = "", sort: str = "obs", page: int = 1, per_page: int = 51):
     """Home page with search and species listing."""
     results = _search(q, group)
 
