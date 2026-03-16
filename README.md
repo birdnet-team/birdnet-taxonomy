@@ -88,25 +88,31 @@ Current manual override support covers image replacement and manual crop anchori
 ## Project Structure
 
 ```
-config.py               # Configuration loader (reads config.yml)
-config.yml              # All settings: taxonomy version, locales, groups, API params
-utils/
-    images.py           # Image pipeline (download, YOLO crop, WebP convert)
-collectors/
-    _common.py          # Shared utilities (rate limiter, JSON I/O, cache, shutdown)
-    avilist.py          # Download AviList checklist (XLSX → CSV)
-    inat.py             # iNaturalist taxa + observation photo fallback
-    ebird.py            # eBird page scraper + common names (62 locales)
-    wikidata.py         # Wikidata SPARQL + Wikimedia Commons licenses
-    wikipedia.py        # Wikipedia summaries, langlinks, image licenses
-    claude.py           # Claude API (shorten long extracts + translate)
-    images.py           # Batch image downloader (smart-crop + save)
+config.py                  # Configuration helpers for config.yml access
+config.yml                 # Project settings: taxonomy version, groups, filters, API params
+requirements.txt           # Python dependencies
 build/
-    metadata.py         # Offline merge of all collected data → final metadata
+    metadata.py            # Merge collected sources into final metadata outputs
+collectors/
+    _common.py             # Shared collector utilities (cache, JSON I/O, shutdown)
+    avilist.py             # Download and normalize AviList taxonomy input
+    claude.py              # Claude enrichment for shortened/translated descriptions
+    ebird.py               # eBird names and localized common-name collection
+    images.py              # Batch image generation for dev/dist outputs
+    inat.py                # iNaturalist taxa, sounds, and observation-photo fallback
+    wikidata.py            # Wikidata licenses and cross-reference metadata
+    wikipedia.py           # Wikipedia summaries, langlinks, and image metadata
+dev/                       # Development metadata snapshots and local build artifacts
+dist/                      # Published metadata and generated site image assets
+overrides/
+    species_overrides.csv  # Git-tracked manual image and crop overrides
+raw_data/                  # Cached upstream source payloads and intermediate collector output
+utils/
+    images.py              # Image download, crop, cache-state, and WebP helpers
 web/
-    server.py           # FastAPI server (HTML + REST API + image proxy)
-    templates/          # Jinja2 templates (home, species detail, base)
-    static/             # Logo and static assets
+    server.py              # FastAPI app serving HTML, REST API, and image endpoints
+    static/                # Static web assets
+    templates/             # Jinja2 templates for home and species pages
 ```
 
 ## Taxon Groups
