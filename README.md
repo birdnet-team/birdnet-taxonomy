@@ -2,7 +2,7 @@
   <img src="birdnet-logo-circle.png" width="250" alt="BirdNET Logo">
 </p>
 
-<h1 align="center">BirdNET+ Taxonomy v2025-11Jun</h1>
+<h1 align="center">BirdNET+ Taxonomy</h1>
 
 <p align="center">
     <a href="https://github.com/birdnet-team/species-data"><img alt="Taxonomy version" src="https://img.shields.io/badge/taxonomy-v0.1-1a5fb4"></a>
@@ -16,6 +16,8 @@ Pipeline for collecting and merging species metadata from multiple sources. Cove
 ## Setup
 
 ```bash
+git clone https://github.com/birdnet-team/species-data.git
+cd species-data
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
