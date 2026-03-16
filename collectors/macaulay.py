@@ -191,6 +191,12 @@ def main():
     args = parser.parse_args()
 
     setup_shutdown()
+    cfg = load_config()
+    ml_cfg = cfg.get("macaulay", {})
+
+    global _rate, ML_API_KEY
+    _rate = RateLimiter(ml_cfg.get("rps", 10))
+    ML_API_KEY = ml_cfg.get("api_key", ML_API_KEY)
 
     print("Loading species list...")
     inat = load_json(INAT_FILE)

@@ -423,6 +423,11 @@ def main():
         _use_cache = False
 
     cfg = load_config()
+    wd_cfg = cfg.get("wikidata", {})
+
+    global _SPARQL_BATCH, _COMMONS_BATCH
+    _SPARQL_BATCH = wd_cfg.get("sparql_batch", 150)
+    _COMMONS_BATCH = wd_cfg.get("commons_batch", 50)
 
     print("Loading species list...")
     species = _load_species_list(cfg)

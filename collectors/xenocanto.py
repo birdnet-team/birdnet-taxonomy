@@ -255,6 +255,12 @@ def main():
     args = parser.parse_args()
 
     setup_shutdown()
+    cfg = load_config()
+    xc_cfg = cfg.get("xenocanto", {})
+
+    global _rate
+    _rate = RateLimiter(xc_cfg.get("rps", 5))
+
     api_key = _get_xc_key()
 
     print("Loading species list...")

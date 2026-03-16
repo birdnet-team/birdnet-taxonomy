@@ -163,10 +163,10 @@ def main() -> None:
                         help="Max species to process (0 = all)")
     parser.add_argument("--group", type=str, default="",
                         help="Only process this taxon group (e.g. Aves)")
-    parser.add_argument("--workers", type=int, default=8,
-                        help="Parallel workers (default: 8)")
-    parser.add_argument("--save-every", type=int, default=200,
-                        help="Save every N completed species (default: 200)")
+    parser.add_argument("--workers", type=int, default=0,
+                        help="Parallel workers (default: from config.yml)")
+    parser.add_argument("--save-every", type=int, default=0,
+                        help="Save every N completed species (default: from config.yml)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be done without saving")
     parser.add_argument("--new-only", action="store_true",
@@ -175,6 +175,16 @@ def main() -> None:
 
     setup_shutdown()
     cfg = load_config()
+    obs_cfg = cfg.get("observationorg", {})
+
+    # Apply config to module-level rate limiter
+    global _rate
+    _rate = RateLimiter(obs_cfg.get("rps", 10))
+
+    if not args.workers:
+        args.workers = obs_cfg.get("workers", 8)
+    if not args.save_every:
+        args.save_every = obs_cfg.get("save_every", 200)
 
     # Load input data
     inat = load_json(INAT_FILE)

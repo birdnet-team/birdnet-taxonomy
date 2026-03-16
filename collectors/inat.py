@@ -857,8 +857,8 @@ def main():
         help="Show species counts with sound observations per group"
     )
     parser.add_argument(
-        "--save-every", type=int, default=500,
-        help="Save progress every N new species"
+        "--save-every", type=int, default=0,
+        help="Save progress every N new species (default: from config.yml)"
     )
     parser.add_argument(
         "--refresh", action="store_true",
@@ -939,6 +939,8 @@ def main():
         return
 
     inat_cfg = cfg.get("inat", {})
+    if not args.save_every:
+        args.save_every = inat_cfg.get("save_every", 500)
     total_new = 0
 
     if not args.avilist_only and not args.obs_photos_only:

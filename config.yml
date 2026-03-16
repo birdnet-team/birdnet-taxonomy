@@ -59,6 +59,7 @@ taxon_groups:
 inat:
   request_delay: 1.1     # seconds between requests (iNat asks ≤1 req/sec)
   all_names: true        # fetch all common name translations
+  save_every: 500        # save progress every N new species
 
 # eBird settings
 ebird:
@@ -128,9 +129,30 @@ claude:
 
 # Image settings (served via /api/image endpoint)
 images:
+  workers: 4             # parallel download threads (--workers override)
   thumb_width: 150       # thumbnail max width (3:2 aspect ratio)
   thumb_height: 100      # thumbnail max height
   thumb_quality: 40      # thumbnail WebP quality (1-100)
   medium_width: 480      # medium max width (3:2 aspect ratio)
   medium_height: 320     # medium max height
   medium_quality: 60     # medium WebP quality (1-100)
+
+# Wikidata / Wikimedia Commons settings
+wikidata:
+  sparql_batch: 150      # species per SPARQL query batch
+  commons_batch: 50      # files per Wikimedia Commons license check
+
+# Macaulay Library settings
+macaulay:
+  rps: 10                # max requests per second
+  api_key: "PUB5447877383"  # public ML taxonomy API key
+
+# Xeno-Canto settings (API key is in .env: XC_API_KEY=...)
+xenocanto:
+  rps: 5                 # max requests per second
+
+# observation.org settings
+observationorg:
+  rps: 10                # max requests per second
+  workers: 8             # parallel workers (--workers override)
+  save_every: 200        # save every N completed species

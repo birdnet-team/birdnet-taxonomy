@@ -249,8 +249,8 @@ def main():
                         help="Save to dev/images/ instead of dist/images/")
     parser.add_argument("--limit", type=int, default=0,
                         help="Max species to process (0 = all)")
-    parser.add_argument("--workers", type=int, default=4,
-                        help="Number of download threads (default: 4)")
+    parser.add_argument("--workers", type=int, default=0,
+                        help="Number of download threads (default: from config.yml)")
     parser.add_argument("--quality", type=int, default=0,
                         help="WebP quality 1-100 (default: from config.yml)")
     parser.add_argument("--dry-run", action="store_true",
@@ -265,6 +265,12 @@ def main():
     setup_shutdown()
     species = _load_species(args.dev)
     sizes, qualities = _load_image_config()
+
+    # Resolve workers default from config
+    if not args.workers:
+        cfg = load_config()
+        args.workers = cfg.get("images", {}).get("workers", 4)
+
     if args.quality:
         qualities = {k: args.quality for k in qualities}
 
