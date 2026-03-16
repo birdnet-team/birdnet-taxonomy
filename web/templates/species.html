@@ -315,7 +315,7 @@
 </div>
 {% endif %}
 
-{% if s.inat_id or s.ebird_code or s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name %}
+{% if s.inat_id or s.ebird_code or s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name or s.observationorg_id %}
 <div class="section">
     <h3>External Identifiers</h3>
     <table class="info-table">
@@ -330,6 +330,9 @@
         {% endif %}
         {% if s.xc_name %}
         <tr><td>Xeno-Canto</td><td><a href="https://xeno-canto.org/species/{{ s.xc_name | replace(' ', '-') }}" target="_blank">{{ s.xc_name }}</a></td></tr>
+        {% endif %}
+        {% if s.observationorg_id %}
+        <tr><td>observation.org</td><td><a href="https://observation.org/species/{{ s.observationorg_id }}/" target="_blank">#{{ s.observationorg_id }}</a></td></tr>
         {% endif %}
         {% if s.gbif_id %}
         <tr><td>GBIF</td><td><a href="https://www.gbif.org/species/{{ s.gbif_id }}" target="_blank">{{ s.gbif_id }}</a></td></tr>

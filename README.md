@@ -11,7 +11,7 @@
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-ff2d55"></a>
 </p>
 
-Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
+Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, amphibians, ray-finned fishes, sharks, crustaceans, arachnids, snails, and cephalopods. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
 
 ## Table of Contents
 
@@ -27,9 +27,10 @@ Pipeline for collecting and merging species metadata from multiple sources. Cove
 - [Step 5 - Wikipedia](#step-5--wikipedia)
 - [Step 6 - Macaulay Library](#step-6--macaulay-library)
 - [Step 7 - Xeno-Canto](#step-7--xeno-canto)
-- [Step 8 - Claude](#step-8--claude)
-- [Step 9 - Images](#step-9--images)
-- [Step 10 - Build](#step-10--build)
+- [Step 8 - observation.org](#step-8--observationorg)
+- [Step 9 - Claude](#step-9--claude)
+- [Step 10 - Images](#step-10--images)
+- [Step 11 - Build](#step-11--build)
 - [Web Server](#web-server)
 - [Data Sources](#data-sources)
 - [License](#license)
@@ -108,6 +109,7 @@ collectors/
     wikidata.py            # Wikidata licenses and cross-reference metadata
     wikipedia.py           # Wikipedia summaries, langlinks, and image metadata
     xenocanto.py           # Xeno-Canto scientific name mapping
+    observationorg.py      # observation.org species ID mapping
 dev/                       # Development metadata snapshots and local build artifacts
 dist/                      # Published metadata and generated site image assets
 overrides/
@@ -132,6 +134,12 @@ Configured in `config.yml`. Birds include all species; other groups are limited 
 | Insecta | 47158 | Sounds only | 5 |
 | Reptilia | 26036 | Sounds only | 1 |
 | Amphibia | 20978 | Sounds only | 5 |
+| Actinopterygii | 47178 | Sounds only | 1 |
+| Chondrichthyes | 196614 | Sounds only | 1 |
+| Malacostraca | 47187 | Sounds only | 1 |
+| Arachnida | 47119 | Sounds only | 1 |
+| Gastropoda | 47114 | Sounds only | 1 |
+| Cephalopoda | 47459 | Sounds only | 1 |
 
 ## Pipeline
 
@@ -146,11 +154,12 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 5. Wikipedia | `python -m collectors.wikipedia` | `raw_data/wikipedia_data.json` |
 | 6. Macaulay Library | `python -m collectors.macaulay` | `raw_data/macaulay_data.json` |
 | 7. Xeno-Canto | `python -m collectors.xenocanto` | `raw_data/xc_data.json` |
-| 8. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
-| 9. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
-| 10. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
+| 8. observation.org | `python -m collectors.observationorg` | `raw_data/observationorg_data.json` |
+| 9. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
+| 10. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
+| 11. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–7 discover Macaulay Library taxon codes and Xeno-Canto name mappings for cross-referencing audio sources. Step 8 uses Claude to shorten excessively long extracts and translate missing locales. Step 9 downloads species images. Step 10 merges everything into the final output — no API calls, purely offline.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 uses Claude to shorten excessively long extracts and translate missing locales. Step 10 downloads species images. Step 11 merges everything into the final output — no API calls, purely offline.
 
 ### Step 1 — AviList
 
@@ -266,7 +275,22 @@ Resolution cascade:
 | `--new-only` | Only species not yet in xc_data.json |
 | `--dry-run` | Preview without API calls |
 
-### Step 8 — Claude
+### Step 8 — observation.org
+
+Maps each species to its [observation.org](https://observation.org) species ID, enabling direct links to species pages on the platform. Observation.org uses AviList taxonomy for birds (same authority as this pipeline), so matching is straightforward.
+
+Resolution cascade:
+1. **Direct API search** — queries `/api/v1/species/search/` by scientific name
+2. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the API
+
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap new species to process (0 = all) |
+| `--group NAME` | Process only this taxon group |
+| `--new-only` | Only species not yet in observationorg_data.json |
+| `--dry-run` | Preview without API calls |
+
+### Step 9 — Claude
 
 Uses the Claude API (Sonnet 4) for two tasks on existing Wikipedia extracts — no content is generated from scratch:
 
@@ -291,7 +315,7 @@ Translation batches are grouped by the exact set of missing locales for each spe
 | `--translate-only` | Only translate missing locales |
 | `--dry-run` | Preview without API calls |
 
-### Step 9 — Images
+### Step 10 — Images
 
 Batch-downloads species images as WebP files with content-aware smart cropping. Each species gets two sizes stored in subdirectories:
 
@@ -321,7 +345,7 @@ The collector also prunes obsolete cached `.webp` files and stale `.state` metad
 | `--new-only` | Only species with no cached image files yet |
 | `--dry-run` | Preview without downloading |
 
-### Step 10 — Build
+### Step 11 — Build
 
 Merges all pre-collected data into the final metadata file. Runs purely offline — no API calls. Two phases:
 

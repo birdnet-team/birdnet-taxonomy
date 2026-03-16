@@ -105,12 +105,14 @@ class SpeciesRecord(BaseModel):
     ebird_code: Optional[str] = Field(None, examples=["mallar3"])
     ml_taxon_code: Optional[str] = Field(None, examples=["mallar3"])
     xc_name: Optional[str] = Field(None, examples=["Anas platyrhynchos"])
+    observationorg_id: Optional[int] = Field(None, description="observation.org species ID", examples=[87959])
     gbif_id: Optional[int] = Field(None, examples=[9761484])
     ncbi_id: Optional[int] = Field(None, examples=[8839])
     avibase_id: Optional[str] = Field(None, examples=["Anas-platyrhynchos"])
     birdlife_id: Optional[int] = Field(None, examples=[22680186])
 
-    @field_validator("birdlife_id", "gbif_id", "ncbi_id", "inat_id", mode="before")
+    @field_validator("birdlife_id", "gbif_id", "ncbi_id", "inat_id",
+                     "observationorg_id", mode="before")
     @classmethod
     def _empty_str_to_none(cls, v):
         if v == "":

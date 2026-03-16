@@ -57,6 +57,7 @@ WIKI_DATA_FILE = RAW_DIR / "wikipedia_data.json"
 CLAUDE_DATA_FILE = RAW_DIR / "claude_data.json"
 MACAULAY_DATA_FILE = RAW_DIR / "macaulay_data.json"
 XC_DATA_FILE = RAW_DIR / "xc_data.json"
+OBSERVATIONORG_DATA_FILE = RAW_DIR / "observationorg_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 BN_IDS_FILE = ROOT / "bn_ids.json"
@@ -370,6 +371,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             "birdlife_id": "",
             "ml_taxon_code": "",
             "xc_name": "",
+            "observationorg_id": "",
             "image_url": "",
             "image_author": "",
             "image_license": "",
@@ -406,6 +408,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             "birdlife_id": "",
             "ml_taxon_code": "",
             "xc_name": "",
+            "observationorg_id": "",
             "image_url": "",
             "image_author": "",
             "image_license": "",
@@ -431,11 +434,13 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
     stats["wikidata_ids"] = id_counts
     stats["wikidata_coverage"] = wd_coverage
 
-    # Pass 3b: Macaulay Library + Xeno-Canto codes
+    # Pass 3b: Macaulay Library + Xeno-Canto + observation.org codes
     macaulay = load_json(MACAULAY_DATA_FILE)
     xc_data = load_json(XC_DATA_FILE)
+    obsorg_data = load_json(OBSERVATIONORG_DATA_FILE)
     ml_count = 0
     xc_count = 0
+    obsorg_count = 0
     for sci in taxonomy:
         ml_code = macaulay.get(sci, {}).get("ml_taxon_code", "")
         if ml_code:
@@ -445,8 +450,13 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
         if xc_name:
             taxonomy[sci]["xc_name"] = xc_name
             xc_count += 1
+        obs_id = obsorg_data.get(sci, {}).get("observationorg_id")
+        if obs_id is not None:
+            taxonomy[sci]["observationorg_id"] = obs_id
+            obsorg_count += 1
     stats["ml_taxon_codes"] = ml_count
     stats["xc_names"] = xc_count
+    stats["observationorg_ids"] = obsorg_count
 
     # Pass 4: eBird common names (non-English locales; AviList is authority
     #          for English bird names, set in Pass 1)
@@ -755,6 +765,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "birdlife_id": tax.get("birdlife_id", ""),
             "ml_taxon_code": tax.get("ml_taxon_code", ""),
             "xc_name": tax.get("xc_name", ""),
+            "observationorg_id": tax.get("observationorg_id", ""),
             "observations_count": tax.get("observations_count", 0),
         }
         records.append(record)
@@ -835,6 +846,7 @@ def records_to_csv(records: list[dict]) -> str:
         "scientific_name", "common_name", "common_name_alt", "taxon_group",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "ml_taxon_code", "xc_name",
+        "observationorg_id",
         "observations_count",
         "description_source",
         "image_url",
