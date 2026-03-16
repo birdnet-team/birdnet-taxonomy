@@ -45,6 +45,8 @@ the reverse proxy either preserves the prefix or strips it before forwarding.
 
 ## Contributing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
+
 Community-maintained manual overrides live in `overrides/species_overrides.csv` and are applied during `python -m build.metadata`.
 
 These overrides are persistent, tracked in Git, and always take precedence over fetched image data.
