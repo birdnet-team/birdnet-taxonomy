@@ -625,6 +625,12 @@ async def download_page(request: FRequest):
     ))
 
 
+@app.get("/about", response_class=HTMLResponse, include_in_schema=False)
+async def about_page(request: FRequest):
+    """About page."""
+    return templates.TemplateResponse("about.html", _template_context(request))
+
+
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
          include_in_schema=False)
 async def species_page(request: FRequest, scientific_name: str):

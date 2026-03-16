@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}About — {{ site_title }}{% endblock %}
+
+{% block extra_head %}
+<style>
+    .about {
+        max-width: 720px;
+        line-height: 1.85;
+        color: var(--text);
+        font-size: 0.95rem;
+    }
+    .about h2 {
+        font-size: 1.5rem;
+        margin: 2.5rem 0 0.6rem;
+        color: var(--text);
+    }
+    .about h2:first-child {
+        margin-top: 1.2rem;
+    }
+    .about p {
+        margin-bottom: 1rem;
+    }
+    .about a {
+        color: var(--accent);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="about">
+
+<h2>What is this?</h2>
+
+<p>
+    This is the species metadata database behind
+    <a href="https://birdnet.cornell.edu">BirdNET</a>, the sound
+    identification system developed at the
+    <a href="https://www.birds.cornell.edu/home/">Cornell Lab of Ornithology</a>
+    and
+    <a href="https://www.tu-chemnitz.de">Chemnitz University of Technology</a>.
+    It provides structured information about every species that BirdNET
+    currently recognizes or may learn to identify in the future: common and
+    scientific names, descriptions, images, and external identifiers, all
+    accessible through a browsable website and a REST API.
+</p>
+
+<h2>Which species are included?</h2>
+
+<p>
+    The database covers birds along with a growing number of other animal
+    groups that produce identifiable sounds, including mammals, insects,
+    amphibians, reptiles, ray-finned fishes, sharks and rays, crustaceans,
+    arachnids, snails, and cephalopods.
+</p>
+
+<p>
+    For birds, we use <a href="https://avilist.org">AviList</a> as our
+    taxonomic authority. AviList is a global bird species checklist that
+    reconciles and unifies major world bird lists. A bird must appear on the
+    current AviList edition to be included in our database. Species found on
+    iNaturalist but absent from AviList are excluded, and species listed on
+    AviList but not yet on iNaturalist are still included so that coverage
+    stays as complete as possible.
+</p>
+
+<p>
+    For all other groups, we include species that have at least one sound
+    recording documented on <a href="https://www.inaturalist.org">iNaturalist</a>.
+    Some groups, like insects and amphibians, require a slightly higher minimum
+    to filter out very sparse or questionable entries. Species flagged as
+    extinct on iNaturalist are excluded from all groups.
+</p>
+
+<h2>Where do the data come from?</h2>
+
+<p>
+    No single source covers everything we need, so we pull from several
+    databases and combine the results. iNaturalist provides the backbone: taxon
+    identifiers, observation counts, common names in dozens of languages, and
+    default taxon photos. eBird contributes species pages, Macaulay Library
+    images, and common names in over sixty regional language variants. Wikidata
+    supplies external identifiers (GBIF, NCBI, Avibase, BirdLife) and
+    Wikimedia Commons images with licensing information. Wikipedia provides
+    species descriptions in about twenty languages, and we use Claude to
+    translate or shorten descriptions for an additional set of target languages
+    where Wikipedia coverage is thin.
+</p>
+
+<p>
+    Each species is also cross-referenced against Macaulay Library and
+    Xeno-Canto so that users can quickly find sound recordings for any species
+    in the database.
+</p>
+
+<h2>How are images chosen?</h2>
+
+<p>
+    We try several sources in order and use the first image that meets our
+    licensing requirements. The preference order is: the default taxon photo
+    from iNaturalist (if it carries a Creative Commons license), then the
+    species image from eBird and Macaulay Library, then Wikimedia Commons via
+    Wikidata, and finally a Creative-Commons-licensed observation photo from
+    iNaturalist as a last resort. For a small number of species we apply manual
+    overrides when the automatically selected image is misleading or of poor
+    quality.
+</p>
+
+<p>
+    Once selected, every image is downloaded, smart-cropped using object
+    detection to keep the animal centered, and saved in two sizes as WebP
+    files: a small thumbnail for the browse grid and a medium version for the
+    species detail page.
+</p>
+
+<h2>How do names and descriptions work?</h2>
+
+<p>
+    Common names come from three sources that complement each other. eBird
+    provides regional name variants (for example, different Spanish names used
+    in Argentina, Chile, and Mexico). iNaturalist adds community-contributed
+    names in languages eBird does not cover. Wikidata labels fill remaining
+    gaps. We merge all of these, giving preference to eBird names where
+    available, and store them per locale so the API can return the right name
+    for any supported language.
+</p>
+
+<p>
+    Descriptions follow a similar pattern. We start with Wikipedia extracts,
+    then overlay higher-quality translations produced by Claude for our core
+    set of languages. If neither Wikipedia nor Claude has a usable text for a
+    given locale, we fall back to the eBird species description in English.
+</p>
+
+<h2>What is a BirdNET ID?</h2>
+
+<p>
+    Every species in the database receives a stable BirdNET identifier,
+    formatted as a five-digit number with a "BN" prefix, for example BN00042.
+    These identifiers are meant to remain constant across releases so that
+    downstream systems can reference a species without worrying about
+    taxonomic name changes. The mapping is stored persistently and new species
+    simply receive the next available number.
+</p>
+
+<h2>Licensing and reuse</h2>
+
+<p>
+    The metadata itself (names, descriptions, identifiers) is available under
+    the project's open-source license. Images, however, carry their own
+    individual licenses: most are Creative Commons in various flavors, and
+    Macaulay Library images are copyrighted by their photographers and used
+    under Cornell's terms. The license for each image is recorded in the
+    dataset so you can filter or attribute accordingly.
+</p>
+
+<p>
+    The full dataset is available for download in CSV, JSON, and ZIP formats
+    from the <a href="{{ base }}/download">Download</a> page, and
+    programmatic access is provided through the
+    <a href="{{ base }}/docs" target="_blank" rel="noopener noreferrer">REST API</a>.
+    Source code and documentation live on
+    <a href="https://github.com/birdnet-team/species-data">GitHub</a>.
+</p>
+
+</div>
+{% endblock %}
