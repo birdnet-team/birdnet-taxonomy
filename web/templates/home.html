@@ -49,6 +49,9 @@
                 {% endif %}
                 <div class="sci-name">{{ s.scientific_name }}</div>
                 <div class="meta">
+                    {% if s.birdnet_id %}
+                    <span style="font-weight:500; color: var(--muted); font-size: 0.8rem;">{{ s.birdnet_id }}</span> &middot;
+                    {% endif %}
                     <span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span>
                     {% if s.observations_count %}
                     &middot; {{ "{:,}".format(s.observations_count) }} iNat obs

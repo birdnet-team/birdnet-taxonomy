@@ -459,7 +459,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 entry["image_author"] = _parse_image_author(
                     eb["attribution"], "ebird")
                 entry["image_license"] = ""
-                asset_id = eb["url"].rstrip("/").rsplit("/", 1)[-1]
+                asset_match = re.search(r'/asset/(\d+)', eb["url"])
+                asset_id = asset_match.group(1) if asset_match else ""
                 entry["image_source"] = f"Macaulay Library ML{asset_id}"
                 img_stats["ebird"] += 1
 
