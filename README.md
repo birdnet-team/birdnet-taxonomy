@@ -5,10 +5,10 @@
 <h1 align="center">BirdNET+ Taxonomy</h1>
 
 <p align="center">
-    <a href="https://github.com/birdnet-team/species-data"><img alt="Taxonomy version" src="https://img.shields.io/badge/taxonomy-v0.1-1a5fb4"></a>
+    <a href="https://birdnet.cornell.edu/taxonomy/api/stats"><img alt="Taxonomy version" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fbirdnet.cornell.edu%2Ftaxonomy%2Fapi%2Fstats&query=%24.taxonomy_version&label=taxonomy&color=1a5fb4"></a>
     <a href="https://birdnet.cornell.edu/taxonomy/api/stats"><img alt="Species count" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fbirdnet.cornell.edu%2Ftaxonomy%2Fapi%2Fstats&query=%24.total_species&label=species&color=1f883d"></a>
-    <a href="https://birdnet.cornell.edu/taxonomy/docs"><img alt="API docs" src="https://img.shields.io/badge/API-docs-0a7d34"></a>
-    <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-555555"></a>
+    <a href="https://birdnet.cornell.edu/taxonomy/docs"><img alt="API docs" src="https://img.shields.io/badge/API-docs-0f766e"></a>
+    <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-7c3aed"></a>
 </p>
 
 Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
