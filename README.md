@@ -25,9 +25,11 @@ Pipeline for collecting and merging species metadata from multiple sources. Cove
 - [Step 3 - eBird](#step-3--ebird)
 - [Step 4 - Wikidata](#step-4--wikidata)
 - [Step 5 - Wikipedia](#step-5--wikipedia)
-- [Step 6 - Claude](#step-6--claude)
-- [Step 7 - Images](#step-7--images)
-- [Step 8 - Build](#step-8--build)
+- [Step 6 - Macaulay Library](#step-6--macaulay-library)
+- [Step 7 - Xeno-Canto](#step-7--xeno-canto)
+- [Step 8 - Claude](#step-8--claude)
+- [Step 9 - Images](#step-9--images)
+- [Step 10 - Build](#step-10--build)
 - [Web Server](#web-server)
 - [Data Sources](#data-sources)
 - [License](#license)
@@ -44,10 +46,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For Claude translations and shortening, add your API key to a `.env` file:
+For Claude translations and Xeno-Canto lookups, add API keys to a `.env` file:
 
 ```
 ANTHROPIC_API_KEY=...
+XC_API_KEY=...
 ```
 
 For sub-path deployment behind a reverse proxy (e.g. `https://example.com/taxonomy/`),
@@ -100,8 +103,10 @@ collectors/
     ebird.py               # eBird names and localized common-name collection
     images.py              # Batch image generation for dev/dist outputs
     inat.py                # iNaturalist taxa, sounds, and observation-photo fallback
+    macaulay.py            # Macaulay Library taxon code discovery
     wikidata.py            # Wikidata licenses and cross-reference metadata
     wikipedia.py           # Wikipedia summaries, langlinks, and image metadata
+    xenocanto.py           # Xeno-Canto scientific name mapping
 dev/                       # Development metadata snapshots and local build artifacts
 dist/                      # Published metadata and generated site image assets
 overrides/
@@ -138,11 +143,13 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 3. eBird | `python -m collectors.ebird` | `raw_data/ebird_data.json`, `raw_data/ebird_names.json` |
 | 4. Wikidata | `python -m collectors.wikidata` | `raw_data/wikidata_data.json` |
 | 5. Wikipedia | `python -m collectors.wikipedia` | `raw_data/wikipedia_data.json` |
-| 6. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
-| 7. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
-| 8. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
+| 6. Macaulay Library | `python -m collectors.macaulay` | `raw_data/macaulay_data.json` |
+| 7. Xeno-Canto | `python -m collectors.xenocanto` | `raw_data/xc_data.json` |
+| 8. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
+| 9. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
+| 10. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Step 6 uses Claude to shorten excessively long extracts and translate missing locales. Step 7 downloads species images. Step 8 merges everything into the final output — no API calls, purely offline.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–7 discover Macaulay Library taxon codes and Xeno-Canto name mappings for cross-referencing audio sources. Step 8 uses Claude to shorten excessively long extracts and translate missing locales. Step 9 downloads species images. Step 10 merges everything into the final output — no API calls, purely offline.
 
 ### Step 1 — AviList
 
@@ -223,7 +230,42 @@ Rate-limited (default 25 rps), with exponential backoff on 429s and server error
 | `--refetch` | Re-fetch species with few locale extracts (conflicts with `--new-only`) |
 | `--dry-run` | Preview without fetching |
 
-### Step 6 — Claude
+### Step 6 — Macaulay Library
+
+Discovers Macaulay Library taxon codes for all species. Birds use their eBird species code (e.g. `eurblk1`); non-birds get a `t-`prefixed numeric ID (e.g. `t-11032766`) resolved via the ML taxonomy API.
+
+Resolution cascade:
+1. **eBird code** — reuses existing eBird species code for birds (instant, no API call)
+2. **ML taxonomy API** — queries by scientific name for non-birds
+3. **Wikidata P10794** — bulk SPARQL lookup of Macaulay Library taxon IDs
+4. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the ML API
+
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap new species to process (0 = all) |
+| `--group NAME` | Process only this taxon group |
+| `--new-only` | Only species not yet in macaulay_data.json |
+| `--dry-run` | Preview without API calls |
+
+### Step 7 — Xeno-Canto
+
+Maps each species to its Xeno-Canto scientific name. XC uses IOC taxonomy which may differ from the iNat/eBird names used in this pipeline (e.g. `Dryobates pubescens` → `Picoides pubescens`). Requires an API key in `.env` (`XC_API_KEY=...`).
+
+Resolution cascade:
+1. **Wikidata P2426** — bulk SPARQL fetch of XC species IDs (~31k species pre-mapped)
+2. **XC API direct** — queries by genus + epithet
+3. **XC API epithet search** — epithet-only search with group filter (catches genus transfers)
+4. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the XC API
+5. **XC English name search** — last resort, matches by common name
+
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap new species to process (0 = all) |
+| `--group NAME` | Process only this taxon group |
+| `--new-only` | Only species not yet in xc_data.json |
+| `--dry-run` | Preview without API calls |
+
+### Step 8 — Claude
 
 Uses the Claude API (Sonnet 4) for two tasks on existing Wikipedia extracts — no content is generated from scratch:
 
@@ -248,7 +290,7 @@ Translation batches are grouped by the exact set of missing locales for each spe
 | `--translate-only` | Only translate missing locales |
 | `--dry-run` | Preview without API calls |
 
-### Step 7 — Images
+### Step 9 — Images
 
 Batch-downloads species images as WebP files with content-aware smart cropping. Each species gets two sizes stored in subdirectories:
 
@@ -278,7 +320,7 @@ The collector also prunes obsolete cached `.webp` files and stale `.state` metad
 | `--new-only` | Only species with no cached image files yet |
 | `--dry-run` | Preview without downloading |
 
-### Step 8 — Build
+### Step 10 — Build
 
 Merges all pre-collected data into the final metadata file. Runs purely offline — no API calls. Two phases:
 
@@ -405,6 +447,8 @@ curl '/api/species/eurblk1'
 - **[Wikidata](https://www.wikidata.org)** — External identifiers (GBIF, NCBI, Avibase, BirdLife), eBird codes, common name labels, and P18 images via SPARQL. Data available under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
 - **[Wikipedia](https://www.wikipedia.org)** — English summaries and localized article links via the REST and MediaWiki APIs. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2025). AviList Core Team, 2025. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2025](https://doi.org/10.2173/avilist.v2025).
+- **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.
+- **[Xeno-Canto](https://xeno-canto.org)** — Scientific name mappings for cross-referencing the world's largest shared bird and wildlife sound collection.
 - **[Claude](https://www.anthropic.com/claude)** (Anthropic) — AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts.
 
 ## License

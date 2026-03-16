@@ -55,6 +55,8 @@ EBIRD_NAMES_FILE = RAW_DIR / "ebird_names.json"
 WIKIDATA_FILE = RAW_DIR / "wikidata_data.json"
 WIKI_DATA_FILE = RAW_DIR / "wikipedia_data.json"
 CLAUDE_DATA_FILE = RAW_DIR / "claude_data.json"
+MACAULAY_DATA_FILE = RAW_DIR / "macaulay_data.json"
+XC_DATA_FILE = RAW_DIR / "xc_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 
@@ -325,6 +327,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             "ncbi_id": "",
             "avibase_id": "",
             "birdlife_id": "",
+            "ml_taxon_code": "",
+            "xc_name": "",
             "image_url": "",
             "image_author": "",
             "image_license": "",
@@ -353,6 +357,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             "ncbi_id": "",
             "avibase_id": "",
             "birdlife_id": "",
+            "ml_taxon_code": "",
+            "xc_name": "",
             "image_url": "",
             "image_author": "",
             "image_license": "",
@@ -377,6 +383,23 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
                 id_counts[key] += 1
     stats["wikidata_ids"] = id_counts
     stats["wikidata_coverage"] = wd_coverage
+
+    # Pass 3b: Macaulay Library + Xeno-Canto codes
+    macaulay = load_json(MACAULAY_DATA_FILE)
+    xc_data = load_json(XC_DATA_FILE)
+    ml_count = 0
+    xc_count = 0
+    for sci in taxonomy:
+        ml_code = macaulay.get(sci, {}).get("ml_taxon_code", "")
+        if ml_code:
+            taxonomy[sci]["ml_taxon_code"] = ml_code
+            ml_count += 1
+        xc_name = xc_data.get(sci, {}).get("xc_name", "")
+        if xc_name:
+            taxonomy[sci]["xc_name"] = xc_name
+            xc_count += 1
+    stats["ml_taxon_codes"] = ml_count
+    stats["xc_names"] = xc_count
 
     # Pass 4: eBird common names (authority for bird names)
     ebird_name_counts: dict[str, int] = {}
@@ -651,6 +674,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "ncbi_id": tax.get("ncbi_id", ""),
             "avibase_id": tax.get("avibase_id", ""),
             "birdlife_id": tax.get("birdlife_id", ""),
+            "ml_taxon_code": tax.get("ml_taxon_code", ""),
+            "xc_name": tax.get("xc_name", ""),
             "observations_count": tax.get("observations_count", 0),
         }
         records.append(record)
@@ -711,7 +736,8 @@ def records_to_csv(records: list[dict]) -> str:
         "image_url",
         "image_author", "image_license", "image_source",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
-        "avibase_id", "birdlife_id", "observations_count",
+        "avibase_id", "birdlife_id", "ml_taxon_code", "xc_name",
+        "observations_count",
     ]
     locale_cols = [f"common_name_{loc}" for loc in top_locales]
     fieldnames = base_cols + locale_cols
