@@ -575,6 +575,8 @@ async def home(request: FRequest, q: str = "", group: str = "",
         results = sorted(results, key=lambda r: (r.get("common_name") or r.get("scientific_name", "")).lower(), reverse=True)
     elif sort == "obs":
         results = sorted(results, key=lambda r: r.get("observations_count", 0) or 0, reverse=True)
+    elif sort == "bn":
+        results = sorted(results, key=lambda r: r.get("birdnet_id") or "")
 
     total = len(results)
     start = (page - 1) * per_page
