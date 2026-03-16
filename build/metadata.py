@@ -338,11 +338,26 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             match_source = "non_bird"
             stats["non_bird"] += 1
 
+        # For birds matched to AviList, use AviList English name as authority;
+        # keep Clements/eBird name as alternative for American audience.
+        pref_name = rec.get("preferred_common_name", "")
+        alt_name = ""
+        if is_bird and avi_row:
+            avilist_en = (avi_row.get("common_name_avilist") or
+                          avi_row.get("common_name_clements") or "")
+            clements_en = avi_row.get("common_name_clements") or ""
+            if avilist_en:
+                pref_name = avilist_en
+            # Store Clements name as alt only if it differs from AviList
+            if clements_en and clements_en != pref_name:
+                alt_name = clements_en
+
         taxonomy[sci_name] = {
             "inat_id": rec["inat_id"],
             "taxon_group": rec.get("taxon_group", ""),
             "iconic_taxon_name": rec.get("iconic_taxon_name", ""),
-            "preferred_common_name": rec.get("preferred_common_name", ""),
+            "preferred_common_name": pref_name,
+            "common_name_alt": alt_name,
             "common_names": {
                 LOCALE_NORMALIZE.get(k, k): v
                 for k, v in rec.get("common_names", {}).items()
@@ -361,6 +376,9 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             "image_source": "",
             "match_source": match_source,
         }
+        # Ensure AviList English name is also set as common_names.en
+        if is_bird and avi_row and pref_name:
+            taxonomy[sci_name]["common_names"]["en"] = pref_name
 
     # Pass 2: Add AviList-only species
     for row in avilist_rows:
@@ -370,12 +388,15 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             continue
 
         sci = row["scientific_name"]
-        en = row["common_name_clements"] or row["common_name_avilist"] or ""
+        en = row["common_name_avilist"] or row["common_name_clements"] or ""
+        clements_en = row["common_name_clements"] or ""
+        alt_en = clements_en if clements_en and clements_en != en else ""
         taxonomy[sci] = {
             "inat_id": None,
             "taxon_group": "Aves",
             "iconic_taxon_name": "Aves",
             "preferred_common_name": en,
+            "common_name_alt": alt_en,
             "common_names": {"en": en} if en else {},
             "observations_count": 0,
             "ebird_code": row["ebird_code"],
@@ -427,7 +448,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
     stats["ml_taxon_codes"] = ml_count
     stats["xc_names"] = xc_count
 
-    # Pass 4: eBird common names (authority for bird names)
+    # Pass 4: eBird common names (non-English locales; AviList is authority
+    #          for English bird names, set in Pass 1)
     ebird_name_counts: dict[str, int] = {}
     if ebird_names:
         for sci, entry in taxonomy.items():
@@ -435,7 +457,11 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
             if not code:
                 continue
             names = ebird_names.get(code, {})
+            is_bird = entry.get("taxon_group") == "Aves"
             for loc, name in names.items():
+                # Don't overwrite English name for birds — AviList is authority
+                if loc == "en" and is_bird:
+                    continue
                 entry["common_names"][loc] = name
                 ebird_name_counts[loc] = ebird_name_counts.get(loc, 0) + 1
     stats["ebird_names"] = ebird_name_counts
@@ -709,6 +735,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "birdnet_id": None,
             "scientific_name": sci_name,
             "common_name": tax.get("preferred_common_name", ""),
+            "common_name_alt": tax.get("common_name_alt", ""),
             "taxon_group": tax.get("taxon_group", ""),
             "common_names": tax.get("common_names", {}),
             "descriptions": descriptions,
@@ -805,7 +832,7 @@ def records_to_csv(records: list[dict]) -> str:
 
     base_cols = [
         "birdnet_id",
-        "scientific_name", "common_name", "taxon_group",
+        "scientific_name", "common_name", "common_name_alt", "taxon_group",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "ml_taxon_code", "xc_name",
         "observations_count",

@@ -98,6 +98,7 @@ class SpeciesRecord(BaseModel):
     birdnet_id: Optional[str] = Field(None, examples=["BN00498"])
     scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
     common_name: str = Field("", examples=["Mallard"])
+    common_name_alt: Optional[str] = Field(None, description="Alternative English name (Clements/eBird)", examples=["Rock Pigeon"])
     taxon_group: str = Field("", examples=["Aves"])
     observations_count: Optional[int] = Field(None, examples=[829418])
     inat_id: Optional[int] = Field(None, examples=[6930])

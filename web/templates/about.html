@@ -116,13 +116,17 @@
 <h2>How do names and descriptions work?</h2>
 
 <p>
-    Common names come from three sources that complement each other. eBird
-    provides regional name variants (for example, different Spanish names used
-    in Argentina, Chile, and Mexico). iNaturalist adds community-contributed
-    names in languages eBird does not cover. Wikidata labels fill remaining
-    gaps. We merge all of these, giving preference to eBird names where
-    available, and store them per locale so the API can return the right name
-    for any supported language.
+    Common names come from three sources that complement each other. For
+    birds, the primary English name is taken from
+    <a href="https://avilist.org">AviList</a>, our taxonomic authority,
+    ensuring consistency with the accepted species list. eBird provides
+    additional regional name variants in other languages (for example,
+    different Spanish names used in Argentina, Chile, and Mexico). iNaturalist
+    adds community-contributed names in languages eBird does not cover.
+    Wikidata labels fill remaining gaps. We merge all of these, giving
+    preference to AviList for English bird names and eBird for other locales,
+    and store them per locale so the API can return the right name for any
+    supported language.
 </p>
 
 <p>

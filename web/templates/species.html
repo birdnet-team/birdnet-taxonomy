@@ -223,6 +223,7 @@
 
     <div class="species-info">
         <h1>{{ s.common_name or s.scientific_name }}</h1>
+        {% if s.common_name_alt %}<div style="font-size: 0.95rem; color: var(--muted); margin-bottom: 0.2rem;">also known as {{ s.common_name_alt }}</div>{% endif %}
         <div class="sci-name">{{ s.scientific_name }}</div>
 
         <table class="info-table">
