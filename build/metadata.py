@@ -81,14 +81,34 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
     elif source == "inat" or text.startswith("(c)"):
         text = re.sub(r"^\(c\)\s*", "", text, flags=re.IGNORECASE)
         text = re.sub(r"\(CC[^)]*\)", "", text)
-        # "uploaded by X" → keep only X
-        m = re.search(r",?\s*uploaded\s+by\s+(.+)", text, flags=re.IGNORECASE)
+        # Strip full-width parenthesised CC tags (Chinese)
+        text = re.sub(r"（CC[^）]*）", "", text)
+        # "uploaded by X" → keep only X  (+ multilingual variants)
+        m = re.search(
+            r",?\s*(?:uploaded\s+by|uploadet\s+af|subido\s+por"
+            r"|carregado\s+por|загрузил|lähettänyt|feltöltötte:"
+            r"|によって投稿されました"
+            r"|由\s*.+?\s*上传"
+            r")\s*(.+)",
+            text, flags=re.IGNORECASE)
         if m:
             text = m.group(1)
-        # Strip rights / copyright boilerplate
-        text = re.sub(r",?\s*(no|some|all)\s+(known\s+)?(copy)?rights?\s+"
-                       r"(reserved|restrictions).*", "", text,
-                       flags=re.IGNORECASE)
+        # Strip rights / copyright boilerplate (multilingual)
+        text = re.sub(
+            r",?\s*(?:"
+            r"(?:no|some|all)\s+(?:known\s+)?(?:copy)?rights?\s+(?:reserved|restrictions)"
+            r"|alcuni\s+diritti\s+riservati"
+            r"|certains\s+droits\s+réservés"
+            r"|kai\s+kurios\s+teisės\s+saugomos"
+            r"|visos\s+teisės\s+saugomos"
+            r"|nogle\s+rettigheder\s+forbeholdes"
+            r"|некоторые\s+права\s+защищены"
+            r"|все\s+права\s+защищены"
+            r"|нет\s+известных\s+ограничений\s+авторского\s+права.*"
+            r"|nėra\s+žinomų\s+autorinių\s+teisių\s+apribojimų.*"
+            r"|保留部分权利.*"
+            r"|no\s+known\s+copyright\s+restrictions.*"
+            r").*", "", text, flags=re.IGNORECASE)
 
     # Sanitise: strip bracketed content, emoji, and non-name characters
     text = re.sub(r"\s*[\(\[][^)\]]*[\)\]]", "", text)   # (...) and [...]
@@ -101,7 +121,7 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
     text = re.sub(r"[<>{}|\\^~`/]", "", text)             # stray markup/path chars
     text = re.sub(r"\s+", " ", text)                       # collapse whitespace
 
-    return text.strip(" ,.") if text.strip(" ,.") else ""
+    return text.strip(" ,.\u3001\uff0c") if text.strip(" ,.\u3001\uff0c") else ""
 
 
 
