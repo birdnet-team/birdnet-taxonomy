@@ -25,10 +25,13 @@ add the URL prefix:
 
 ```
 ROOT_PATH=/taxonomy
+HOST_NAME=https://birdnet.cornell.edu
 ```
 
 The web app will then generate links under that prefix and accepts deployments where
 the reverse proxy either preserves the prefix or strips it before forwarding.
+
+`HOST_NAME` is used for absolute image URLs in built metadata and API responses. With the example above, JSON image URLs and CSV `image_url` values are emitted under `https://birdnet.cornell.edu/taxonomy/api/image/...`.
 
 
 ## Contributing
@@ -252,6 +255,13 @@ Assembles per-species descriptions from multiple sources with the following prio
 
 The effective priority is **Claude > Wikipedia > eBird**, applied per-locale.
 
+The JSON output contains full multilingual descriptions. The CSV output is a lighter export and does not include description excerpts.
+
+Image fields in the final metadata:
+
+- JSON metadata stores an `image` object with `src`, `thumb`, and `medium`
+- CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
+
 ```bash
 python -m build.metadata              # full rebuild → dist/species_metadata.{json,csv,zip}
 python -m build.metadata --merge-only # skip taxonomy, re-merge only
@@ -293,7 +303,7 @@ HTML species pages redirect to the canonical scientific name URL when accessed v
 | `/` | Home page — search, browse, filter by taxon group |
 | `/species/{name}` | Species detail page (HTML) |
 | `/api/image/{name}?size=` | Image proxy — `thumb` (150×100), `medium` (480×320, default) |
-| `/api/species` | List species (JSON/CSV) with filtering, sorting, field selection |
+| `/api/species` | List species (JSON/CSV) with filtering, sorting, field selection; CSV omits description excerpts |
 | `/api/species/{name}` | Single species detail (JSON) with field selection |
 | `/api/search?q=` | Search species by name with full query options |
 | `/api/fields` | List all available field names |

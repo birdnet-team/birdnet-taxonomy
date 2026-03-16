@@ -56,8 +56,9 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
     "avibase_id": "Anas-platyrhynchos",
     "birdlife_id": 22680186,
     "image": {
-        "thumb": "/api/image/Anas platyrhynchos?size=thumb",
-        "medium": "/api/image/Anas platyrhynchos?size=medium",
+        "src": "https://static.inaturalist.org/photos/123/original.jpeg",
+        "thumb": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=thumb",
+        "medium": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=medium",
         "source": "inat",
         "author": "anonymous",
         "license": "cc-by-sa",
@@ -105,8 +106,9 @@ class SpeciesRecord(BaseModel):
         None,
         description="Image proxy URLs and attribution",
         examples=[{
-            "thumb": "/api/image/Anas platyrhynchos?size=thumb",
-            "medium": "/api/image/Anas platyrhynchos?size=medium",
+            "src": "https://static.inaturalist.org/photos/123/original.jpeg",
+            "thumb": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=thumb",
+            "medium": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=medium",
             "source": "inat",
             "author": "anonymous",
             "license": "cc-by-sa",
@@ -183,20 +185,27 @@ WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
-def _load_root_path() -> str:
-    """Load and normalize the deployment URL prefix from .env or env vars."""
-    root_path = ""
+def _load_env_value(name: str) -> str:
+    """Load a single env value from .env first, then process env vars."""
     env_file = ROOT / ".env"
     if env_file.exists():
         for line in env_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("ROOT_PATH="):
-                root_path = line.split("=", 1)[1].strip().strip("\"'")
-                break
-    if not root_path:
-        root_path = os.environ.get("ROOT_PATH", "").strip().strip("\"'")
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1].strip().strip("\"'")
+    return os.environ.get(name, "").strip().strip("\"'")
+
+
+def _load_root_path() -> str:
+    """Load and normalize the deployment URL prefix from .env or env vars."""
+    root_path = _load_env_value("ROOT_PATH")
     if not root_path or root_path == "/":
         return ""
     return "/" + root_path.strip("/")
+
+
+def _load_host_name() -> str:
+    """Load and normalize the public host name used for absolute image URLs."""
+    return _load_env_value("HOST_NAME").rstrip("/")
 
 
 def _with_root_path(path: str) -> str:
@@ -206,12 +215,19 @@ def _with_root_path(path: str) -> str:
     return f"{_root_path}{path}" if _root_path else path
 
 
+def _with_image_prefix(path: str) -> str:
+    """Prefix an image/API path with HOST_NAME and ROOT_PATH when available."""
+    rooted = _with_root_path(path)
+    return f"{_host_name}{rooted}" if _host_name else rooted
+
+
 def _quote_path(value: Any) -> str:
     """Quote a path segment for safe inclusion in URLs."""
     return quote(str(value), safe="")
 
 
 _root_path = _load_root_path()
+_host_name = _load_host_name()
 
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"
 
@@ -618,6 +634,7 @@ def _refresh_field_set():
     # Replace internal image_* keys with the API-facing 'image' key
     for k in ("image_url", "image_source", "image_author", "image_license"):
         fields.discard(k)
+    fields.discard("image_url_cropped")
     fields.add("image")
     _ALL_FIELDS = fields
 
@@ -625,23 +642,31 @@ def _refresh_field_set():
 def _api_record(record: dict) -> dict:
     """Transform a raw data record for API output.
 
-    Replaces the internal ``image_url`` / ``image_source`` / ``image_author`` /
-    ``image_license`` fields with a single ``image`` dict that contains proxy
-    URLs pointing to our server plus attribution metadata.
+    Normalizes image data into a single ``image`` dict containing source and
+    proxy URLs plus attribution metadata.
     """
     rec = dict(record)  # shallow copy
 
     sci = rec.get("scientific_name", "")
+    image = rec.get("image")
     url = rec.pop("image_url", None)
     source = rec.pop("image_source", None)
     author = rec.pop("image_author", None)
     lic = rec.pop("image_license", None)
+    rec.pop("image_url_cropped", None)
 
-    if url and sci:
-        img: dict[str, str] = {
-            "thumb": _with_root_path(f"/api/image/{_quote_path(sci)}?size=thumb"),
-            "medium": _with_root_path(f"/api/image/{_quote_path(sci)}?size=medium"),
+    if isinstance(image, dict):
+        img = dict(image)
+    elif url and sci:
+        img = {
+            "src": url,
+            "thumb": _with_image_prefix(f"/api/image/{_quote_path(sci)}?size=thumb"),
+            "medium": _with_image_prefix(f"/api/image/{_quote_path(sci)}?size=medium"),
         }
+    else:
+        img = None
+
+    if img:
         if source:
             img["source"] = source
         if author:
@@ -712,7 +737,7 @@ def _filter_species(data: list[dict], *,
 
     if has_image:
         want = has_image.lower() in ("true", "1", "yes")
-        result = [r for r in result if bool(r.get("image_url")) == want]
+        result = [r for r in result if bool((r.get("image") or {}).get("medium") or r.get("image_url")) == want]
 
     if has_description:
         want = has_description.lower() in ("true", "1", "yes")
@@ -758,13 +783,16 @@ def _sort_species(data: list[dict], sort: str) -> list[dict]:
 def _to_csv(records: list[dict], fields: str | None = None) -> str:
     """Convert list of records to CSV string.
 
-    Nested dicts (common_names, descriptions) are JSON-encoded in cells.
+    Nested dicts are JSON-encoded in cells, except description excerpts,
+    which are omitted from CSV exports.
     """
     if not records:
         return ""
 
+    blocked = {"descriptions", "description"}
+
     if fields:
-        columns = [f.strip() for f in fields.split(",") if f.strip()]
+        columns = [f.strip() for f in fields.split(",") if f.strip() and f.strip() not in blocked]
     else:
         # Deterministic column order: fixed columns first, rest sorted
         priority = [
@@ -774,6 +802,7 @@ def _to_csv(records: list[dict], fields: str | None = None) -> str:
         all_keys: set[str] = set()
         for r in records:
             all_keys.update(r.keys())
+        all_keys -= blocked
         columns = [c for c in priority if c in all_keys]
         columns += sorted(all_keys - set(columns))
 

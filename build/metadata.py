@@ -38,6 +38,7 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
+from urllib.parse import quote
 from config import load_config
 from collectors._common import ROOT, RAW_DIR, is_full_species_name, load_json, save_json
 
@@ -65,6 +66,38 @@ LOCALE_NORMALIZE: dict[str, str] = {
     "nb": "no",
     "pt-br": "pt",
 }
+
+
+def _load_env_value(name: str) -> str:
+    """Load a single env value from .env first, then process env vars."""
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1].strip().strip("\"'")
+    return os.environ.get(name, "").strip().strip("\"'")
+
+
+def _load_root_path() -> str:
+    """Load and normalize the deployment URL prefix."""
+    root_path = _load_env_value("ROOT_PATH")
+    if not root_path or root_path == "/":
+        return ""
+    return "/" + root_path.strip("/")
+
+
+def _load_host_name() -> str:
+    """Load and normalize the public host name used for absolute URLs."""
+    return _load_env_value("HOST_NAME").rstrip("/")
+
+
+def _image_url_prefix() -> str:
+    """Absolute image URL prefix, or a relative root-path prefix if no host is set."""
+    host = _load_host_name()
+    root_path = _load_root_path()
+    if host:
+        return f"{host}{root_path}"
+    return root_path
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +598,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     Each record:
       scientific_name, common_name, taxon_group, common_names,
       descriptions, description_source, wikipedia_urls,
-      image_url, image_author, image_license, image_source,
+            image, image_author, image_license, image_source,
       inat_id, ebird_code, gbif_id, ncbi_id, avibase_id, birdlife_id,
       observations_count
     """
@@ -576,6 +609,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         claude = {}
     if manual_overrides is None:
         manual_overrides = {}
+
+    image_prefix = _image_url_prefix()
 
     for sci_name, tax in taxonomy.items():
         if not is_full_species_name(sci_name):
@@ -630,6 +665,14 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         image_author = override.get("image_author") or tax.get("image_author", "")
         image_license = override.get("image_license") or tax.get("image_license", "")
         image_source = override.get("image_source") or tax.get("image_source", "")
+        image = None
+        if image_url:
+            encoded_sci = quote(sci_name, safe='')
+            image = {
+                "src": image_url,
+                "thumb": f"{image_prefix}/api/image/{encoded_sci}?size=thumb",
+                "medium": f"{image_prefix}/api/image/{encoded_sci}?size=medium",
+            }
 
         record = {
             "scientific_name": sci_name,
@@ -640,7 +683,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "description_source": description_source,
             "claude_locales": sorted(claude_locales),
             "wikipedia_urls": wikipedia_urls,
-            "image_url": image_url,
+            "image": image,
             "image_author": image_author,
             "image_license": image_license,
             "image_source": image_source,
@@ -699,7 +742,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
 
 
 def records_to_csv(records: list[dict]) -> str:
-    """Convert records to CSV (top 30 locales as separate columns)."""
+    """Convert records to CSV without description excerpts."""
     locale_counts: Counter[str] = Counter()
     for r in records:
         locale_counts.update(r.get("common_names", {}).keys())
@@ -707,8 +750,9 @@ def records_to_csv(records: list[dict]) -> str:
 
     base_cols = [
         "scientific_name", "common_name", "taxon_group",
-        "description", "description_source",
-        "image_url", "image_author", "image_license", "image_source",
+        "description_source",
+        "image_url",
+        "image_author", "image_license", "image_source",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "observations_count",
     ]
@@ -721,8 +765,7 @@ def records_to_csv(records: list[dict]) -> str:
 
     for rec in records:
         row = {k: rec.get(k, "") for k in base_cols}
-        # Flatten descriptions.en → description for CSV
-        row["description"] = rec.get("descriptions", {}).get("en", "")
+        row["image_url"] = (rec.get("image") or {}).get("medium", "")
         for loc in top_locales:
             row[f"common_name_{loc}"] = rec.get("common_names", {}).get(loc, "")
         writer.writerow(row)
