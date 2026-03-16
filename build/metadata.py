@@ -492,7 +492,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict]) -> tuple[dict, dict]:
         wd_img = wd.get("image")
         if wd_img and wd_img.get("url"):
             entry["image_url"] = wd_img["url"]
-            entry["image_author"] = wd_img.get("attribution", "")
+            entry["image_author"] = _parse_image_author(
+                wd_img.get("attribution", ""), "wikimedia")
             entry["image_license"] = wd_img.get("license", "")
             entry["image_source"] = "Wikimedia"
             img_stats["wikimedia"] += 1
@@ -685,6 +686,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         override = manual_overrides.get(sci_name, {})
         image_url = override.get("image_url") or tax.get("image_url", "")
         image_author = override.get("image_author") or tax.get("image_author", "")
+        image_author = re.sub(r"\s+", " ", image_author).strip()
         image_license = override.get("image_license") or tax.get("image_license", "")
         image_source = override.get("image_source") or tax.get("image_source", "")
         image = None
