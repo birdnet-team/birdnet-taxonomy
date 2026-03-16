@@ -30,6 +30,26 @@ ROOT_PATH=/taxonomy
 The web app will then generate links under that prefix and accepts deployments where
 the reverse proxy either preserves the prefix or strips it before forwarding.
 
+
+## Contributing
+
+Community-maintained manual overrides live in `overrides/species_overrides.csv` and are applied during `python -m build.metadata`.
+
+These overrides are persistent, tracked in Git, and always take precedence over fetched image data.
+
+If an override changes the effective image URL or crop anchor, the image pipeline regenerates the same named `.webp` file in place. Cache freshness is tracked separately in per-image JSON sidecars under `dev/images/*/.state/` or `dist/images/*/.state/`.
+
+Supported columns:
+
+- `scientific_name` — required, exact species name
+- `image_url`, `image_author`, `image_license`, `image_source` — optional, but if any one is set then all four are required and replace the fetched image metadata
+- `image_crop_anchor` — optional 3x3 crop anchor (`1`..`9`), where `5` is center crop, `3` is top-right, `7` is bottom-left, etc.
+- `source_url`, `notes` — optional review context for contributors
+
+Build validation is strict. The build fails on duplicate species rows, invalid crop anchors, partial image overrides, or species names not present in the taxonomy.
+
+Current manual override support covers image replacement and manual crop anchoring. The crop anchor bypasses smart crop and uses a fixed 3×3 grid position in the final image pipeline.
+
 ## Project Structure
 
 ```
@@ -191,9 +211,15 @@ Batch-downloads species images as WebP files with content-aware smart cropping. 
 
 **Filename format:** `<scientific name>_<common name>_<author>.webp`
 
+**Cache state:** each generated image has a sidecar JSON file in `.state/` storing the effective source URL and optional manual crop anchor. This keeps filenames stable while still forcing regeneration when an override changes.
+
 **Smart cropping** uses YOLOv8-nano (ONNX) for animal detection. The model prefers COCO animal classes (bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe) and centers the crop on the detected subject. For tall subjects (e.g. a woodpecker on a trunk), the crop prefers the upper portion to keep the head visible. Falls back to center-crop if no animal is detected or if the ONNX runtime is unavailable.
 
+When `image_crop_anchor` is set in `overrides/species_overrides.csv`, smart crop is bypassed and a fixed 3×3 anchor crop is used instead.
+
 **Dummy images:** On startup, generates a grayscale dummy WebP (neutral gray background with centered BirdNET logo) for each size. When a download or conversion fails, the dummy is copied as the species' named file so every species has an image file.
+
+The collector also prunes obsolete cached `.webp` files and stale `.state` metadata left behind by older naming schemes or old fallback files.
 
 ```bash
 python -m collectors.images              # download to dist/images/

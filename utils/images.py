@@ -2,13 +2,15 @@
 Shared image utilities: download, crop, resize, and convert to WebP.
 
 Provides a single pipeline for fetching remote images and converting them
-to WebP with content-aware smart cropping.  A lightweight YOLOv8-nano model
+to WebP with content-aware smart cropping. A lightweight YOLOv8-nano model
 detects the animal bounding box and the crop window is placed to include as
-much of the subject as possible.  Falls back to center crop when the model
-is unavailable or no animal is detected.
+much of the subject as possible. Falls back to center crop when the model
+is unavailable or no animal is detected. Cache freshness is tracked in per-
+image JSON sidecars so source URL or manual crop changes can overwrite the
+same human-readable filename in place.
 
-Used by the web server (image proxy endpoint) and can be used by any
-collector or build script that needs processed images.
+Used by the web server (image proxy endpoint) and by the batch image
+collector.
 
 Usage:
     from utils.images import fetch_and_convert, crop_and_resize, ImageSize
@@ -29,6 +31,7 @@ import io
 import logging
 import re
 import unicodedata
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -280,6 +283,33 @@ def _center_crop(img: Image.Image, target_ratio: float) -> Image.Image:
         return img.crop((0, top, w, top + new_h))
 
 
+def _anchor_to_row_col(anchor: int) -> tuple[int, int]:
+    """Convert 1-9 keypad-style anchor into 0-based (row, col)."""
+    idx = anchor - 1
+    return idx // 3, idx % 3
+
+
+def anchor_crop(img: Image.Image, target_ratio: float, anchor: int) -> Image.Image:
+    """Crop using a fixed 3x3 anchor instead of smart detection."""
+    w, h = img.size
+    current_ratio = w / h
+    if abs(current_ratio - target_ratio) < 0.01:
+        return img
+
+    row, col = _anchor_to_row_col(anchor)
+
+    if current_ratio > target_ratio:
+        crop_w = int(h * target_ratio)
+        left_options = [0, max(0, (w - crop_w) // 2), max(0, w - crop_w)]
+        left = left_options[col]
+        return img.crop((left, 0, left + crop_w, h))
+
+    crop_h = int(w / target_ratio)
+    top_options = [0, max(0, (h - crop_h) // 2), max(0, h - crop_h)]
+    top = top_options[row]
+    return img.crop((0, top, w, top + crop_h))
+
+
 def smart_crop(img: Image.Image, target_ratio: float) -> Image.Image:
     """Content-aware crop using YOLOv8 animal detection.
 
@@ -331,13 +361,17 @@ def smart_crop(img: Image.Image, target_ratio: float) -> Image.Image:
         return img.crop((0, top, w, top + crop_h))
 
 
-def crop_and_resize(img: Image.Image, size: ImageSize) -> Image.Image:
+def crop_and_resize(img: Image.Image, size: ImageSize,
+                    crop_anchor: int | None = None) -> Image.Image:
     """Crop to target aspect ratio, then resize to fit within dimensions.
 
     Returns a new RGB image ready to be saved as WebP.
     """
     img = img.convert("RGB")
-    img = smart_crop(img, size.ratio)
+    if crop_anchor is not None:
+        img = anchor_crop(img, size.ratio, crop_anchor)
+    else:
+        img = smart_crop(img, size.ratio)
     img.thumbnail(size.as_tuple(), Image.LANCZOS)
     return img
 
@@ -378,7 +412,8 @@ def download_image(url: str, timeout: int = 30) -> Image.Image | None:
 
 
 def fetch_and_convert(url: str, size: ImageSize,
-                      quality: int = 60) -> bytes | None:
+                      quality: int = 60,
+                      crop_anchor: int | None = None) -> bytes | None:
     """Download image from URL, crop, resize, convert to WebP.
 
     Returns WebP bytes or None on failure.
@@ -387,7 +422,7 @@ def fetch_and_convert(url: str, size: ImageSize,
     if img is None:
         return None
 
-    img = crop_and_resize(img, size)
+    img = crop_and_resize(img, size, crop_anchor=crop_anchor)
     return to_webp(img, quality)
 
 
@@ -422,21 +457,74 @@ def image_filename(scientific_name: str, common_name: str,
     return f"{sci}_{com}_{auth}.webp"
 
 
+def _image_state_dir(image_dir: Path) -> Path:
+    """Directory for per-image cache state metadata."""
+    return image_dir / ".state"
+
+
+def _image_state_path(dest: Path) -> Path:
+    """Path of the JSON sidecar storing the effective image inputs."""
+    return dest.parent / ".state" / f"{dest.name}.json"
+
+
+def _expected_image_state(source_url: str, crop_anchor: int | None) -> dict[str, str | int | None]:
+    return {
+        "source_url": _normalise_url(source_url),
+        "crop_anchor": crop_anchor,
+    }
+
+
+def image_cache_is_current(dest: Path, source_url: str,
+                           crop_anchor: int | None = None) -> bool:
+    """Return True if an existing cached image matches the current inputs."""
+    if not dest.exists():
+        return False
+    state_path = _image_state_path(dest)
+    if not state_path.exists():
+        return False
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return state == _expected_image_state(source_url, crop_anchor)
+
+
+def _write_image_state(dest: Path, source_url: str,
+                       crop_anchor: int | None = None):
+    """Persist the effective image inputs alongside the cached WebP file."""
+    state_dir = _image_state_dir(dest.parent)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = _image_state_path(dest)
+    tmp = state_path.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps(_expected_image_state(source_url, crop_anchor), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp.replace(state_path)
+
+
+def write_image_cache_state(dest: Path, source_url: str,
+                            crop_anchor: int | None = None):
+    """Persist the effective inputs for a cached species image."""
+    _write_image_state(dest, source_url, crop_anchor=crop_anchor)
+
+
 def save_species_image(url: str, scientific_name: str, common_name: str,
                        author: str, size: ImageSize,
-                       image_dir: Path, quality: int = 60) -> Path | None:
+                       image_dir: Path, quality: int = 60,
+                       crop_anchor: int | None = None) -> Path | None:
     """Download, crop, and save a species image with a readable filename.
 
-    Returns the saved path, or None on failure.  Skips if the file already
-    exists on disk.
+    Returns the saved path, or None on failure. Skips work when an existing
+    cached image already matches the current source URL and crop settings.
     """
     fname = image_filename(scientific_name, common_name, author)
     dest = image_dir / fname
 
-    if dest.exists():
+    if image_cache_is_current(dest, url, crop_anchor=crop_anchor):
         return dest
 
-    webp_bytes = fetch_and_convert(url, size, quality)
+    webp_bytes = fetch_and_convert(url, size, quality, crop_anchor=crop_anchor)
     if webp_bytes is None:
         return None
 
@@ -444,4 +532,5 @@ def save_species_image(url: str, scientific_name: str, common_name: str,
     tmp = dest.with_suffix(".tmp")
     tmp.write_bytes(webp_bytes)
     tmp.replace(dest)
+    _write_image_state(dest, url, crop_anchor=crop_anchor)
     return dest

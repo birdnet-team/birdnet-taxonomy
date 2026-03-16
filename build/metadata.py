@@ -52,6 +52,7 @@ WIKIDATA_FILE = RAW_DIR / "wikidata_data.json"
 WIKI_DATA_FILE = RAW_DIR / "wikipedia_data.json"
 CLAUDE_DATA_FILE = RAW_DIR / "claude_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
+MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 
 # Acceptable iNat photo licenses (NC is fine; only "all rights reserved" rejected)
 ACCEPTABLE_INAT_LICENSES = {
@@ -168,6 +169,82 @@ def load_avilist(cfg: dict) -> list[dict]:
                     "common_name_avilist": en_avilist,
                 })
     return rows
+
+
+def load_manual_overrides() -> dict[str, dict]:
+    """Load repo-tracked manual species overrides from CSV."""
+    if not MANUAL_OVERRIDES_FILE.exists():
+        return {}
+
+    overrides: dict[str, dict] = {}
+    with open(MANUAL_OVERRIDES_FILE, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for line_no, row in enumerate(reader, start=2):
+            sci = (row.get("scientific_name") or "").strip()
+            if not sci:
+                raise ValueError(
+                    f"{MANUAL_OVERRIDES_FILE}: line {line_no}: scientific_name is required"
+                )
+            if sci in overrides:
+                raise ValueError(
+                    f"{MANUAL_OVERRIDES_FILE}: line {line_no}: duplicate scientific_name '{sci}'"
+                )
+
+            image_fields = {
+                "image_url": (row.get("image_url") or "").strip(),
+                "image_author": (row.get("image_author") or "").strip(),
+                "image_license": (row.get("image_license") or "").strip(),
+                "image_source": (row.get("image_source") or "").strip(),
+            }
+            has_any_image = any(image_fields.values())
+            has_all_image = all(image_fields.values())
+            if has_any_image and not has_all_image:
+                raise ValueError(
+                    f"{MANUAL_OVERRIDES_FILE}: line {line_no}: image override requires image_url, image_author, image_license, and image_source"
+                )
+
+            crop_anchor_raw = (row.get("image_crop_anchor") or "").strip()
+            crop_anchor = None
+            if crop_anchor_raw:
+                try:
+                    crop_anchor = int(crop_anchor_raw)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{MANUAL_OVERRIDES_FILE}: line {line_no}: invalid image_crop_anchor '{crop_anchor_raw}'"
+                    ) from exc
+                if crop_anchor < 1 or crop_anchor > 9:
+                    raise ValueError(
+                        f"{MANUAL_OVERRIDES_FILE}: line {line_no}: image_crop_anchor must be 1-9"
+                    )
+
+            overrides[sci] = {
+                **image_fields,
+                "image_crop_anchor": crop_anchor,
+                "source_url": (row.get("source_url") or "").strip(),
+                "notes": (row.get("notes") or "").strip(),
+            }
+    return overrides
+
+
+def print_manual_override_stats(overrides: dict[str, dict]):
+    """Print all active manual overrides in a concise, human-readable form."""
+    if not overrides:
+        return
+
+    print("\n  Active manual overrides:")
+    for sci_name in sorted(overrides):
+        override = overrides[sci_name]
+        parts: list[str] = []
+        if override.get("image_url"):
+            parts.append("image")
+        if override.get("image_crop_anchor") is not None:
+            parts.append(f"crop={override['image_crop_anchor']}")
+        if override.get("source_url"):
+            parts.append(f"source={override['source_url']}")
+        if override.get("notes"):
+            parts.append(f"notes={override['notes']}")
+        detail = ", ".join(parts) if parts else "no-op"
+        print(f"    {sci_name}: {detail}")
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +558,8 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
 # ---------------------------------------------------------------------------
 
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
-                   claude: dict = None) -> list[dict]:
+                   claude: dict = None,
+                   manual_overrides: dict | None = None) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
     Each record:
@@ -496,6 +574,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
 
     if claude is None:
         claude = {}
+    if manual_overrides is None:
+        manual_overrides = {}
 
     for sci_name, tax in taxonomy.items():
         if not is_full_species_name(sci_name):
@@ -545,6 +625,11 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             description_source = "claude"
 
         desc_sources[description_source or "none"] += 1
+        override = manual_overrides.get(sci_name, {})
+        image_url = override.get("image_url") or tax.get("image_url", "")
+        image_author = override.get("image_author") or tax.get("image_author", "")
+        image_license = override.get("image_license") or tax.get("image_license", "")
+        image_source = override.get("image_source") or tax.get("image_source", "")
 
         record = {
             "scientific_name": sci_name,
@@ -555,10 +640,11 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "description_source": description_source,
             "claude_locales": sorted(claude_locales),
             "wikipedia_urls": wikipedia_urls,
-            "image_url": tax.get("image_url", ""),
-            "image_author": tax.get("image_author", ""),
-            "image_license": tax.get("image_license", ""),
-            "image_source": tax.get("image_source", ""),
+            "image_url": image_url,
+            "image_author": image_author,
+            "image_license": image_license,
+            "image_source": image_source,
+            "image_crop_anchor": override.get("image_crop_anchor"),
             "inat_id": tax.get("inat_id"),
             "ebird_code": tax.get("ebird_code", ""),
             "gbif_id": tax.get("gbif_id", ""),
@@ -715,9 +801,20 @@ def main():
     print(f"  eBird:     {len(ebird):>8} species")
     print(f"  Wikipedia: {len(wiki):>8} species")
     print(f"  Claude:    {len(claude):>8} species")
+    manual_overrides = load_manual_overrides()
+    unknown_overrides = sorted(set(manual_overrides) - set(taxonomy))
+    if unknown_overrides:
+        joined = ", ".join(unknown_overrides[:10])
+        if len(unknown_overrides) > 10:
+            joined += f", ... (+{len(unknown_overrides) - 10} more)"
+        raise ValueError(
+            f"Manual overrides reference unknown species: {joined}"
+        )
+    print(f"  Overrides:  {len(manual_overrides):>8} species")
+    print_manual_override_stats(manual_overrides)
 
     print("\nMerging...")
-    records = build_metadata(taxonomy, ebird, wiki, claude)
+    records = build_metadata(taxonomy, ebird, wiki, claude, manual_overrides)
 
     # Write JSON (atomic)
     json_path = out_dir / "species_metadata.json"

@@ -33,7 +33,7 @@ from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
 from pydantic import BaseModel, Field, field_validator
-from utils.images import ImageSize, image_filename, save_species_image
+from utils.images import ImageSize, save_species_image
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -113,6 +113,11 @@ class SpeciesRecord(BaseModel):
         }],
     )
     description_source: Optional[str] = Field(None, examples=["wikipedia"])
+    image_crop_anchor: Optional[int] = Field(
+        None,
+        description="Optional manual 3x3 crop anchor for the species image (1=top-left, 5=center, 9=bottom-right)",
+        examples=[5],
+    )
     claude_locales: Optional[list[str]] = Field(
         None,
         description="Locales whose description text is provided by Claude rather than the base source",
@@ -496,19 +501,10 @@ async def image_proxy(scientific_name: str,
     sci = rec.get("scientific_name", "")
     common = rec.get("common_name", "")
     author = rec.get("image_author", "")
-
-    # Check for named file on disk first
-    fname = image_filename(sci, common, author)
-    image_dir = _image_base / size
-    local_path = image_dir / fname
-    if local_path.exists():
-        return Response(
-            content=local_path.read_bytes(),
-            media_type="image/webp",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
+    crop_anchor = rec.get("image_crop_anchor")
 
     # Not on disk — fetch, crop, save with proper name
+    image_dir = _image_base / size
     saved = save_species_image(
         url=source_url,
         scientific_name=sci,
@@ -517,6 +513,7 @@ async def image_proxy(scientific_name: str,
         size=_image_sizes[size],
         image_dir=image_dir,
         quality=_image_qualities.get(size, 60),
+        crop_anchor=crop_anchor,
     )
     if saved and saved.exists():
         return Response(

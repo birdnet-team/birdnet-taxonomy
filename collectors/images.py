@@ -6,7 +6,9 @@ Downloads, smart-crops (YOLO), and saves species images as named WebP files.
 Images are saved to dev/images/ or dist/images/ with filenames:
     <scientific name>_<common name>_<author>.webp
 
-Incremental: existing files are skipped.  Supports --limit, --dry-run,
+Incremental: files whose cache state still matches the current source URL and
+crop settings are skipped. Obsolete image files from older naming schemes or
+stale dummy fallbacks are pruned automatically. Supports --limit, --dry-run,
 and graceful shutdown (Ctrl-C saves progress).
 
 Uses a thread pool for concurrent downloads.
@@ -36,8 +38,10 @@ from utils.images import (
     ImageSize,
     crop_and_resize,
     download_image,
+    image_cache_is_current,
     image_filename,
     to_webp,
+    write_image_cache_state,
 )
 
 LOGO_PATH = ROOT / "birdnet-logo-circle.png"
@@ -111,6 +115,51 @@ def _load_image_config() -> tuple[dict[str, ImageSize], dict[str, int]]:
     return sizes, qualities
 
 
+def _prune_image_cache(base_dir: Path, sizes: dict[str, ImageSize],
+                       species: list[dict]) -> None:
+    """Remove orphaned cached images and stale sidecar files."""
+    expected = set()
+    for rec in species:
+        url = rec.get("image_url", "")
+        if not url:
+            continue
+        expected.add(image_filename(
+            rec.get("scientific_name", ""),
+            rec.get("common_name", ""),
+            rec.get("image_author", ""),
+        ))
+
+    for size_name in sizes:
+        size_dir = base_dir / size_name
+        if not size_dir.is_dir():
+            continue
+
+        for path in size_dir.iterdir():
+            if not path.is_file():
+                continue
+            if path.name == "dummy.webp":
+                continue
+            if path.suffix != ".webp" or path.name not in expected:
+                print(f"  Removing stale cache file: {path}")
+                path.unlink()
+
+        state_dir = size_dir / ".state"
+        if not state_dir.is_dir():
+            continue
+        for state_path in state_dir.iterdir():
+            if not state_path.is_file():
+                continue
+            if state_path.suffix != ".json":
+                print(f"  Removing stale cache metadata: {state_path}")
+                state_path.unlink()
+                continue
+            image_name = state_path.name[:-5]
+            image_path = size_dir / image_name
+            if image_name == "dummy.webp" or image_name not in expected or not image_path.exists():
+                print(f"  Removing stale cache metadata: {state_path}")
+                state_path.unlink()
+
+
 def _process_species(rec: dict, sizes: dict[str, ImageSize],
                      base_dir: Path, qualities: dict[str, int]) -> tuple[int, int]:
     """Download one species image, crop to all sizes.
@@ -123,6 +172,7 @@ def _process_species(rec: dict, sizes: dict[str, ImageSize],
     sci = rec.get("scientific_name", "")
     common = rec.get("common_name", "")
     author = rec.get("image_author", "")
+    crop_anchor = rec.get("image_crop_anchor")
 
     img = download_image(url)
     if img is None:
@@ -133,7 +183,7 @@ def _process_species(rec: dict, sizes: dict[str, ImageSize],
             dummy = out_dir / "dummy.webp"
             fname = image_filename(sci, common, "Stefan Kahl")
             dest = out_dir / fname
-            if dest.exists():
+            if image_cache_is_current(dest, url, crop_anchor=crop_anchor):
                 ok += 1
             elif dummy.exists():
                 import shutil
@@ -147,16 +197,17 @@ def _process_species(rec: dict, sizes: dict[str, ImageSize],
     for size_name, size in sizes.items():
         out_dir = base_dir / size_name
         dest = out_dir / fname
-        if dest.exists():
+        if image_cache_is_current(dest, url, crop_anchor=crop_anchor):
             ok += 1
             continue
         try:
-            cropped = crop_and_resize(img.copy(), size)
+            cropped = crop_and_resize(img.copy(), size, crop_anchor=crop_anchor)
             webp = to_webp(cropped, qualities.get(size_name, 60))
             out_dir.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_suffix(".tmp")
             tmp.write_bytes(webp)
             tmp.replace(dest)
+            write_image_cache_state(dest, url, crop_anchor=crop_anchor)
             ok += 1
         except Exception:
             # Use dummy image as fallback for crop/convert failures
@@ -195,15 +246,7 @@ def main():
     # Generate fallback dummy images
     _generate_dummy_images(base_dir, sizes, qualities)
 
-    # Clean up non-webp files and .tmp leftovers
-    for size_name in sizes:
-        size_dir = base_dir / size_name
-        if not size_dir.is_dir():
-            continue
-        for f in size_dir.iterdir():
-            if f.is_file() and f.suffix not in (".webp",):
-                print(f"  Removing non-webp: {f}")
-                f.unlink()
+    _prune_image_cache(base_dir, sizes, species)
 
     # Build work list: species that need at least one size
     work: list[tuple[dict, dict[str, ImageSize]]] = []
@@ -216,10 +259,11 @@ def main():
         sci = rec.get("scientific_name", "")
         common = rec.get("common_name", "")
         author = rec.get("image_author", "")
+        crop_anchor = rec.get("image_crop_anchor")
 
         fname = image_filename(sci, common, author)
         needed = {k: v for k, v in sizes.items()
-                  if not (base_dir / k / fname).exists()}
+                  if not image_cache_is_current(base_dir / k / fname, url, crop_anchor=crop_anchor)}
         if needed:
             work.append((rec, needed))
         else:
