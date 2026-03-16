@@ -47,6 +47,16 @@ from utils.images import (
 LOGO_PATH = ROOT / "birdnet-logo-circle.png"
 
 
+def _image_src(rec: dict) -> str:
+    """Return the upstream source image URL from either metadata shape."""
+    image = rec.get("image")
+    if isinstance(image, dict):
+        src = image.get("src", "")
+        if src:
+            return src
+    return rec.get("image_url", "")
+
+
 def _generate_dummy_images(base_dir: Path, sizes: dict[str, ImageSize],
                            qualities: dict[str, int]) -> None:
     """Generate grayscale dummy.webp fallback images with the BirdNET logo."""
@@ -120,7 +130,7 @@ def _prune_image_cache(base_dir: Path, sizes: dict[str, ImageSize],
     """Remove orphaned cached images and stale sidecar files."""
     expected = set()
     for rec in species:
-        url = rec.get("image_url", "")
+        url = _image_src(rec)
         if not url:
             continue
         expected.add(image_filename(
@@ -168,7 +178,7 @@ def _process_species(rec: dict, sizes: dict[str, ImageSize],
     base_dir/thumb/ and base_dir/medium/.
     Returns (downloaded_count, failed_count).
     """
-    url = rec["image_url"]
+    url = _image_src(rec)
     sci = rec.get("scientific_name", "")
     common = rec.get("common_name", "")
     author = rec.get("image_author", "")
@@ -253,7 +263,7 @@ def main():
     already_done = 0
 
     for rec in species:
-        url = rec.get("image_url", "")
+        url = _image_src(rec)
         if not url:
             continue
         sci = rec.get("scientific_name", "")
@@ -273,7 +283,7 @@ def main():
         work = work[:args.limit]
 
     total_files = sum(len(n) for _, n in work)
-    print(f"Species with images: {sum(1 for r in species if r.get('image_url'))}")
+    print(f"Species with images: {sum(1 for r in species if _image_src(r))}")
     print(f"Already downloaded:  {already_done}")
     print(f"To download:         {len(work)} species, {total_files} files")
     print(f"Sizes:               {', '.join(sizes.keys())}")

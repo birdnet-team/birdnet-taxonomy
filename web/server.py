@@ -489,6 +489,16 @@ async def static_file(file_path: str):
 # Image proxy endpoint
 # ---------------------------------------------------------------------------
 
+
+def _source_image_url(rec: dict) -> str:
+    """Return the upstream source image URL from either metadata shape."""
+    image = rec.get("image")
+    if isinstance(image, dict):
+        src = image.get("src", "")
+        if src:
+            return src
+    return rec.get("image_url", "")
+
 @app.get("/api/image/{scientific_name:path}",
          tags=["Images"],
          responses={200: {"content": {"image/webp": {}}}})
@@ -516,7 +526,7 @@ async def image_proxy(scientific_name: str,
             )
         raise HTTPException(404, "Species not found")
 
-    source_url = rec.get("image_url", "")
+    source_url = _source_image_url(rec)
     if not source_url:
         # Serve dummy fallback image
         dummy = _image_base / size / "dummy.webp"
