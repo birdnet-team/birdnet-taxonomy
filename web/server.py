@@ -47,12 +47,12 @@ from config import (
 
 _SPECIES_EXAMPLE: dict[str, Any] = {
     "taxonomy_version": "v2025-11Jun",
+    "birdnet_id": "BN00498",
     "scientific_name": "Anas platyrhynchos",
     "common_name": "Mallard",
     "taxon_group": "Aves",
     "observations_count": 829418,
     "inat_id": 6930,
-    "birdnet_id": "BN00498",
     "ebird_code": "mallar3",
     "ml_taxon_code": "mallar3",
     "xc_name": "Anas platyrhynchos",
@@ -95,11 +95,11 @@ _SPECIES_LIST_EXAMPLE: dict[str, Any] = {
 class SpeciesRecord(BaseModel):
     """Full species metadata record."""
     taxonomy_version: Optional[str] = Field(None, examples=["v2025-11Jun"])
+    birdnet_id: Optional[str] = Field(None, examples=["BN00498"])
     scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
     common_name: str = Field("", examples=["Mallard"])
     taxon_group: str = Field("", examples=["Aves"])
     observations_count: Optional[int] = Field(None, examples=[829418])
-    birdnet_id: Optional[str] = Field(None, examples=["BN00498"])
     inat_id: Optional[int] = Field(None, examples=[6930])
     ebird_code: Optional[str] = Field(None, examples=["mallar3"])
     ml_taxon_code: Optional[str] = Field(None, examples=["mallar3"])

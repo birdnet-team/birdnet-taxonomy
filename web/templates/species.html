@@ -230,14 +230,8 @@
             <tr><td>BirdNET ID</td><td>{{ s.birdnet_id }}</td></tr>
             {% endif %}
             <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
-            {% if s.inat_id %}
-            <tr><td>iNaturalist</td><td><a href="https://www.inaturalist.org/taxa/{{ s.inat_id }}" target="_blank">#{{ s.inat_id }}</a></td></tr>
-            {% endif %}
-            {% if s.ebird_code %}
-            <tr><td>eBird</td><td><a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank">{{ s.ebird_code }}</a></td></tr>
-            {% endif %}
             {% if s.observations_count %}
-            <tr><td>iNaturalist observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
+            <tr><td>Observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
             {% endif %}
             {% if s.image_source %}
             <tr><td>Image source</td><td>{{ s.image_source }}</td></tr>
@@ -320,10 +314,16 @@
 </div>
 {% endif %}
 
-{% if s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name %}
+{% if s.inat_id or s.ebird_code or s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name %}
 <div class="section">
     <h3>External Identifiers</h3>
     <table class="info-table">
+        {% if s.inat_id %}
+        <tr><td>iNaturalist</td><td><a href="https://www.inaturalist.org/taxa/{{ s.inat_id }}" target="_blank">#{{ s.inat_id }}</a></td></tr>
+        {% endif %}
+        {% if s.ebird_code %}
+        <tr><td>eBird</td><td><a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank">{{ s.ebird_code }}</a></td></tr>
+        {% endif %}
         {% if s.ml_taxon_code %}
         <tr><td>Macaulay Library</td><td><a href="https://search.macaulaylibrary.org/catalog?taxonCode={{ s.ml_taxon_code }}&mediaType=audio" target="_blank">{{ s.ml_taxon_code }}</a></td></tr>
         {% endif %}

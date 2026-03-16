@@ -676,6 +676,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             }
 
         record = {
+            "birdnet_id": None,
             "scientific_name": sci_name,
             "common_name": tax.get("preferred_common_name", ""),
             "taxon_group": tax.get("taxon_group", ""),
@@ -737,13 +738,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         else:
             print(f"  BirdNET IDs: {len(bn_ids)} (no new)")
 
-    # Sort: taxon group, then observations descending
-    group_order = {"Aves": 0, "Mammalia": 1, "Reptilia": 2,
-                   "Amphibia": 3, "Insecta": 4}
-    records.sort(key=lambda r: (
-        group_order.get(r["taxon_group"], 99),
-        -r["observations_count"],
-    ))
+    # Sort by BirdNET ID
+    records.sort(key=lambda r: r.get("birdnet_id") or "")
 
     # Print stats
     groups = Counter(r["taxon_group"] for r in records)
@@ -788,14 +784,14 @@ def records_to_csv(records: list[dict]) -> str:
     top_locales = [loc for loc, _ in locale_counts.most_common(30)]
 
     base_cols = [
-        "scientific_name", "common_name", "taxon_group",
-        "description_source",
-        "image_url",
-        "image_author", "image_license", "image_source",
         "birdnet_id",
+        "scientific_name", "common_name", "taxon_group",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "ml_taxon_code", "xc_name",
         "observations_count",
+        "description_source",
+        "image_url",
+        "image_author", "image_license", "image_source",
     ]
     locale_cols = [f"common_name_{loc}" for loc in top_locales]
     fieldnames = base_cols + locale_cols
