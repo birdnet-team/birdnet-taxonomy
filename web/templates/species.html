@@ -231,7 +231,7 @@
             {% endif %}
             <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
             {% if s.observations_count %}
-            <tr><td>Observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
+            <tr><td>iNat observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
             {% endif %}
             {% if s.image_source %}
             <tr><td>Image source</td><td>{{ s.image_source }}</td></tr>
