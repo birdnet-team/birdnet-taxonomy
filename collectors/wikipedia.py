@@ -15,7 +15,7 @@ Requires inat_data.json (which provides the English Wikipedia URL).
 Output: raw_data/wikipedia_data.json (incremental, resumable)
 
 Usage:
-    python -m collectors.wikipedia [--limit N] [--dry-run] [--refetch]
+    python -m collectors.wikipedia [--limit N] [--dry-run] [--refetch] [--new-only]
 
 Wikipedia APIs used:
   - action=query with prop=extracts|langlinks|pageimages|pageterms
@@ -497,6 +497,9 @@ def _run_phase2(english_data: dict[str, dict],
         pbar.total = total_new
         pbar.refresh()
 
+    if not locale_work:
+        return {}
+
     locale_extracts: dict[str, dict[str, str]] = {}
     _lock = threading.Lock()
 
@@ -695,10 +698,17 @@ def main():
         help="Re-fetch species that have few locale extracts",
     )
     parser.add_argument(
+        "--new-only", action="store_true",
+        help="Only fetch species not yet present in wikipedia_data.json",
+    )
+    parser.add_argument(
         "--rps", type=float, default=default_rps,
         help=f"Max requests per second (default: {default_rps})",
     )
     args = parser.parse_args()
+
+    if args.refetch and args.new_only:
+        parser.error("--new-only cannot be combined with --refetch")
 
     # Set global rate limiter
     global _rate
@@ -738,7 +748,9 @@ def main():
     # Find incomplete species that need Phase 2 (locale extracts) or
     # Phase 3 (image licenses) but already have Phase 1 data
     queued_species = {s for s, _ in work}
-    incomplete = _collect_incomplete_work(species, existing, queued_species)
+    incomplete = [] if args.new_only else _collect_incomplete_work(
+        species, existing, queued_species,
+    )
 
     if args.limit:
         remaining = max(0, args.limit - len(work))
@@ -816,8 +828,10 @@ def main():
         return
 
     queued_species = {s for s, _ in work}
-    incomplete = _collect_incomplete_work(species, existing, queued_species)
-    if args.limit:
+    incomplete = [] if args.new_only else _collect_incomplete_work(
+        species, existing, queued_species,
+    )
+    if args.limit and not args.new_only:
         remaining = max(0, args.limit - len(work))
         incomplete = incomplete[:remaining]
 

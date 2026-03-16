@@ -17,7 +17,7 @@ Input:
 Output: raw_data/wikidata_data.json
 
 Usage:
-    python -m collectors.wikidata [--no-cache] [--dry-run]
+    python -m collectors.wikidata [--no-cache] [--dry-run] [--new-only]
 """
 
 import argparse
@@ -420,6 +420,11 @@ def main():
                         help="Bypass request cache (re-fetch all remote data)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show species count without querying")
+    parser.add_argument(
+        "--new-only",
+        action="store_true",
+        help="Only query species not yet present in wikidata_data.json",
+    )
     args = parser.parse_args()
 
     global _use_cache
@@ -436,21 +441,31 @@ def main():
         raise SystemExit(1)
     print(f"  {len(species)} species")
 
+    existing = load_json(OUTPUT_FILE)
+    new_species = [sci for sci in species if sci not in existing]
+
     if args.dry_run:
         from_inat = sum(1 for v in species.values() if v is not None)
         avilist_only = len(species) - from_inat
         print(f"  From iNat: {from_inat}")
         print(f"  AviList only: {avilist_only}")
+        print(f"  Existing Wikidata entries: {len(existing)}")
+        print(f"  Species without Wikidata entry: {len(new_species)}")
+        if args.new_only:
+            print(f"  New-only mode would query: {len(new_species)} species")
         return
 
     all_names = list(species.keys())
-    existing = load_json(OUTPUT_FILE)
+    target_names = new_species if args.new_only else all_names
+
+    if args.new_only:
+        print(f"  New-only mode: {len(target_names)} species without Wikidata entries")
 
     # Phase 1: eBird codes
     # Only query for species that don't already have an eBird code
     need_ebird = [
         (sci, species[sci])
-        for sci in all_names
+        for sci in target_names
         if not existing.get(sci, {}).get("ebird_code")
     ]
     n_batches = (len(need_ebird) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
@@ -463,7 +478,7 @@ def main():
         existing.setdefault(sci, {})["ebird_code"] = code
 
     # Phase 2: External identifiers
-    need_ids = [sci for sci in all_names
+    need_ids = [sci for sci in target_names
                 if not existing.get(sci, {}).get("gbif_id")]
     n_batches = (len(need_ids) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 2: Identifiers ({len(need_ids)} species, "
@@ -479,7 +494,7 @@ def main():
     save_json(existing, OUTPUT_FILE)
 
     # Phase 3: Labels (all languages)
-    need_labels = [sci for sci in all_names
+    need_labels = [sci for sci in target_names
                    if not existing.get(sci, {}).get("labels")]
     n_batches = (len(need_labels) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 3: Labels ({len(need_labels)} species, "
@@ -493,7 +508,7 @@ def main():
     save_json(existing, OUTPUT_FILE)
 
     # Phase 4: Images (P18 + Commons license check)
-    need_image = [sci for sci in all_names
+    need_image = [sci for sci in target_names
                   if not existing.get(sci, {}).get("image")]
     n_batches = (len(need_image) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 4: Images ({len(need_image)} species, "

@@ -15,6 +15,7 @@ Uses a thread pool for concurrent downloads.
 
 Usage:
     python -m collectors.images              # → dist/images/
+    python -m collectors.images --new-only   # only species with no cached files yet
     python -m collectors.images --dev        # → dev/images/
     python -m collectors.images --limit 100  # first 100 species
     python -m collectors.images --dry-run    # preview work
@@ -170,6 +171,17 @@ def _prune_image_cache(base_dir: Path, sizes: dict[str, ImageSize],
                 state_path.unlink()
 
 
+def _has_any_cached_image(base_dir: Path, sizes: dict[str, ImageSize],
+                          rec: dict) -> bool:
+    """Return True if the species already has at least one cached output file."""
+    fname = image_filename(
+        rec.get("scientific_name", ""),
+        rec.get("common_name", ""),
+        rec.get("image_author", ""),
+    )
+    return any((base_dir / size_name / fname).exists() for size_name in sizes)
+
+
 def _process_species(rec: dict, sizes: dict[str, ImageSize],
                      base_dir: Path, qualities: dict[str, int]) -> tuple[int, int]:
     """Download one species image, crop to all sizes.
@@ -243,6 +255,11 @@ def main():
                         help="WebP quality 1-100 (default: from config.yml)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be downloaded without doing it")
+    parser.add_argument(
+        "--new-only",
+        action="store_true",
+        help="Only process species with no cached image files yet",
+    )
     args = parser.parse_args()
 
     setup_shutdown()
@@ -256,11 +273,13 @@ def main():
     # Generate fallback dummy images
     _generate_dummy_images(base_dir, sizes, qualities)
 
-    _prune_image_cache(base_dir, sizes, species)
+    if not args.new_only:
+        _prune_image_cache(base_dir, sizes, species)
 
     # Build work list: species that need at least one size
     work: list[tuple[dict, dict[str, ImageSize]]] = []
     already_done = 0
+    skipped_existing = 0
 
     for rec in species:
         url = _image_src(rec)
@@ -272,6 +291,9 @@ def main():
         crop_anchor = rec.get("image_crop_anchor")
 
         fname = image_filename(sci, common, author)
+        if args.new_only and _has_any_cached_image(base_dir, sizes, rec):
+            skipped_existing += 1
+            continue
         needed = {k: v for k, v in sizes.items()
                   if not image_cache_is_current(base_dir / k / fname, url, crop_anchor=crop_anchor)}
         if needed:
@@ -285,6 +307,8 @@ def main():
     total_files = sum(len(n) for _, n in work)
     print(f"Species with images: {sum(1 for r in species if _image_src(r))}")
     print(f"Already downloaded:  {already_done}")
+    if args.new_only:
+        print(f"Skipped existing:    {skipped_existing}")
     print(f"To download:         {len(work)} species, {total_files} files")
     print(f"Sizes:               {', '.join(sizes.keys())}")
     print(f"Workers:             {args.workers}")

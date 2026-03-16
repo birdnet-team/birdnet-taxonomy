@@ -192,6 +192,7 @@ Fetches species identifiers, common name labels, and images from Wikidata and Wi
 
 ```bash
 python -m collectors.wikidata              # fetch all phases
+python -m collectors.wikidata --new-only   # only species not yet in wikidata_data.json
 python -m collectors.wikidata --no-cache   # bypass request cache
 python -m collectors.wikidata --dry-run    # show species count without querying
 ```
@@ -211,6 +212,7 @@ Rate-limited (default 25 rps), with exponential backoff on 429s and server error
 
 ```bash
 python -m collectors.wikipedia              # fetch all
+python -m collectors.wikipedia --new-only   # only species not yet in wikipedia_data.json
 python -m collectors.wikipedia --limit 100  # cap at 100 new species
 python -m collectors.wikipedia --refetch    # re-fetch species with few locale extracts
 python -m collectors.wikipedia --rps 10     # custom rate limit
@@ -264,6 +266,7 @@ The collector also prunes obsolete cached `.webp` files and stale `.state` metad
 
 ```bash
 python -m collectors.images              # download to dist/images/
+python -m collectors.images --new-only   # only species with no cached image files yet
 python -m collectors.images --dev        # download to dev/images/
 python -m collectors.images --workers 8  # parallel downloaders
 python -m collectors.images --limit 100  # cap at 100 species
