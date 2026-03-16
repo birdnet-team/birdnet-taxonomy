@@ -11,7 +11,7 @@
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-ff2d55"></a>
 </p>
 
-Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, amphibians, ray-finned fishes, sharks, crustaceans, arachnids, snails, and cephalopods. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
+Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
 
 ## Table of Contents
 
@@ -132,14 +132,8 @@ Configured in `config.yml`. Birds include all species; other groups are limited 
 | Aves | 3 | All species | — |
 | Mammalia | 40151 | Sounds only | 1 |
 | Insecta | 47158 | Sounds only | 5 |
-| Reptilia | 26036 | Sounds only | 1 |
+| Reptilia | 26036 | Sounds only | 5 |
 | Amphibia | 20978 | Sounds only | 5 |
-| Actinopterygii | 47178 | Sounds only | 1 |
-| Chondrichthyes | 196614 | Sounds only | 1 |
-| Malacostraca | 47187 | Sounds only | 1 |
-| Arachnida | 47119 | Sounds only | 1 |
-| Gastropoda | 47114 | Sounds only | 1 |
-| Cephalopoda | 47459 | Sounds only | 1 |
 
 ## Pipeline
 
@@ -179,7 +173,7 @@ After group fetching, runs an **observation photo fallback** phase: for any spec
 |------|-------------|
 | `--group NAME` | Fetch only this taxon group |
 | `--limit N` | Cap new species per group (0 = all) |
-| `--save-every N` | Save progress every N new species (default: 500) |
+| `--save-every N` | Save progress every N new species (default: from config.yml) |
 | `--refresh` | Bypass cached Phase 1 data and re-fetch from API |
 | `--obs-photos-only` | Only run observation photo fallback |
 | `--skip-obs-photos` | Skip observation photo fallback |
@@ -287,6 +281,8 @@ Resolution cascade:
 |------|-------------|
 | `--limit N` | Cap new species to process (0 = all) |
 | `--group NAME` | Process only this taxon group |
+| `--workers N` | Parallel workers (default: from config.yml) |
+| `--save-every N` | Save every N completed species (default: from config.yml) |
 | `--new-only` | Only species not yet in observationorg_data.json |
 | `--dry-run` | Preview without API calls |
 
@@ -339,7 +335,7 @@ The collector also prunes obsolete cached `.webp` files and stale `.state` metad
 | Flag | Description |
 |------|-------------|
 | `--limit N` | Cap species to process (0 = all) |
-| `--workers N` | Parallel download threads (default: 4) |
+| `--workers N` | Parallel download threads (default: from config.yml) |
 | `--quality N` | WebP quality 1–100 (default: from config.yml) |
 | `--dev` | Save to dev/images/ instead of dist/images/ |
 | `--new-only` | Only species with no cached image files yet |
@@ -479,6 +475,7 @@ curl '/api/species/eurblk1'
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2025). AviList Core Team, 2025. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2025](https://doi.org/10.2173/avilist.v2025).
 - **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.
 - **[Xeno-Canto](https://xeno-canto.org)** — Scientific name mappings for cross-referencing the world's largest shared bird and wildlife sound collection.
+- **[observation.org](https://observation.org)** — Species IDs for cross-referencing to one of Europe's largest biodiversity recording platforms. Uses AviList taxonomy for birds.
 - **[Claude](https://www.anthropic.com/claude)** (Anthropic) — AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts.
 
 ## License
