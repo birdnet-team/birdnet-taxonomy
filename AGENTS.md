@@ -27,9 +27,14 @@ serves the dataset (HTML UI, REST API, image proxy).
   Save progress periodically so long runs survive interruption.
 - **The build step is purely offline.** `build/metadata.py` must not make network
   calls. It only merges data already present in `raw_data/`.
-- **Species only.** The pipeline tracks binomial species, not genera, higher ranks,
-  subspecies, or hybrids. Use the shared binomial-name filter in
-  `collectors/_common.py`; do not reinvent name validation.
+- **Species only, with canonical names.** The pipeline tracks binomial species,
+  not genera, higher ranks, subspecies, or hybrids. Subspecies are folded into
+  their top-level species for now. Use the shared binomial-name filter in
+  `collectors/_common.py`; do not reinvent name validation. Final scientific and
+  common names must be canonical display names only: no parenthetical qualifiers,
+  bracketed notes, slashes, symbols, or informal annotations. Regular spaces,
+  apostrophes, and dashes/hyphens are fine when they are part of the accepted
+  name.
 
 ## Pipeline order
 
