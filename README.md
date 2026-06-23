@@ -13,6 +13,8 @@
 
 Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
 
+**Important note: While still in development (i.e., all releases prior to 1.0), species IDs will change. We will freeze species IDs upon offical release.**
+
 ## Table of Contents
 
 - [Setup](#setup)
