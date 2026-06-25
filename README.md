@@ -243,13 +243,16 @@ Collects eBird species data in two phases:
 Fetches species identifiers, common name labels, and images from Wikidata and Wikimedia Commons via SPARQL queries.
 
 - **Phase 1 — eBird codes:** Resolves eBird species codes (P3444) for species not yet matched via AviList, using scientific name (P225) and iNat taxon ID (P3151) as lookup keys.
-- **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2426), BirdLife (P5257).
+- **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257). Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases.
 - **Phase 3 — Labels:** Fetches `rdfs:label` common names in all available languages.
 - **Phase 4 — Images:** Fetches Wikidata P18 images and checks Wikimedia Commons licenses (CC, PD, GFDL).
 
 | Flag | Description |
 |------|-------------|
 | `--new-only` | Only species not yet in wikidata_data.json |
+| `--ids-only` | Only query external identifiers; skip labels and images |
+| `--refresh-identifiers` | Replace existing GBIF/NCBI/Avibase/BirdLife IDs with fresh Wikidata values |
+| `--limit N` | Cap species queried in this run (0 = all) |
 | `--no-cache` | Bypass request cache |
 | `--dry-run` | Show species count without querying |
 

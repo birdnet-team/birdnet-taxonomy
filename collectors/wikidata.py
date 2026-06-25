@@ -5,7 +5,7 @@ and Wikimedia Commons.
 
 Queries Wikidata SPARQL for:
   - eBird species codes (P3444) via scientific name (P225) or iNat ID (P3151)
-  - External identifiers: GBIF (P846), NCBI (P685), Avibase (P2426),
+  - External identifiers: GBIF (P846), NCBI (P685), Avibase (P2026),
     BirdLife (P5257)
   - Common name labels (rdfs:label) in all available languages
   - P18 images → Wikimedia Commons license checks
@@ -33,6 +33,7 @@ from collectors._common import (
     RAW_DIR, USER_AGENT, LOCALE_NORMALIZE,
     clean_aliases, is_full_species_name, load_json, save_json,
     strip_html_tags, cache_key, cache_get, cache_put,
+    load_manual_species_aliases,
 )
 
 INAT_FILE = RAW_DIR / "inat_data.json"
@@ -53,9 +54,13 @@ WD_IDENTIFIERS = {
     "ebird_code": "P3444",
     "gbif_id": "P846",
     "ncbi_id": "P685",
-    "avibase_id": "P2426",
+    "avibase_id": "P2026",
     "birdlife_id": "P5257",
 }
+EXTERNAL_IDENTIFIER_FIELDS = tuple(
+    key for key in WD_IDENTIFIERS
+    if key != "ebird_code"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -154,11 +159,15 @@ def query_ebird_codes(
 # Phase 2: External identifiers (GBIF, NCBI, Avibase, BirdLife)
 # ---------------------------------------------------------------------------
 
-def query_identifiers(species: list[tuple[str, int | None]]) -> dict[str, dict]:
+def query_identifiers(
+    species: list[tuple[str, int | None]],
+    aliases: dict[str, list[str]] | None = None,
+) -> dict[str, dict]:
     """Batch-query Wikidata for external identifiers."""
     if not species:
         return {}
 
+    aliases = aliases or {}
     optionals = ""
     selects = ["?taxonName"]
     for key, prop in WD_IDENTIFIERS.items():
@@ -171,10 +180,16 @@ def query_identifiers(species: list[tuple[str, int | None]]) -> dict[str, dict]:
     results = {}
     select_str = " ".join(selects)
 
-    species_names = [s for s, _ in species]
-    for i in range(0, len(species_names), _SPARQL_BATCH):
-        batch = species_names[i:i + _SPARQL_BATCH]
-        values = " ".join(f'"{s}"' for s in batch)
+    search_items: list[tuple[str, str]] = []
+    for sci, _ in species:
+        names = clean_aliases([sci, *aliases.get(sci, [])])
+        for name in names:
+            search_items.append((sci, name))
+
+    for i in range(0, len(search_items), _SPARQL_BATCH):
+        batch = search_items[i:i + _SPARQL_BATCH]
+        values = " ".join(f'"{name}"' for _, name in batch)
+        name_to_sci = {name: sci for sci, name in batch}
         query = (
             f"SELECT {select_str} WHERE {{\n"
             f"  VALUES ?taxonName {{ {values} }}\n"
@@ -183,17 +198,17 @@ def query_identifiers(species: list[tuple[str, int | None]]) -> dict[str, dict]:
         )
         rows = _sparql_query(query)
         for r in rows:
-            sci = r["taxonName"]["value"]
-            ids = {}
+            taxon_name = r["taxonName"]["value"]
+            sci = name_to_sci.get(taxon_name, taxon_name)
+            ids = results.setdefault(sci, {})
             for key in WD_IDENTIFIERS:
                 if key == "ebird_code":
                     continue
                 val = r.get(key, {}).get("value", "")
-                if val:
+                if val and not ids.get(key):
                     ids[key] = val
-            if ids:
-                results[sci] = ids
 
+    results = {sci: ids for sci, ids in results.items() if ids}
     remaining = [(sci, iid) for sci, iid in species
                  if sci not in results and iid is not None]
     if remaining:
@@ -213,17 +228,15 @@ def query_identifiers(species: list[tuple[str, int | None]]) -> dict[str, dict]:
                 sci = iid_to_sci.get(iid)
                 if not sci:
                     continue
-                ids = {}
+                ids = results.setdefault(sci, {})
                 for key in WD_IDENTIFIERS:
                     if key == "ebird_code":
                         continue
                     val = r.get(key, {}).get("value", "")
-                    if val:
+                    if val and not ids.get(key):
                         ids[key] = val
-                if ids:
-                    results[sci] = ids
 
-    return results
+    return {sci: ids for sci, ids in results.items() if ids}
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +506,19 @@ def _load_species_list(cfg: dict) -> dict[str, int | None]:
     return species
 
 
+def _load_aliases(species_names: list[str]) -> dict[str, list[str]]:
+    aliases = load_manual_species_aliases()
+    taxonomy = load_json(RAW_DIR / "taxonomy.json")
+    for sci in species_names:
+        rec = taxonomy.get(sci, {})
+        if rec.get("scientific_name_aliases"):
+            aliases[sci] = clean_aliases([
+                *aliases.get(sci, []),
+                *rec.get("scientific_name_aliases", []),
+            ])
+    return aliases
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -509,6 +535,22 @@ def main():
         "--new-only",
         action="store_true",
         help="Only query species not yet present in wikidata_data.json",
+    )
+    parser.add_argument(
+        "--ids-only",
+        action="store_true",
+        help="Only query external identifiers; skip labels and images",
+    )
+    parser.add_argument(
+        "--refresh-identifiers",
+        action="store_true",
+        help="Replace existing GBIF/NCBI/Avibase/BirdLife IDs with fresh Wikidata values",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Cap species queried in this run (0 = all)",
     )
     args = parser.parse_args()
 
@@ -547,16 +589,21 @@ def main():
 
     all_names = list(species.keys())
     target_names = new_species if args.new_only else all_names
+    if args.limit > 0:
+        target_names = target_names[:args.limit]
+    aliases = _load_aliases(all_names)
 
     if args.new_only:
         print(f"  New-only mode: {len(target_names)} species without Wikidata entries")
+    if args.limit > 0:
+        print(f"  Limit: querying first {len(target_names)} target species")
 
     # Phase 1: eBird codes
     # Only query for species that don't already have an eBird code
     need_ebird = [
         (sci, species[sci])
         for sci in target_names
-        if not existing.get(sci, {}).get("ebird_code")
+        if not args.ids_only and not existing.get(sci, {}).get("ebird_code")
     ]
     n_batches = (len(need_ebird) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 1: eBird codes ({len(need_ebird)} species, "
@@ -571,13 +618,20 @@ def main():
     need_ids = [
         (sci, species[sci])
         for sci in target_names
-        if not existing.get(sci, {}).get("gbif_id")
+        if args.refresh_identifiers
+        or any(not existing.get(sci, {}).get(key) for key in EXTERNAL_IDENTIFIER_FIELDS)
     ]
     n_batches = (len(need_ids) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 2: Identifiers ({len(need_ids)} species, "
           f"{n_batches} batches)...")
-    identifiers = query_identifiers(need_ids)
+    identifiers = query_identifiers(need_ids, aliases=aliases)
     print(f"  Found identifiers for {len(identifiers)} species")
+
+    if args.refresh_identifiers:
+        for sci, _ in need_ids:
+            entry = existing.setdefault(sci, {})
+            for key in EXTERNAL_IDENTIFIER_FIELDS:
+                entry.pop(key, None)
 
     for sci, ids in identifiers.items():
         entry = existing.setdefault(sci, {})
@@ -585,6 +639,13 @@ def main():
             entry[key] = val
 
     save_json(existing, OUTPUT_FILE)
+
+    if args.ids_only:
+        total = len(existing)
+        print(f"\nDone! {total} species in {OUTPUT_FILE.name}")
+        for key in EXTERNAL_IDENTIFIER_FIELDS:
+            print(f"  {key}: {sum(1 for v in existing.values() if v.get(key))}")
+        return
 
     # Phase 2b: GBIF aliases for taxonomy bridges
     need_aliases = [

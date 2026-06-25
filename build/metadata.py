@@ -500,6 +500,11 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             continue
         wd_coverage += 1
         for key in id_keys:
+            if (
+                key in ("avibase_id", "birdlife_id")
+                and taxonomy[sci].get("taxon_group") != "Aves"
+            ):
+                continue
             val = wd.get(key, "")
             if val:
                 taxonomy[sci][key] = val
