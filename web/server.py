@@ -97,6 +97,11 @@ class SpeciesRecord(BaseModel):
     taxonomy_version: Optional[str] = Field(None, examples=["v2025-11Jun"])
     birdnet_id: Optional[str] = Field(None, examples=["BN00498"])
     scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
+    scientific_name_aliases: Optional[list[str]] = Field(
+        None,
+        description="Clean binomial scientific names that resolve to this canonical species",
+        examples=[["Anas boschas"]],
+    )
     common_name: str = Field("", examples=["Mallard"])
     common_name_alt: Optional[str] = Field(None, description="Alternative English name (Clements/eBird)", examples=["Rock Pigeon"])
     taxon_group: str = Field("", examples=["Aves"])
@@ -131,6 +136,11 @@ class SpeciesRecord(BaseModel):
         }],
     )
     description_source: Optional[str] = Field(None, examples=["wikipedia"])
+    description_sources: Optional[dict[str, str]] = Field(
+        None,
+        description="Per-locale description source labels",
+        examples=[{"en": "wikipedia", "de": "claude"}],
+    )
     image_crop_anchor: Optional[int] = Field(
         None,
         description="Optional manual 3x3 crop anchor for the species image (1=top-left, 5=center, 9=bottom-right)",
@@ -242,6 +252,7 @@ _species_by_ml_code: dict[str, dict] = {}
 _species_by_xc: dict[str, dict] = {}
 _species_by_birdnet: dict[str, dict] = {}
 _species_by_inat_id: dict[int, dict] = {}
+_species_by_alias: dict[str, dict] = {}
 _search_index: list[tuple[str, str, str, dict]] = []  # (lower_sci, lower_common, search_text, record)
 _all_locales: list[tuple[str, str]] = []  # (code, display_name) sorted
 
@@ -250,6 +261,10 @@ def _find_species(identifier: str) -> dict | None:
     """Resolve a species by scientific name, common name, eBird code, or iNat ID."""
     # Scientific name (exact, case-insensitive)
     rec = _species_by_name.get(identifier) or _species_by_name.get(identifier.lower())
+    if rec:
+        return rec
+    # Scientific aliases (case-insensitive)
+    rec = _species_by_alias.get(identifier.lower())
     if rec:
         return rec
     # Common name (case-insensitive)
@@ -285,7 +300,7 @@ def _find_species(identifier: str) -> dict | None:
 def load_data(dev: bool = False):
     """Load species_metadata.json into memory."""
     global _species_list, _species_by_name, _species_by_common
-    global _species_by_ebird, _species_by_ml_code, _species_by_xc, _species_by_birdnet, _species_by_inat_id
+    global _species_by_ebird, _species_by_ml_code, _species_by_xc, _species_by_birdnet, _species_by_inat_id, _species_by_alias
     global _search_index, _all_locales
 
     for d in (["dev", "dist"] if dev else ["dist", "dev"]):
@@ -307,6 +322,7 @@ def load_data(dev: bool = False):
     _species_by_xc = {}
     _species_by_birdnet = {}
     _species_by_inat_id = {}
+    _species_by_alias = {}
     _search_index = []
 
     locale_set: set[str] = set()
@@ -339,6 +355,10 @@ def load_data(dev: bool = False):
             _species_by_inat_id[int(inat_id)] = rec
         common_lower = _normalise(common)
         search_text = _normalise(f"{sci} {common}")
+        for alias in rec.get("scientific_name_aliases", []):
+            if alias and alias != sci:
+                _species_by_alias.setdefault(alias.lower(), rec)
+                search_text += " " + _normalise(alias)
         for name in rec.get("common_names", {}).values():
             search_text += " " + _normalise(name)
         _search_index.append((sci.lower(), common_lower, search_text, rec))

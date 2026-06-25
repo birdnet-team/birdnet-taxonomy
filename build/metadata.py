@@ -42,8 +42,10 @@ from urllib.parse import quote
 from config import load_config, image_url_prefix
 from collectors._common import (
     ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE,
+    clean_aliases, is_clean_scientific_name,
     is_full_species_name, load_json, save_json,
 )
+from utils.audit_metadata import audit_records, has_failures, print_report
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -60,6 +62,7 @@ XC_DATA_FILE = RAW_DIR / "xc_data.json"
 OBSERVATIONORG_DATA_FILE = RAW_DIR / "observationorg_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
+MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
 BN_IDS_FILE = ROOT / "bn_ids.json"
 
 
@@ -181,6 +184,7 @@ def load_avilist(cfg: dict) -> list[dict]:
                     "ebird_code": code,
                     "common_name_clements": en_clements,
                     "common_name_avilist": en_avilist,
+                    "aliases": [],
                 })
     return rows
 
@@ -238,6 +242,56 @@ def load_manual_overrides() -> dict[str, dict]:
                 "notes": (row.get("notes") or "").strip(),
             }
     return overrides
+
+
+def load_manual_aliases() -> dict[str, list[str]]:
+    """Load repo-tracked manual scientific-name aliases from CSV."""
+    if not MANUAL_ALIASES_FILE.exists():
+        return {}
+
+    aliases: dict[str, list[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    with open(MANUAL_ALIASES_FILE, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        required = {"scientific_name", "alias"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(
+                f"{MANUAL_ALIASES_FILE}: missing required columns: {', '.join(sorted(missing))}"
+            )
+        for line_no, row in enumerate(reader, start=2):
+            sci = (row.get("scientific_name") or "").strip()
+            alias = (row.get("alias") or "").strip()
+            if not is_clean_scientific_name(sci):
+                raise ValueError(
+                    f"{MANUAL_ALIASES_FILE}: line {line_no}: invalid scientific_name '{sci}'"
+                )
+            if not is_clean_scientific_name(alias):
+                raise ValueError(
+                    f"{MANUAL_ALIASES_FILE}: line {line_no}: invalid alias '{alias}'"
+                )
+            if sci == alias:
+                raise ValueError(
+                    f"{MANUAL_ALIASES_FILE}: line {line_no}: alias equals scientific_name"
+                )
+            key = (sci, alias)
+            if key in seen:
+                raise ValueError(
+                    f"{MANUAL_ALIASES_FILE}: line {line_no}: duplicate alias '{alias}' for '{sci}'"
+                )
+            seen.add(key)
+            aliases.setdefault(sci, []).append(alias)
+    return aliases
+
+
+def print_manual_alias_stats(aliases: dict[str, list[str]]):
+    """Print active manual aliases in a concise, human-readable form."""
+    if not aliases:
+        return
+
+    print("\n  Active manual aliases:")
+    for sci_name in sorted(aliases):
+        print(f"    {sci_name}: {', '.join(aliases[sci_name])}")
 
 
 def print_manual_override_stats(overrides: dict[str, dict]):
@@ -384,6 +438,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             "image_license": "",
             "image_source": "",
             "match_source": match_source,
+            "scientific_name_aliases": clean_aliases(avi_row.get("aliases", [])) if is_bird and avi_row else [],
         }
         # Ensure AviList English name is also set as common_names.en
         if is_bird and avi_row and pref_name:
@@ -421,6 +476,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             "image_license": "",
             "image_source": "",
             "match_source": "avilist_only",
+            "scientific_name_aliases": clean_aliases(row.get("aliases", [])),
         }
         stats["avilist_only"] += 1
 
@@ -438,6 +494,11 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             if val:
                 taxonomy[sci][key] = val
                 id_counts[key] += 1
+        aliases = wd.get("aliases", [])
+        if aliases:
+            taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
+                [*taxonomy[sci].get("scientific_name_aliases", []), *aliases]
+            )
     stats["wikidata_ids"] = id_counts
     stats["wikidata_coverage"] = wd_coverage
 
@@ -453,14 +514,33 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
         if ml_code:
             taxonomy[sci]["ml_taxon_code"] = ml_code
             ml_count += 1
+        ml_aliases = macaulay.get(sci, {}).get("aliases", [])
+        if ml_aliases:
+            taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
+                [*taxonomy[sci].get("scientific_name_aliases", []), *ml_aliases]
+            )
         xc_name = xc_data.get(sci, {}).get("xc_name", "")
         if xc_name:
             taxonomy[sci]["xc_name"] = xc_name
             xc_count += 1
+            if xc_name != sci:
+                taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
+                    [*taxonomy[sci].get("scientific_name_aliases", []), xc_name]
+                )
+        xc_aliases = xc_data.get(sci, {}).get("aliases", [])
+        if xc_aliases:
+            taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
+                [*taxonomy[sci].get("scientific_name_aliases", []), *xc_aliases]
+            )
         obs_id = obsorg_data.get(sci, {}).get("observationorg_id")
         if obs_id is not None:
             taxonomy[sci]["observationorg_id"] = obs_id
             obsorg_count += 1
+        obs_aliases = obsorg_data.get(sci, {}).get("aliases", [])
+        if obs_aliases:
+            taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
+                [*taxonomy[sci].get("scientific_name_aliases", []), *obs_aliases]
+            )
     stats["ml_taxon_codes"] = ml_count
     stats["xc_names"] = xc_count
     stats["observationorg_ids"] = obsorg_count
@@ -667,6 +747,7 @@ def _save_bn_ids(bn_ids: dict[str, int]) -> None:
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    claude: dict = None,
                    manual_overrides: dict | None = None,
+                   manual_aliases: dict[str, list[str]] | None = None,
                    reassign_ids: bool = False) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
@@ -679,16 +760,28 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     """
     records = []
     desc_sources: dict[str, int] = Counter()
+    canonical_names = {
+        str(name).lower(): str(name)
+        for name in taxonomy
+        if is_clean_scientific_name(str(name))
+    }
+    source_alias_claims: Counter[str] = Counter()
+    for sci_name, tax in taxonomy.items():
+        for alias in clean_aliases(tax.get("scientific_name_aliases", [])):
+            if alias != sci_name and canonical_names.get(alias.lower(), sci_name) == sci_name:
+                source_alias_claims[alias.lower()] += 1
 
     if claude is None:
         claude = {}
     if manual_overrides is None:
         manual_overrides = {}
+    if manual_aliases is None:
+        manual_aliases = {}
 
     image_prefix = image_url_prefix()
 
     for sci_name, tax in taxonomy.items():
-        if not is_full_species_name(sci_name):
+        if not is_clean_scientific_name(sci_name):
             continue
         wp = wiki.get(sci_name, {})
         eb = ebird.get(sci_name, {})
@@ -698,41 +791,47 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         # Base layer: Wikipedia (multi-locale) or eBird (English-only).
         # Claude overlay: replaces only the locales it provides.
         descriptions: dict[str, str] = {}
+        description_sources: dict[str, str] = {}
         description_source = ""
         wikipedia_urls: dict[str, str] = {}
 
-        # Wikipedia: use English extract, plus any locale extracts and URLs
+        # Wikipedia: use English extract independently from locale extracts.
+        # Locale-only Wikipedia data must not block English fallback sources.
         wp_extracts = wp.get("extracts", {})
-        if wp.get("extract"):
-            descriptions["en"] = wp["extract"]
-            description_source = "wikipedia"
-        elif wp_extracts:
-            # No English extract but locale extracts exist
-            description_source = "wikipedia"
+        wp_en = wp.get("extract") or wp_extracts.get("en", "")
+        if wp_en:
+            descriptions["en"] = wp_en
+            description_sources["en"] = "wikipedia"
 
-        if description_source == "wikipedia":
-            for loc, text in wp_extracts.items():
-                if loc != "en" and text:
-                    descriptions[loc] = text
-            for loc, url in wp.get("wikipedia_urls", {}).items():
-                if url:
-                    wikipedia_urls[loc] = url
+        for loc, text in wp_extracts.items():
+            if loc != "en" and text:
+                descriptions[loc] = text
+                description_sources[loc] = "wikipedia"
+        for loc, url in wp.get("wikipedia_urls", {}).items():
+            if url:
+                wikipedia_urls[loc] = url
 
-        if not description_source:
-            if eb.get("description"):
-                descriptions["en"] = eb["description"]
-                description_source = "ebird"
+        if not descriptions.get("en") and eb.get("description"):
+            descriptions["en"] = eb["description"]
+            description_sources["en"] = "ebird"
 
         # Claude overlay — replace only the locales Claude provides
         claude_locales: list[str] = []
         cl_extracts = cl.get("extracts", {})
+        fallback_locales = set(cl.get("fallback_locales", []))
+        if cl.get("fallback"):
+            fallback_locales.update(cl_extracts)
         for loc, text in cl_extracts.items():
             if text:
                 descriptions[loc] = text
+                description_sources[loc] = (
+                    "claude_fallback" if loc in fallback_locales else "claude"
+                )
                 claude_locales.append(loc)
 
-        if descriptions.get("en") and "en" in cl_extracts and cl_extracts["en"]:
-            description_source = "claude"
+        description_source = description_sources.get("en", "")
+        if not description_source and descriptions:
+            description_source = next(iter(description_sources.values()), "")
 
         desc_sources[description_source or "none"] += 1
         override = manual_overrides.get(sci_name, {})
@@ -750,17 +849,32 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                 "medium": f"{image_prefix}/api/image/{encoded_sci}?size=medium",
             }
 
+        common_name = tax.get("preferred_common_name", "") or sci_name
+        common_name_alt = tax.get("common_name_alt", "")
+        common_names = tax.get("common_names", {})
+        source_aliases = clean_aliases(tax.get("scientific_name_aliases", []))
+        source_aliases = [
+            alias for alias in source_aliases
+            if alias != sci_name
+            and canonical_names.get(alias.lower(), sci_name) == sci_name
+            and source_alias_claims[alias.lower()] == 1
+        ]
+        aliases = clean_aliases([*source_aliases, *manual_aliases.get(sci_name, [])])
+        aliases = [a for a in aliases if a != sci_name]
+
         record = {
             "birdnet_id": None,
             "scientific_name": sci_name,
-            "common_name": tax.get("preferred_common_name", "") or sci_name,
-            "common_name_alt": tax.get("common_name_alt", ""),
+            "common_name": common_name,
+            "common_name_alt": common_name_alt,
             "taxon_group": tax.get("taxon_group", ""),
-            "common_names": tax.get("common_names", {}),
+            "common_names": common_names,
             "descriptions": descriptions,
             "description_source": description_source,
+            "description_sources": description_sources,
             "claude_locales": sorted(claude_locales),
             "wikipedia_urls": wikipedia_urls,
+            "scientific_name_aliases": aliases,
             "image": image,
             "image_author": image_author,
             "image_license": image_license,
@@ -853,6 +967,7 @@ def records_to_csv(records: list[dict]) -> str:
     base_cols = [
         "birdnet_id",
         "scientific_name", "common_name", "common_name_alt", "taxon_group",
+        "scientific_name_aliases",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "ml_taxon_code", "xc_name",
         "observationorg_id",
@@ -870,6 +985,7 @@ def records_to_csv(records: list[dict]) -> str:
 
     for rec in records:
         row = {k: rec.get(k, "") for k in base_cols}
+        row["scientific_name_aliases"] = "|".join(rec.get("scientific_name_aliases", []))
         row["image_url"] = (rec.get("image") or {}).get("medium", "")
         for loc in top_locales:
             row[f"common_name_{loc}"] = rec.get("common_names", {}).get(loc, "")
@@ -897,6 +1013,8 @@ def main():
     parser.add_argument("--reassign-ids", action="store_true",
                         help="Regenerate all BirdNET IDs from scratch "
                              "(pre-release only, breaks existing IDs)")
+    parser.add_argument("--strict-validation", action="store_true",
+                        help="Fail if final metadata has release-gate audit findings")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -958,10 +1076,40 @@ def main():
         )
     print(f"  Overrides:  {len(manual_overrides):>8} species")
     print_manual_override_stats(manual_overrides)
+    manual_aliases = load_manual_aliases()
+    unknown_aliases = sorted(set(manual_aliases) - set(taxonomy))
+    if unknown_aliases:
+        joined = ", ".join(unknown_aliases[:10])
+        if len(unknown_aliases) > 10:
+            joined += f", ... (+{len(unknown_aliases) - 10} more)"
+        raise ValueError(
+            f"Manual aliases reference unknown species: {joined}"
+        )
+    print(f"  Aliases:    {sum(len(v) for v in manual_aliases.values()):>8} manual aliases")
+    print_manual_alias_stats(manual_aliases)
 
     print("\nMerging...")
-    records = build_metadata(taxonomy, ebird, wiki, claude, manual_overrides,
-                              reassign_ids=args.reassign_ids)
+    records = build_metadata(
+        taxonomy,
+        ebird,
+        wiki,
+        claude,
+        manual_overrides,
+        manual_aliases,
+        reassign_ids=args.reassign_ids,
+    )
+
+    print("\nAuditing final metadata...")
+    desc_cfg = cfg.get("descriptions", {})
+    audit = audit_records(
+        records,
+        min_english_words=desc_cfg.get("min_english_words", 40),
+    )
+    print_report(audit, sample_limit=5)
+    if audit["alias_conflicts"]:
+        raise SystemExit(1)
+    if args.strict_validation and has_failures(audit):
+        raise SystemExit(1)
 
     # Write JSON (atomic)
     json_path = out_dir / "species_metadata.json"
