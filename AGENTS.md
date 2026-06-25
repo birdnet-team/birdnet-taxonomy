@@ -41,11 +41,11 @@ serves the dataset (HTML UI, REST API, image proxy).
 Collectors depend on earlier output, so order matters:
 
 1. AviList → 2. iNaturalist → 3. eBird → 4. Wikidata → 5. Wikipedia →
-6. Macaulay Library → 7. Xeno-Canto → 8. observation.org → 9. Claude (optional) →
+6. Macaulay Library → 7. Xeno-Canto → 8. observation.org → 9. LLM Translation (optional) →
 10. Images (optional) → 11. Build
 
-Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 fills description
-gaps with Claude; 10 generates images; 11 merges everything.
+Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 optionally fills
+description gaps via LLM (Gemini/OpenAI/Anthropic); 10 generates images; 11 merges everything.
 
 ## Taxon groups
 
@@ -98,8 +98,9 @@ gaps with Claude; 10 generates images; 11 merges everything.
 
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`
   and `overrides/species_overrides.csv` are git-tracked and meaningful.
-- Secrets (`ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.) live in `.env`, never in
-  `config.yml` or source.
+- Secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.)
+  live in `.env`, never in `config.yml` or source.
+  `utils/llm.py` auto-detects which LLM key is present and uses it.
 
 ## Documentation rule
 

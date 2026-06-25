@@ -97,7 +97,8 @@ translation:
   provider: "mymemory"
   service_name: "MyMemory"
   endpoint: "https://api.mymemory.translated.net/get"
-  api_key_env: "LIBRETRANSLATE_API_KEY"
+  api_key_env: ""
+  # email: ""  # Uncomment + set to double free MyMemory quota (5k→10k words/day)
   locales:
     - de
     - es
@@ -105,11 +106,12 @@ translation:
     - cs
     - it
     - pt
-  rps: 0.3
-  save_every: 25
-  max_chars: 450
-  batch_size: 10
-  batch_max_chars: 450
+  rps: 0.5           # requests/sec; MyMemory free: ~100 req/day so keep low
+  workers: 6         # parallel locale threads — each locale runs independently
+  save_every: 10     # save progress every N successful translations
+  max_chars: 400     # max source chars per excerpt (MyMemory limit ~500)
+  batch_size: 3      # excerpts per request; markers add overhead so keep small
+  batch_max_chars: 480  # total chars per request incl. markers (stay under 500)
   language_map:
     no: "nb"
     zh_TRA: "zh"
@@ -131,12 +133,18 @@ avilist:
   url: "https://www.avilist.org/wp-content/uploads/2025/06/AviList-v2025-11Jun-extended.xlsx"
   csv_file: "AviList-v2025-11Jun-extended.csv"   # converted from xlsx
 
-# Claude API settings (API key is in .env, not here)
-# Locales listed here are the target languages for Claude-generated
-# translations. Core European + Chinese, Russian, Arabic.
-claude:
-  enabled: false
-  model: "claude-sonnet-4-20250514"
+# LLM translation settings (API key is in .env, not here)
+# Supports Gemini, OpenAI, and Anthropic — provider auto-detected from .env.
+# Priority: GEMINI_API_KEY → OPENAI_API_KEY → ANTHROPIC_API_KEY
+# Override with `provider: "gemini"` (or openai / anthropic).
+#
+# Default models per provider (override with `model:`):
+#   gemini:    gemini-3.1-flash-lite
+#   openai:    gpt-4o-mini
+#   anthropic: claude-haiku-4-5-20251001
+llm:
+  provider: "auto"        # auto-detect from .env; or "gemini"/"openai"/"anthropic"
+  model: ""               # leave empty to use provider default
   locales:
     - en         # English
     - de         # German
@@ -150,13 +158,13 @@ claude:
     - ar         # Arabic
   batch_size: 12          # max species per API call (char budget may reduce this)
   translate_workers: 4    # parallel translation workers
-  save_every: 10          # save claude_data.json every N completed batches
+  save_every: 10          # save raw_data/translate_data.json every N completed batches
   source_char_budget: 12000  # approx source chars per API call
   max_source_chars: 3000     # per-species source truncation for translation
   max_tokens: 16384       # max output tokens per API call
   max_extract_words: 500  # shorten extracts longer than this
   target_words: 150       # target length for shortened extracts
-  request_delay: 0.5      # minimum seconds between Claude request starts
+  request_delay: 5.0      # seconds between requests; free Gemini tier: 15 req/min → ≥4s
 
 # Image settings (served via /api/image endpoint)
 images:

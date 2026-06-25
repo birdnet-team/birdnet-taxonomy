@@ -16,7 +16,7 @@ Input files (all in raw_data/):
   - ebird_names.json       (from collectors/ebird.py --names-only)
   - wikidata_data.json     (from collectors/wikidata.py)
   - wikipedia_data.json    (from collectors/wikipedia.py)
-  - claude_data.json       (from collectors/claude.py — optional)
+  - translate_data.json    (from collectors/translate.py — optional)
   - AviList CSV            (from collectors/avilist.py)
 
 Output:
@@ -57,7 +57,7 @@ EBIRD_DATA_FILE = RAW_DIR / "ebird_data.json"
 EBIRD_NAMES_FILE = RAW_DIR / "ebird_names.json"
 WIKIDATA_FILE = RAW_DIR / "wikidata_data.json"
 WIKI_DATA_FILE = RAW_DIR / "wikipedia_data.json"
-CLAUDE_DATA_FILE = RAW_DIR / "claude_data.json"
+TRANSLATE_DATA_FILE = RAW_DIR / "translate_data.json"
 MACAULAY_DATA_FILE = RAW_DIR / "macaulay_data.json"
 XC_DATA_FILE = RAW_DIR / "xc_data.json"
 OBSERVATIONORG_DATA_FILE = RAW_DIR / "observationorg_data.json"
@@ -886,7 +886,7 @@ def _apply_metadata_quality_filter(
 
 
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
-                   claude: dict = None,
+                   translate: dict = None,
                    manual_overrides: dict | None = None,
                    manual_aliases: dict[str, list[str]] | None = None,
                    reassign_ids: bool = False,
@@ -913,8 +913,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             if alias != sci_name and canonical_names.get(alias.lower(), sci_name) == sci_name:
                 source_alias_claims[alias.lower()] += 1
 
-    if claude is None:
-        claude = {}
+    if translate is None:
+        translate = {}
     if manual_overrides is None:
         manual_overrides = {}
     if manual_aliases is None:
@@ -927,7 +927,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             continue
         wp = wiki.get(sci_name, {})
         eb = ebird.get(sci_name, {})
-        cl = claude.get(sci_name, {})
+        cl = translate.get(sci_name, {})
 
         # Descriptions: locale → text.
         # Base layer: Wikipedia (multi-locale) or eBird (English-only).
@@ -958,8 +958,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             descriptions["en"] = eb["description"]
             description_sources["en"] = "ebird"
 
-        # Claude overlay — replace only the locales Claude provides
-        claude_locales: list[str] = []
+        # LLM overlay — replace only the locales the LLM provides
+        translate_locales: list[str] = []
         cl_extracts = cl.get("extracts", {})
         fallback_locales = set(cl.get("fallback_locales", []))
         if cl.get("fallback"):
@@ -968,9 +968,9 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             if text:
                 descriptions[loc] = text
                 description_sources[loc] = (
-                    "claude_fallback" if loc in fallback_locales else "claude"
+                    "llm_fallback" if loc in fallback_locales else "llm"
                 )
-                claude_locales.append(loc)
+                translate_locales.append(loc)
 
         description_source = description_sources.get("en", "")
         if not description_source and descriptions:
@@ -1023,7 +1023,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "descriptions": descriptions,
             "description_source": description_source,
             "description_sources": description_sources,
-            "claude_locales": sorted(claude_locales),
+            "translate_locales": sorted(translate_locales),
             "wikipedia_urls": wikipedia_urls,
             "scientific_name_aliases": aliases,
             "image": image,
@@ -1216,14 +1216,15 @@ def main():
     print("\nLoading enrichment data...")
     ebird = load_json(EBIRD_DATA_FILE)
     wiki = load_json(WIKI_DATA_FILE)
-    claude_enabled = bool(cfg.get("claude", {}).get("enabled", False))
-    claude = load_json(CLAUDE_DATA_FILE) if claude_enabled else {}
+    llm_cfg = cfg.get("llm") or cfg.get("claude", {})
+    llm_enabled = bool(llm_cfg.get("enabled", False))
+    translate = load_json(TRANSLATE_DATA_FILE) if llm_enabled else {}
     print(f"  eBird:     {len(ebird):>8} species")
     print(f"  Wikipedia: {len(wiki):>8} species")
-    if claude_enabled:
-        print(f"  Claude:    {len(claude):>8} species")
+    if llm_enabled:
+        print(f"  LLM:       {len(translate):>8} species")
     else:
-        print("  Claude:    disabled")
+        print("  LLM:       disabled")
     manual_overrides = load_manual_overrides()
     unknown_overrides = sorted(set(manual_overrides) - set(taxonomy))
     if unknown_overrides:
@@ -1252,7 +1253,7 @@ def main():
         taxonomy,
         ebird,
         wiki,
-        claude,
+        translate,
         manual_overrides,
         manual_aliases,
         reassign_ids=args.reassign_ids,

@@ -33,7 +33,7 @@ Current working taxonomy version: `v0.2-Jun2026`.
 - [Step 6 - Macaulay Library](#step-6--macaulay-library)
 - [Step 7 - Xeno-Canto](#step-7--xeno-canto)
 - [Step 8 - observation.org](#step-8--observationorg)
-- [Step 9 - Claude](#step-9--claude)
+- [Step 9 - LLM Translation](#step-9--llm-translation)
 - [Step 10 - Images](#step-10--images)
 - [Step 11 - Build](#step-11--build)
 - [Web Server](#web-server)
@@ -52,13 +52,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For optional Claude translations, Xeno-Canto lookups, and translation-service
-keys, add API keys to a `.env` file:
+For LLM-based translations, Xeno-Canto lookups, and optional public
+translation-service keys, add API keys to a `.env` file:
 
 ```
+# LLM translation (Step 9) — add whichever you have; Gemini is preferred
+GEMINI_API_KEY=...
+OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
+# Xeno-Canto (Step 7)
 XC_API_KEY=...
-LIBRETRANSLATE_API_KEY=...
 ```
 
 For sub-path deployment behind a reverse proxy (e.g. `https://example.com/taxonomy/`),
@@ -108,7 +111,7 @@ build/
 collectors/
     _common.py             # Shared collector utilities (cache, JSON I/O, shutdown)
     avilist.py             # Download and normalize AviList taxonomy input
-    claude.py              # Optional Claude enrichment for shortened/translated descriptions
+    translate.py           # Optional LLM translation: shorten/translate Wikipedia extracts
     ebird.py               # eBird names and localized common-name collection
     images.py              # Batch image generation for dev/dist outputs
     inat.py                # iNaturalist taxa, sounds, and observation-photo fallback
@@ -128,7 +131,8 @@ utils/
     audit_descriptions.py  # Focused description coverage report
     audit_metadata.py      # Release-readiness metadata audit
     description_quality.py # Shared description length/identity helpers
-    translate.py           # Optional public-service translation gap filler
+    llm.py                 # Unified LLM caller: Gemini / OpenAI / Anthropic from .env
+    translate.py           # Public-service translation gap filler (MyMemory/LibreTranslate)
     images.py              # Image download, crop, cache-state, and WebP helpers
 web/
     server.py              # FastAPI app serving HTML, REST API, and image endpoints
@@ -184,11 +188,11 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 6. Macaulay Library | `python -m collectors.macaulay` | `raw_data/macaulay_data.json` |
 | 7. Xeno-Canto | `python -m collectors.xenocanto` | `raw_data/xc_data.json` |
 | 8. observation.org | `python -m collectors.observationorg` | `raw_data/observationorg_data.json` |
-| 9. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
+| 9. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
 | 10. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
 | 11. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 is optional Claude enrichment when explicitly enabled. Step 10 downloads species images. Step 11 merges everything into the final output — no API calls, purely offline.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 is optional LLM-based translation and description shortening, disabled by default. Step 10 downloads species images. Step 11 merges everything into the final output — no API calls, purely offline.
 
 ### Step 1 — AviList
 
@@ -355,27 +359,44 @@ Resolution cascade:
 | `--retry-unresolved` | Retry species cached with no observation.org ID |
 | `--dry-run` | Preview without API calls |
 
-### Step 9 — Claude
+### Step 9 — LLM Translation
 
-Uses the Claude API (Sonnet 4) for two tasks on existing Wikipedia extracts — no content is generated from scratch:
+Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia extracts — no content is generated from scratch:
 
-- **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks Claude to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
-- **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for Claude's target locales. Sends the English text to Claude for translation into all missing locales at once.
-- **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English fallback descriptions only from traceable non-English Wikipedia extracts. Fallback locales are marked as `claude_fallback` in build output and never replace good Wikipedia/eBird English text.
+- **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks the LLM to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
+- **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for the configured target locales. Sends the English text for translation into all missing locales at once.
+- **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English fallback descriptions only from traceable non-English Wikipedia extracts. Fallback locales are marked as `llm_fallback` in build output and never replace existing Wikipedia/eBird English text.
 
-Claude's output is stored separately in `claude_data.json` and overlaid on top of Wikipedia extracts during the build step. Claude only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
+LLM output is stored in `translate_data.json` and overlaid on Wikipedia extracts during the build step. The LLM only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
 
-Translation batches are grouped by the exact set of missing locales for each species, then packed by source-text size. This keeps prompts smaller and makes parallel API calls practical on large repair runs.
+**Provider selection:** the provider is auto-detected from whichever key is present in `.env`, with priority `GEMINI_API_KEY` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`. Add the relevant key(s) to `.env`:
 
-**Claude locales:** en, de, fr, es, pt, it, nl, zh, ru, ar (subset of Wikipedia locales)
+```
+GEMINI_API_KEY=...        # gemini-2.0-flash (default for Gemini)
+OPENAI_API_KEY=...        # gpt-4o-mini (default for OpenAI)
+ANTHROPIC_API_KEY=...     # claude-haiku-4-5-20251001 (default for Anthropic)
+```
+
+Override the provider or model per run:
+
+```bash
+python -m collectors.translate --provider gemini
+python -m collectors.translate --provider openai --model gpt-4o
+```
+
+**Target locales:** en, de, fr, es, pt, it, nl, zh, ru, ar (subset of Wikipedia locales, configurable under `llm.locales` in `config.yml`)
+
+This step is disabled by default (`llm.enabled: false`). Enable it in `config.yml` to include LLM descriptions in the build output.
 
 | Flag | Description |
 |------|-------------|
 | `--limit N` | Cap total work items (0 = all) |
+| `--provider NAME` | `gemini`, `openai`, or `anthropic` (auto-detected from `.env`) |
+| `--model NAME` | Override the provider default model |
 | `--batch-size N` | Species per API call (default: 12) |
 | `--workers N` | Parallel translation workers (default: 4) |
 | `--char-budget N` | Source-character budget per API call (default: 12000) |
-| `--max-source-chars N` | Max source chars per species sent to Claude |
+| `--max-source-chars N` | Max source chars per species sent to LLM |
 | `--save-every N` | Save every N completed batches |
 | `--shorten-only` | Only shorten long extracts |
 | `--translate-only` | Only translate missing locales |
@@ -432,10 +453,10 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 Assembles per-species descriptions from multiple sources with the following priority:
 - **Base layer — Wikipedia:** English extract plus all locale extracts and Wikipedia URLs
 - **Fallback — eBird:** English description only, used when Wikipedia has no English extract
-- **Claude overlay:** Disabled by default. When `claude.enabled: true`, each locale Claude provides replaces the description for that locale. Claude locales are tracked in the `claude_locales` field
+- **LLM overlay:** Disabled by default. When `llm.enabled: true`, each locale the LLM provides replaces the description for that locale. LLM locales are tracked in the `translate_locales` field
 
-The effective priority is **Claude > Wikipedia > eBird**, applied per-locale,
-when Claude is enabled. Default builds use only Wikipedia and eBird
+The effective priority is **LLM > Wikipedia > eBird**, applied per-locale,
+when LLM translation is enabled. Default builds use only Wikipedia and eBird
 descriptions.
 The JSON output also includes `description_sources`, a per-locale source map,
 and `scientific_name_aliases`, a list of clean binomial scientific names that
@@ -477,13 +498,13 @@ python -m utils.audit_descriptions dist/species_metadata.json --output dev/descr
 
 By default this report includes short excerpts in every available locale plus
 English release-gate gaps. Add `--english-only` to report only the English gate.
-Prefer Wikipedia quality refetches before optional Claude fallback:
+Prefer Wikipedia quality refetches before optional LLM fallback:
 
 ```bash
 python -m collectors.wikipedia --quality-refetch
 ```
 
-Claude fallback is disabled by default and should only be enabled deliberately
+LLM translation is disabled by default and should only be enabled deliberately
 for a release that accepts generated description text.
 
 The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
@@ -543,7 +564,7 @@ All list/search endpoints (`/api/species`, `/api/search`) support these paramete
 | `group` | `?group=Aves` | Filter by taxon group |
 | `has_image` | `?has_image=true` | Filter species with/without images |
 | `has_description` | `?has_description=true` | Filter species with/without English description |
-| `description_source` | `?description_source=claude,wikipedia` | Filter by description source |
+| `description_source` | `?description_source=llm,wikipedia` | Filter by description source |
 | `min_observations` | `?min_observations=10000` | Minimum iNaturalist observation count |
 | `max_observations` | `?max_observations=50000` | Maximum iNaturalist observation count |
 | `format` | `?format=csv` | Response format — `json` (default) or `csv` |
@@ -581,7 +602,7 @@ curl '/api/species/eurblk1'
 - **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.
 - **[Xeno-Canto](https://xeno-canto.org)** — Scientific name mappings for cross-referencing the world's largest shared bird and wildlife sound collection.
 - **[observation.org](https://observation.org)** — Species IDs for cross-referencing to one of Europe's largest biodiversity recording platforms. Uses AviList taxonomy for birds.
-- **[Claude](https://www.anthropic.com/claude)** (Anthropic) — Optional AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts.
+- **LLM providers** — Optional AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts. Supported: [Google Gemini](https://ai.google.dev/) (`GEMINI_API_KEY`), [OpenAI](https://openai.com/) (`OPENAI_API_KEY`), [Anthropic Claude](https://www.anthropic.com/claude) (`ANTHROPIC_API_KEY`). Provider is auto-detected from `.env`.
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

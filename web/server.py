@@ -69,7 +69,7 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
         "license": "cc-by-sa",
     },
     "description_source": "wikipedia",
-    "claude_locales": ["pt"],
+    "translate_locales": ["pt"],
     "descriptions": {
         "en": "This large, familiar duck inhabits diverse aquatic environments...",
         "de": "Diese große, bekannte Ente bewohnt vielfältige Gewässer...",
@@ -139,16 +139,16 @@ class SpeciesRecord(BaseModel):
     description_sources: Optional[dict[str, str]] = Field(
         None,
         description="Per-locale description source labels",
-        examples=[{"en": "wikipedia", "de": "claude"}],
+        examples=[{"en": "wikipedia", "de": "llm"}],
     )
     image_crop_anchor: Optional[int] = Field(
         None,
         description="Optional manual 3x3 crop anchor for the species image (1=top-left, 5=center, 9=bottom-right)",
         examples=[5],
     )
-    claude_locales: Optional[list[str]] = Field(
+    translate_locales: Optional[list[str]] = Field(
         None,
-        description="Locales whose description text is provided by Claude rather than the base source",
+        description="Locales whose description text is provided by the LLM translator rather than the base source",
         examples=[["pt"]],
     )
     descriptions: Optional[dict[str, str]] = Field(None, examples=[{"en": "A large, familiar duck...", "de": "Eine große, bekannte Ente..."}])
