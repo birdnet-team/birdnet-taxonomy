@@ -24,11 +24,13 @@ Wikipedia APIs used:
 """
 
 import argparse
+from datetime import datetime, timezone
 import html
 import json
 import re
 import threading
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -40,10 +42,17 @@ from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
     RateLimiter, is_full_species_name, load_json, save_json,
+    clean_aliases,
+)
+from utils.description_quality import (
+    contains_species_identity,
+    select_description_text,
+    word_count,
 )
 
 INAT_DATA = RAW_DIR / "inat_data.json"
 OUTPUT_FILE = RAW_DIR / "wikipedia_data.json"
+TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 
 EN_API = "https://en.wikipedia.org/w/api.php"
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
@@ -347,6 +356,23 @@ def _batch_fetch_locale_extracts(lang: str,
     }
 
 
+def _batch_fetch_full_extracts(lang: str, titles: list[str]) -> dict[str, dict]:
+    """Fetch full plain-text extracts from one Wikipedia language edition."""
+    api = EN_API if lang == "en" else f"https://{lang}.wikipedia.org/w/api.php"
+    return _batch_query(api, titles,
+        props="extracts",
+        extra_params={
+            "explaintext": "1",
+            "exlimit": str(BATCH_SIZE),
+        },
+    )
+
+
+def _batch_fetch_full_english(titles: list[str]) -> dict[str, dict]:
+    """Fetch full plain-text English extracts for quality backfill."""
+    return _batch_fetch_full_extracts("en", titles)
+
+
 # ── Phase 3: Image licenses ──────────────────────────────────────────
 
 def _batch_fetch_licenses(filenames: list[str]) -> dict[str, dict]:
@@ -469,6 +495,154 @@ def _run_extract_backfill(existing: dict, pbar: tqdm) -> int:
 
     pbar.close()
     return updated
+
+
+def _identity_names(sci: str, taxonomy: dict) -> list[str]:
+    rec = taxonomy.get(sci, {}) if isinstance(taxonomy, dict) else {}
+    return clean_aliases([sci, *rec.get("scientific_name_aliases", [])])
+
+
+def _quality_status(rec: dict, loc: str, min_words: int) -> str:
+    text = rec.get("extracts", {}).get(loc, "")
+    if loc == "en":
+        text = rec.get("extract") or text
+    if not text:
+        return f"missing_{loc}"
+    if word_count(text) < min_words:
+        return f"short_{loc}"
+    return "ok"
+
+
+def _lookup_page(pages: dict[str, dict], title: str) -> dict | None:
+    """Find a page result despite MediaWiki title normalization differences."""
+    if title in pages:
+        return pages[title]
+    wanted = title.replace("_", " ").lower()
+    for key, page in pages.items():
+        candidates = {
+            key.replace("_", " ").lower(),
+            str(page.get("title", "")).replace("_", " ").lower(),
+        }
+        if wanted in candidates:
+            return page
+    return None
+
+
+def _collect_quality_work(
+    species: dict[str, str],
+    existing: dict,
+    taxonomy: dict,
+    target_locales: list[str],
+    min_words: int,
+    max_attempts: int,
+) -> list[tuple[str, str, str, str]]:
+    """Collect species/locales needing richer Wikipedia text."""
+    work: list[tuple[str, str, str, str]] = []
+    target_set = set(target_locales)
+    for sci, url in species.items():
+        rec = existing.get(sci, {})
+        urls = dict(rec.get("wikipedia_urls", {}))
+        if url:
+            urls.setdefault("en", url)
+        for loc, loc_url in sorted(urls.items()):
+            if loc not in target_set:
+                continue
+            status = _quality_status(rec, loc, min_words)
+            if status == "ok":
+                continue
+            quality = rec.get("quality", {}).get(loc, {})
+            if int(quality.get("attempts", 0) or 0) >= max_attempts:
+                continue
+            title = wiki_title_from_url(loc_url)
+            if title and _identity_names(sci, taxonomy):
+                work.append((sci, loc, title.replace("_", " "), status))
+    return work
+
+
+def _run_quality_refetch(
+    work: list[tuple[str, str, str, str]],
+    existing: dict,
+    taxonomy: dict,
+    min_words: int,
+    target_words: int,
+    extra_sections: int,
+    pbar: tqdm,
+) -> Counter:
+    """Fetch richer extracts for missing/short records across locales."""
+    counts: Counter = Counter()
+    now = datetime.now(timezone.utc).isoformat()
+    grouped: dict[str, list[tuple[str, str, str, str]]] = {}
+    for item in work:
+        grouped.setdefault(item[1], []).append(item)
+
+    for loc, loc_work in sorted(grouped.items()):
+        for batch in _chunks(loc_work, BATCH_SIZE):
+            if is_shutting_down():
+                break
+            titles = [title for _, _, title, _ in batch]
+            pages = _batch_fetch_full_extracts(loc, titles)
+            for sci, lang, title, previous_status in batch:
+                rec = existing.setdefault(sci, {})
+                quality = rec.setdefault("quality", {}).setdefault(lang, {})
+                quality["attempts"] = int(quality.get("attempts", 0) or 0) + 1
+                quality["last_checked"] = now
+                quality["previous_status"] = previous_status
+
+                page = _lookup_page(pages, title)
+                if not page:
+                    quality["last_status"] = "not_found"
+                    counts[f"{lang}:not_found"] += 1
+                    continue
+                if not page.get("extract"):
+                    quality["last_status"] = "empty"
+                    quality["page_title"] = page.get("title", title)
+                    counts[f"{lang}:empty"] += 1
+                    continue
+
+                page_title = page.get("title", title)
+                full_extract = page.get("extract", "")
+                names = _identity_names(sci, taxonomy)
+                identity_text = f"{page_title}\n{full_extract}"
+                if not contains_species_identity(identity_text, names):
+                    quality["last_status"] = "identity_failed"
+                    quality["page_title"] = page_title
+                    counts[f"{lang}:identity_failed"] += 1
+                    continue
+
+                selected = select_description_text(
+                    full_extract,
+                    min_words=min_words,
+                    target_words=target_words,
+                    extra_sections=extra_sections,
+                )
+                if not selected:
+                    quality["last_status"] = "empty"
+                    counts[f"{lang}:empty"] += 1
+                    continue
+
+                current = rec.get("extracts", {}).get(lang, "")
+                if lang == "en":
+                    current = rec.get("extract") or current
+                current_words = word_count(current)
+                selected_words = word_count(selected)
+                if selected_words >= max(min_words, current_words):
+                    safe = quote(page_title, safe="/:@!$&'()*+,;=")
+                    rec.setdefault("extracts", {})[lang] = selected
+                    rec.setdefault("wikipedia_urls", {})[lang] = (
+                        f"https://{lang}.wikipedia.org/wiki/{safe}"
+                    )
+                    if lang == "en":
+                        rec["title"] = page_title
+                        rec["extract"] = selected
+                    quality["last_status"] = "updated"
+                    quality["words"] = selected_words
+                    counts[f"{lang}:updated"] += 1
+                else:
+                    quality["last_status"] = "not_richer"
+                    quality["words"] = selected_words
+                    counts[f"{lang}:not_richer"] += 1
+            pbar.update(len(batch))
+    return counts
 
 
 def _run_phase2(english_data: dict[str, dict],
@@ -702,10 +876,24 @@ def main():
         help="Only fetch species not yet present in wikipedia_data.json",
     )
     parser.add_argument(
-        "--rps", type=float, default=default_rps,
+        "--quality-refetch", action="store_true",
+        help="Refetch missing/short extracts using richer full-article text",
+    )
+    parser.add_argument(
+        "--quality-locales", default="all",
+        help="Comma-separated locales for quality refetch, or 'all' for configured locales",
+    )
+    parser.add_argument(
+        "--quality-max-attempts", type=int, default=3,
+        help="Max quality-refetch attempts per species before skipping",
+    )
+    parser.add_argument(
+        "--rps", type=float, default=0,
         help=f"Max requests per second (default: {default_rps})",
     )
     args = parser.parse_args()
+    if not args.rps:
+        args.rps = default_rps
 
     if args.refetch and args.new_only:
         parser.error("--new-only cannot be combined with --refetch")
@@ -715,6 +903,17 @@ def main():
     _rate = RateLimiter(args.rps)
 
     target_locales = wiki_cfg.get("locales", ["en"])
+    if args.quality_locales == "all":
+        quality_locales = list(target_locales)
+    else:
+        quality_locales = [
+            loc.strip() for loc in args.quality_locales.split(",")
+            if loc.strip()
+        ]
+    desc_cfg = cfg.get("descriptions", {})
+    min_english_words = int(desc_cfg.get("min_english_words", 40))
+    target_words = int(desc_cfg.get("target_words", 120))
+    extra_sections = int(desc_cfg.get("wikipedia_extra_sections", 2))
 
     print("Loading species with Wikipedia URLs...")
     species = load_species_with_wikipedia()
@@ -722,6 +921,20 @@ def main():
 
     existing = load_json(OUTPUT_FILE)
     print(f"  Already have Wikipedia data for {len(existing)} species")
+    taxonomy = load_json(TAXONOMY_FILE)
+
+    quality_work = []
+    if args.quality_refetch:
+        quality_work = _collect_quality_work(
+            species,
+            existing,
+            taxonomy,
+            quality_locales,
+            min_words=min_english_words,
+            max_attempts=max(1, args.quality_max_attempts),
+        )
+        if args.limit:
+            quality_work = quality_work[:args.limit]
 
     # Build work list: separate new species from incomplete ones
     if args.refetch:
@@ -759,6 +972,17 @@ def main():
     print(f"  Will fetch {len(work)} new species")
     print(f"  Will complete {len(incomplete)} incomplete species "
           f"(missing locales/licenses)")
+    if args.quality_refetch:
+        by_locale = Counter(loc for _, loc, _, _ in quality_work)
+        locale_summary = ", ".join(
+            f"{loc}:{count}" for loc, count in by_locale.most_common(10)
+        )
+        if len(by_locale) > 10:
+            locale_summary += f", ... +{len(by_locale) - 10} locales"
+        print(f"  Will quality-refetch {len(quality_work)} extracts "
+              f"(<{min_english_words} units or missing)")
+        if locale_summary:
+            print(f"    Quality locales: {locale_summary}")
     print(f"  Target locales: {', '.join(target_locales)}")
 
     if args.dry_run:
@@ -774,8 +998,22 @@ def main():
                 n_url = len(rec.get("wikipedia_urls", {}))
                 has_lic = "yes" if rec.get("image_license") else "no"
                 print(f"    {sci}: {n_ext}/{n_url} extracts, license={has_lic}")
+        if quality_work:
+            print(f"  Quality refetch (first 20):")
+            for sci, loc, title, status in quality_work[:20]:
+                rec = existing.get(sci, {})
+                text = rec.get("extracts", {}).get(loc, "")
+                if loc == "en":
+                    text = rec.get("extract") or text
+                attempts = rec.get("quality", {}).get(loc, {}).get("attempts", 0)
+                print(
+                    f"    {sci} [{loc}]: {status}, {word_count(text)} units, "
+                    f"attempts={attempts}, title={title}"
+                )
+            if len(quality_work) > 20:
+                print(f"    ... and {len(quality_work) - 20} more")
 
-        total_work = len(work) + len(incomplete)
+        total_work = len(work) + len(incomplete) + len(quality_work)
         n_locales = len([l for l in target_locales if l != "en"])
         en_batches = (len(work) + BATCH_SIZE - 1) // BATCH_SIZE
         est_locale_batches = int(n_locales * total_work * 0.6 / BATCH_SIZE) + n_locales
@@ -787,6 +1025,27 @@ def main():
               f" Phase 3: ~{est_license_batches})")
         print(f"  Estimated time at {args.rps} rps: ~{total_est / args.rps / 60:.0f} min")
         return
+
+    if args.quality_refetch and quality_work:
+        print(f"\nQuality refetch: Wikipedia descriptions ({len(quality_work)} locale extracts)...")
+        pbarq = tqdm(total=len(quality_work), desc="Quality", unit="ext")
+        quality_counts = _run_quality_refetch(
+            quality_work,
+            existing,
+            taxonomy,
+            min_words=min_english_words,
+            target_words=target_words,
+            extra_sections=extra_sections,
+            pbar=pbarq,
+        )
+        pbarq.close()
+        save_json(existing, OUTPUT_FILE)
+        print(
+            "  Quality refetch: "
+            + ", ".join(f"{k}={v}" for k, v in sorted(quality_counts.items()))
+        )
+        if args.new_only and not work:
+            return
 
     title_to_sci = {title: sci for sci, title in work}
     all_titles = [title for _, title in work]

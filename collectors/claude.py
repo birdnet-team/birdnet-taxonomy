@@ -328,6 +328,59 @@ def translate_extracts(
     return out
 
 
+def fallback_english_descriptions(
+    items: list[tuple[str, dict[str, str]]],
+    target_words: int = 120,
+    max_source_chars: int = 5000,
+    max_tokens: int = 16384,
+) -> dict[str, dict[str, str]]:
+    """Create English fallback descriptions from traceable non-English sources."""
+    if not items:
+        return {}
+
+    system_prompt = (
+        "You are a careful natural history editor.\n\n"
+        "TASK: Create an English species description from the provided "
+        "Wikipedia source extracts.\n\n"
+        "RULES:\n"
+        "- Use ONLY facts present in the provided source extracts\n"
+        "- Write one concise paragraph of about {target_words} words\n"
+        "- Preserve scientific uncertainty; do not add unsourced facts\n"
+        "- No markdown, citations, or bullet points\n\n"
+        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
+        "{\n"
+        '  "Scientific name": {"en": "English fallback text..."},\n'
+        "  ...\n"
+        "}"
+    ).format(target_words=target_words)
+
+    entries = []
+    for sci, sources in items:
+        source_parts = []
+        for loc, text in sorted(sources.items()):
+            source_parts.append(f"[{loc}] {_truncate(text, max_source_chars)}")
+        entries.append(f"- {sci}:\n" + "\n".join(source_parts))
+
+    user_message = (
+        f"Create English fallback descriptions for these {len(items)} species.\n\n"
+        + "\n\n".join(entries)
+    )
+
+    result = _call_claude(system_prompt, user_message, max_tokens=max_tokens)
+    if not result:
+        return {}
+
+    parsed = _parse_json_response(result)
+    out: dict[str, dict[str, str]] = {}
+    for sci, locales in parsed.items():
+        if not isinstance(locales, dict):
+            continue
+        text = locales.get("en")
+        if isinstance(text, str) and text.strip():
+            out[sci] = {"en": text.strip()}
+    return out
+
+
 # ── Pipeline ──────────────────────────────────────────────────────────
 
 def _word_count(text: str) -> int:
@@ -411,12 +464,22 @@ def _merge_updates(target: dict, updates: dict[str, dict[str, str]]):
         entry_extracts.update(extracts)
 
 
-def _append_journal(updates: dict[str, dict[str, str]]):
+def _mark_fallback_locales(target: dict, updates: dict[str, dict[str, str]]):
+    """Mark generated locales as fallback-only in Claude output metadata."""
+    for sci, extracts in updates.items():
+        entry = target.setdefault(sci, {})
+        locales = set(entry.get("fallback_locales", []))
+        locales.update(extracts)
+        entry["fallback_locales"] = sorted(locales)
+
+
+def _append_journal(updates: dict[str, dict[str, str]], fallback: bool = False):
     """Persist one completed batch to an append-only journal for resume safety."""
     if not updates:
         return
     with JOURNAL_FILE.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(updates, ensure_ascii=False) + "\n")
+        payload = {"extracts": updates, "fallback": fallback}
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def _load_existing_outputs() -> dict:
@@ -437,7 +500,13 @@ def _load_existing_outputs() -> dict:
                 tqdm.write("  WARN: Skipping malformed Claude journal line")
                 continue
             if isinstance(updates, dict):
-                _merge_updates(existing, updates)
+                if "extracts" in updates:
+                    extracts = updates.get("extracts") or {}
+                    _merge_updates(existing, extracts)
+                    if updates.get("fallback"):
+                        _mark_fallback_locales(existing, extracts)
+                else:
+                    _merge_updates(existing, updates)
                 replayed += 1
     if replayed:
         tqdm.write(f"  Replayed {replayed} Claude journal batches")
@@ -477,17 +546,35 @@ def main():
                         help="Only shorten long extracts, skip translations")
     parser.add_argument("--translate-only", action="store_true",
                         help="Only translate, skip shortening")
-    parser.add_argument("--batch-size", type=int, default=default_batch,
+    parser.add_argument("--fallback-missing", action="store_true",
+                        help="Generate English fallback descriptions from non-English Wikipedia extracts")
+    parser.add_argument("--fallback-only", action="store_true",
+                        help="Only generate English fallbacks; implies --fallback-missing")
+    parser.add_argument("--batch-size", type=int, default=0,
                         help=f"Species per API call (default: {default_batch})")
-    parser.add_argument("--workers", type=int, default=translate_workers,
+    parser.add_argument("--workers", type=int, default=0,
                         help=f"Parallel translation workers (default: {translate_workers})")
-    parser.add_argument("--save-every", type=int, default=save_every,
+    parser.add_argument("--save-every", type=int, default=0,
                         help=f"Save claude_data.json every N completed batches (default: {save_every})")
-    parser.add_argument("--char-budget", type=int, default=source_char_budget,
+    parser.add_argument("--char-budget", type=int, default=0,
                         help=f"Approximate source-character budget per API call (default: {source_char_budget})")
-    parser.add_argument("--max-source-chars", type=int, default=max_source_chars,
+    parser.add_argument("--max-source-chars", type=int, default=0,
                         help=f"Max source chars per species sent to Claude (default: {max_source_chars})")
     args = parser.parse_args()
+    if args.fallback_only:
+        args.fallback_missing = True
+        args.shorten_only = False
+        args.translate_only = False
+    if not args.batch_size:
+        args.batch_size = default_batch
+    if not args.workers:
+        args.workers = translate_workers
+    if not args.save_every:
+        args.save_every = save_every
+    if not args.char_budget:
+        args.char_budget = source_char_budget
+    if not args.max_source_chars:
+        args.max_source_chars = max_source_chars
 
     global _request_delay
     _request_delay = max(0.0, float(delay))
@@ -507,7 +594,7 @@ def main():
 
     # ── Phase 1: Find extracts that need shortening ───────────────────
     needs_shortening: list[tuple[str, str, str]] = []  # (sci, locale, text)
-    if not args.translate_only:
+    if not args.translate_only and not args.fallback_only:
         for sci, rec in wiki.items():
             for loc, text in rec.get("extracts", {}).items():
                 if not text:
@@ -521,7 +608,7 @@ def main():
 
     # ── Phase 2: Find species needing translation ─────────────────────
     needs_translation: list[tuple[str, str, tuple[str, ...]]] = []
-    if not args.shorten_only and target_non_en:
+    if not args.shorten_only and not args.fallback_only and target_non_en:
         for sci, rec in wiki.items():
             en_text = rec.get("extract") or rec.get("extracts", {}).get("en")
             if not en_text:
@@ -535,10 +622,28 @@ def main():
             if missing:
                 needs_translation.append((sci, en_text, missing))
 
+    # ── Phase 3: Find species needing English fallback from traceable sources ─
+    needs_fallback: list[tuple[str, dict[str, str]]] = []
+    if args.fallback_missing:
+        for sci, rec in wiki.items():
+            wp_extracts = rec.get("extracts", {})
+            cl_entry = existing.get(sci, {})
+            cl_extracts = cl_entry.get("extracts", {})
+            if rec.get("extract") or wp_extracts.get("en") or cl_extracts.get("en"):
+                continue
+            source_extracts = {
+                loc: text for loc, text in wp_extracts.items()
+                if loc != "en" and text
+            }
+            if source_extracts:
+                needs_fallback.append((sci, source_extracts))
+
     if args.limit:
         needs_shortening = needs_shortening[:args.limit]
         remaining = max(0, args.limit - len(needs_shortening))
         needs_translation = needs_translation[:remaining]
+        remaining = max(0, remaining - len(needs_translation))
+        needs_fallback = needs_fallback[:remaining]
 
     batch_size = max(1, args.batch_size)
     save_every = max(1, args.save_every)
@@ -557,6 +662,12 @@ def main():
         char_budget=char_budget,
         max_source_chars=max_source_chars,
     )
+    fallback_batches = _batch_by_char_budget(
+        needs_fallback,
+        text_getter=lambda item: "\n".join(item[1].values()),
+        char_budget=char_budget,
+        max_items=batch_size,
+    )
     locale_signatures = {missing for _, _, missing in needs_translation}
 
     print(f"\n  Phase 1 — Shorten: {len(needs_shortening)} extracts "
@@ -564,7 +675,9 @@ def main():
     print(f"  Phase 2 — Translate: {len(needs_translation)} species "
           f"({len(translation_batches)} batches across "
           f"{len(locale_signatures)} locale sets)")
-    print(f"  Estimated API calls: ~{len(shorten_batches) + len(translation_batches)}")
+    print(f"  Phase 3 — English fallback: {len(needs_fallback)} species "
+          f"({len(fallback_batches)} batches)")
+    print(f"  Estimated API calls: ~{len(shorten_batches) + len(translation_batches) + len(fallback_batches)}")
 
     if args.dry_run:
         if needs_shortening:
@@ -584,6 +697,12 @@ def main():
                       f"missing={','.join(missing)}")
             if len(needs_translation) > 20:
                 print(f"    ... and {len(needs_translation) - 20} more")
+        if needs_fallback:
+            print(f"\n  Species needing English fallback (first 20):")
+            for sci, sources in needs_fallback[:20]:
+                print(f"    {sci}: source_locales={','.join(sorted(sources))}")
+            if len(needs_fallback) > 20:
+                print(f"    ... and {len(needs_fallback) - 20} more")
         return
 
     # ── Phase 1: Shorten ──────────────────────────────────────────────
@@ -680,6 +799,43 @@ def main():
             _checkpoint_state(existing)
     else:
         print("\nPhase 2: No translations needed")
+
+    if is_shutting_down():
+        return
+
+    # ── Phase 3: English fallback ─────────────────────────────────────
+    if needs_fallback:
+        print(f"\nPhase 3: Generating {len(needs_fallback)} English fallbacks...")
+        pbar = tqdm(total=len(needs_fallback), desc="Fallback", unit="sp")
+        pending_saves = 0
+
+        for batch in fallback_batches:
+            if is_shutting_down():
+                break
+            results = fallback_english_descriptions(
+                batch,
+                target_words=target_words,
+                max_source_chars=max_source_chars,
+                max_tokens=max_tokens,
+            )
+            batch_updates: dict[str, dict[str, str]] = {}
+            for sci, extracts in results.items():
+                if "en" in extracts and not existing.get(sci, {}).get("extracts", {}).get("en"):
+                    batch_updates.setdefault(sci, {})["en"] = extracts["en"]
+
+            _merge_updates(existing, batch_updates)
+            _mark_fallback_locales(existing, batch_updates)
+            _append_journal(batch_updates, fallback=True)
+
+            pbar.update(len(batch))
+            pending_saves += 1
+            pending_saves = _save_if_needed(existing, pending_saves, save_every)
+
+        pbar.close()
+        if pending_saves:
+            _checkpoint_state(existing)
+    elif args.fallback_missing:
+        print("\nPhase 3: No English fallbacks needed")
 
     # Summary
     n_species = len(existing)
