@@ -61,10 +61,12 @@ gaps with Claude; 10 generates images; 11 merges everything.
 
 ## Identifiers and stability
 
-- Each species has a permanent **BirdNET ID** in the form `BN{5 digits}`, stored in
-  the git-tracked `bn_ids.json` registry. IDs are assigned once and **never
-  reassigned** — removed species keep their ID reserved. Only regenerate the registry
-  with an explicit `--reassign-ids` (pre-release only); never do this casually.
+- Each species has a **BirdNET ID** in the form `BN{5 digits}`, stored in the
+  git-tracked `bn_ids.json` registry. Before the 1.0 release, BirdNET IDs may be
+  reassigned as an intentional breaking change when taxonomy cleanup requires it.
+  Reassignment must be explicit (`--reassign-ids`), documented in the same
+  change, and never done accidentally. After 1.0, treat IDs as permanent unless
+  project maintainers explicitly change that policy.
 
 ## Manual overrides
 

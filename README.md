@@ -13,7 +13,9 @@
 
 Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
 
-**Important note: While still in development (i.e., all releases prior to 1.0), species IDs will change. We will freeze species IDs upon offical release.**
+Current working taxonomy version: `v0.2-Jun2026`.
+
+**Important note: While still in development (i.e., all releases prior to 1.0), species IDs may change. We will freeze species IDs upon official release.**
 
 ## Table of Contents
 
@@ -21,6 +23,7 @@ Pipeline for collecting and merging species metadata from multiple sources. Cove
 - [Contributing](#contributing)
 - [Project Structure](#project-structure)
 - [Taxon Groups](#taxon-groups)
+- [Taxonomy Rules](#taxonomy-rules)
 - [Pipeline](#pipeline)
 - [Step 1 - AviList](#step-1--avilist)
 - [Step 2 - iNaturalist](#step-2--inaturalist)
@@ -115,9 +118,14 @@ collectors/
 dev/                       # Development metadata snapshots and local build artifacts
 dist/                      # Published metadata and generated site image assets
 overrides/
+    priority_species.csv  # Git-tracked reviewed taxonomy additions
+    species_aliases.csv   # Git-tracked manual scientific-name aliases
     species_overrides.csv  # Git-tracked manual image and crop overrides
 raw_data/                  # Cached upstream source payloads and intermediate collector output
 utils/
+    audit_descriptions.py  # Focused description coverage report
+    audit_metadata.py      # Release-readiness metadata audit
+    description_quality.py # Shared description length/identity helpers
     images.py              # Image download, crop, cache-state, and WebP helpers
 web/
     server.py              # FastAPI app serving HTML, REST API, and image endpoints
@@ -133,9 +141,31 @@ Configured in `config.yml`. Birds include all species; other groups are limited 
 |-------|---------------|------|------------------------|
 | Aves | 3 | All species | — |
 | Mammalia | 40151 | Sounds only | 1 |
-| Insecta | 47158 | Sounds only | 5 |
-| Reptilia | 26036 | Sounds only | 5 |
-| Amphibia | 20978 | Sounds only | 5 |
+| Insecta | 47158 | Sounds only | 1 |
+| Reptilia | 26036 | Sounds only | 1 |
+| Amphibia | 20978 | Sounds only | 1 |
+
+Mammals can define nested sub-taxa for focused coverage. The current v0.2
+configuration includes `Chiroptera` (iNat taxon ID `40268`) under `Mammalia`
+to include bat species with at least one sound observation, plus species with
+at least 100 total iNaturalist observations.
+
+## Taxonomy Rules
+
+The final taxonomy is species-level only. Scientific names must be clean
+binomial species names: no genera-only rows, higher ranks, subspecies,
+trinomials, hybrids, parenthetical qualifiers, slash alternatives, or informal
+annotations. Subspecies encountered in source data are folded into their parent
+binomial species for now.
+
+Common names are also treated as display names. Parenthetical qualifiers,
+bracketed notes, slash alternatives, and informal symbols are rejected in final
+metadata. Regular spaces, apostrophes, and dashes/hyphens are allowed when they
+are part of the accepted name.
+
+Bird taxonomy and English bird names come from AviList. Non-bird groups are
+included through configured iNaturalist coverage rules and reviewed priority
+species additions.
 
 ## Pipeline
 
@@ -169,12 +199,15 @@ Downloads the AviList Global Avian Checklist (XLSX), converts to CSV. Provides a
 
 Paginates the iNat taxa API to fetch all species for each taxon group. For birds, fetches all species. For other groups, queries the iNat sounds API to find species with audio observations meeting the `min_observations` threshold. Collects taxonomy, common names (all locales when `all_names: true`), observation counts, default photos, and Wikipedia URLs.
 
+Reviewed issue-specific additions can be listed in `overrides/priority_species.csv`. These species are fetched after configured groups, preferably by iNaturalist taxon ID, and keep the normal species-only validation rules.
+
 After group fetching, runs an **observation photo fallback** phase: for any species whose default taxon photo is missing or not CC-licensed, queries the iNat observations API for a CC-licensed photo from a research-grade observation (sorted by community votes). The result is stored in the `obs_photo` field, and unsuccessful lookups are cached in `inat_data.json` so later runs do not repeat the same slow checks.
 
 | Flag | Description |
 |------|-------------|
 | `--group NAME` | Fetch only this taxon group |
 | `--limit N` | Cap new species per group (0 = all) |
+| `--new-only` | Only fetch new species; skip count/photo refresh work |
 | `--save-every N` | Save progress every N new species (default: from config.yml) |
 | `--refresh` | Bypass cached Phase 1 data and re-fetch from API |
 | `--obs-photos-only` | Only run observation photo fallback |
@@ -182,6 +215,8 @@ After group fetching, runs an **observation photo fallback** phase: for any spec
 | `--refresh-obs-photos` | Recheck species cached as having no obs photo |
 | `--avilist-only` | Only run AviList reconciliation |
 | `--skip-avilist` | Skip AviList reconciliation phase |
+| `--priority-only` | Only run reviewed priority species |
+| `--skip-priority` | Skip reviewed priority species |
 | `--dry-run` | Preview without fetching |
 
 ### Step 3 — eBird
@@ -223,8 +258,11 @@ Fetches multilingual Wikipedia data in four phases:
 - **Phase 1b — Extract backfill:** Scans existing data for species that have an English Wikipedia URL but are missing the English extract (can happen due to API glitches during bulk fetching). Re-fetches just the extracts for those species with redirect resolution.
 - **Phase 2 — Locale extracts:** For each target language (20 configured locales), batch-fetches intro extracts from the corresponding Wikipedia. Runs locales concurrently with a thread pool. Skips species that already have extracts for a given locale.
 - **Phase 3 — Image licenses:** Batch-fetches license metadata (artist, license, license URL) from Wikimedia Commons for all page images found in Phase 1.
+- **Quality refetch — description depth:** Optional `--quality-refetch` pass for missing or too-short extracts in all configured Wikipedia locales. It fetches richer plain-text article content from the matching language wiki, validates that the article title/text contains the canonical scientific name or a clean alias, stores per-locale retry/status metadata, and avoids retrying indefinitely. Use `--quality-locales en` to restrict this to the English release gate.
 
 Rate-limited (default 25 rps), with exponential backoff on 429s and server errors. All phases save incrementally.
+Description quality thresholds such as minimum English word count and target
+length are configured under `descriptions` in `config.yml`.
 
 **Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, ar, ja, ko, tr, sw
 
@@ -234,6 +272,9 @@ Rate-limited (default 25 rps), with exponential backoff on 429s and server error
 | `--rps N` | Max requests per second (default: 25) |
 | `--new-only` | Only species not yet in wikipedia_data.json |
 | `--refetch` | Re-fetch species with few locale extracts (conflicts with `--new-only`) |
+| `--quality-refetch` | Re-fetch missing/short extracts using richer article text |
+| `--quality-locales LIST` | `all` configured locales, or comma-separated locales such as `en,de,fr` |
+| `--quality-max-attempts N` | Skip quality refetch after N attempts per species |
 | `--dry-run` | Preview without fetching |
 
 ### Step 6 — Macaulay Library
@@ -294,6 +335,7 @@ Uses the Claude API (Sonnet 4) for two tasks on existing Wikipedia extracts — 
 
 - **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks Claude to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
 - **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for Claude's target locales. Sends the English text to Claude for translation into all missing locales at once.
+- **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English fallback descriptions only from traceable non-English Wikipedia extracts. Fallback locales are marked as `claude_fallback` in build output and never replace good Wikipedia/eBird English text.
 
 Claude's output is stored separately in `claude_data.json` and overlaid on top of Wikipedia extracts during the build step. Claude only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
 
@@ -311,6 +353,8 @@ Translation batches are grouped by the exact set of missing locales for each spe
 | `--save-every N` | Save every N completed batches |
 | `--shorten-only` | Only shorten long extracts |
 | `--translate-only` | Only translate missing locales |
+| `--fallback-missing` | Generate English fallbacks from non-English Wikipedia source extracts |
+| `--fallback-only` | Only generate English fallbacks |
 | `--dry-run` | Preview without API calls |
 
 ### Step 10 — Images
@@ -361,12 +405,18 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 **Merge phase:**
 Assembles per-species descriptions from multiple sources with the following priority:
 - **Base layer — Wikipedia:** English extract plus all locale extracts and Wikipedia URLs
-- **Fallback — eBird:** English description only, used when no Wikipedia article exists
+- **Fallback — eBird:** English description only, used when Wikipedia has no English extract
 - **Claude overlay:** For each locale Claude provides, replaces the description for that locale. Claude locales are tracked in the `claude_locales` field
 
 The effective priority is **Claude > Wikipedia > eBird**, applied per-locale.
+The JSON output also includes `description_sources`, a per-locale source map,
+and `scientific_name_aliases`, a list of clean binomial scientific names that
+resolve to the canonical species.
+Reviewed manual scientific-name bridges live in `overrides/species_aliases.csv`.
+The build also filters source-derived aliases that collide with another
+canonical species and fails if any alias conflict remains.
 
-The JSON output contains full multilingual descriptions. The CSV output is a lighter export and does not include description excerpts.
+The JSON output contains full multilingual descriptions. The CSV output is a lighter export and does not include description excerpts; scientific aliases are exported as a pipe-separated `scientific_name_aliases` field.
 
 Image fields in the final metadata:
 
@@ -374,7 +424,7 @@ Image fields in the final metadata:
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 
 **BirdNET species IDs:**
-Each species receives a permanent BirdNET ID in the format `BN{5 digits}` (e.g. `BN00498`). IDs are assigned once during the first build and stored in the git-tracked `bn_ids.json` registry. New species receive the next available number; removed species keep their ID reserved and it is never reassigned. This ensures stable, machine-readable identifiers that never change regardless of taxonomic renames or reordering.
+Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00498`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
 
 | Flag | Description |
 |------|-------------|
@@ -382,7 +432,26 @@ Each species receives a permanent BirdNET ID in the format `BN{5 digits}` (e.g. 
 | `--merge-only` | Skip taxonomy rebuild, re-merge only |
 | `--no-zip` | Skip zip archive creation |
 | `--reassign-ids` | Regenerate all BirdNET IDs from scratch (pre-release only) |
+| `--strict-validation` | Fail if release-gate metadata audit findings remain |
 | `--dry-run` | Show stats without writing |
+
+Focused description coverage can be audited with:
+
+```bash
+python -m utils.audit_descriptions dist/species_metadata.json --output dev/description_audit.csv
+```
+
+By default this report includes short excerpts in every available locale plus
+English release-gate gaps. Add `--english-only` to report only the English gate.
+Prefer Wikipedia quality refetches before Claude fallback:
+
+```bash
+python -m collectors.wikipedia --quality-refetch
+```
+
+Claude fallback should be reserved for remaining gaps where traceable
+non-English Wikipedia source text exists but no English Wikipedia/eBird text is
+available.
 
 The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
 
@@ -407,6 +476,7 @@ uvicorn web.server:app --reload
 - Scientific name (e.g., `Turdus merula`)
 - Common name in any locale (e.g., `Amsel`, `Merle noir`)
 - BirdNET ID (e.g., `BN10600`)
+- Scientific alias from `scientific_name_aliases`
 - eBird species code (e.g., `eurblk1`)
 - iNaturalist taxon ID (e.g., `12727`)
 
