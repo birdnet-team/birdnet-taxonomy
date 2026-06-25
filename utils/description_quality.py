@@ -31,7 +31,8 @@ def contains_species_identity(text: str, names: list[str] | tuple[str, ...] | se
 
 
 def select_description_text(full_text: str, min_words: int, target_words: int,
-                            extra_sections: int = 2) -> str:
+                            extra_sections: int = 2,
+                            min_paragraphs: int = 1) -> str:
     """Select a concise early-article description from a full Wikipedia extract."""
     text = (full_text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
@@ -47,14 +48,18 @@ def select_description_text(full_text: str, min_words: int, target_words: int,
 
     selected: list[str] = []
     max_chunks = max(1, 1 + int(extra_sections or 0))
+    min_chunks = max(1, int(min_paragraphs or 1))
     for chunk in chunks[:max_chunks]:
         if re.match(r"^(references|external links|further reading|see also)\b", chunk, re.I):
             break
         selected.append(chunk)
-        if word_count(" ".join(selected)) >= max(min_words, target_words):
+        if (
+            len(selected) >= min_chunks
+            and word_count(" ".join(selected)) >= max(min_words, target_words)
+        ):
             break
 
-    candidate = " ".join(selected).strip()
+    candidate = "\n\n".join(selected).strip()
     if not candidate:
         return ""
     if word_count(candidate) <= max(target_words * 2, min_words):
@@ -66,6 +71,9 @@ def select_description_text(full_text: str, min_words: int, target_words: int,
         if not sentence:
             continue
         out.append(sentence)
-        if word_count(" ".join(out)) >= target_words:
+        if word_count(" ".join(out)) >= target_words and len(selected) <= min_chunks:
             break
-    return " ".join(out).strip() or candidate
+    shortened = " ".join(out).strip()
+    if len(selected) >= min_chunks:
+        return candidate
+    return shortened or candidate

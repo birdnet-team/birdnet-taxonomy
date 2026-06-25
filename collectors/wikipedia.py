@@ -566,6 +566,7 @@ def _run_quality_refetch(
     min_words: int,
     target_words: int,
     extra_sections: int,
+    min_paragraphs: int,
     pbar: tqdm,
 ) -> Counter:
     """Fetch richer extracts for missing/short records across locales."""
@@ -614,6 +615,7 @@ def _run_quality_refetch(
                     min_words=min_words,
                     target_words=target_words,
                     extra_sections=extra_sections,
+                    min_paragraphs=min_paragraphs,
                 )
                 if not selected:
                     quality["last_status"] = "empty"
@@ -914,6 +916,7 @@ def main():
     min_english_words = int(desc_cfg.get("min_english_words", 40))
     target_words = int(desc_cfg.get("target_words", 120))
     extra_sections = int(desc_cfg.get("wikipedia_extra_sections", 2))
+    min_paragraphs = int(desc_cfg.get("wikipedia_min_paragraphs", 1))
 
     print("Loading species with Wikipedia URLs...")
     species = load_species_with_wikipedia()
@@ -1036,6 +1039,7 @@ def main():
             min_words=min_english_words,
             target_words=target_words,
             extra_sections=extra_sections,
+            min_paragraphs=min_paragraphs,
             pbar=pbarq,
         )
         pbarq.close()
