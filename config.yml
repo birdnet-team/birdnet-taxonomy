@@ -92,6 +92,28 @@ descriptions:
   wikipedia_extra_sections: 3 # extra early sections to try for short leads
   wikipedia_min_paragraphs: 2 # keep at least two early paragraphs when available
 
+# Public translation service for optional Wikipedia excerpt gap filling.
+translation:
+  provider: "mymemory"
+  service_name: "MyMemory"
+  endpoint: "https://api.mymemory.translated.net/get"
+  api_key_env: "LIBRETRANSLATE_API_KEY"
+  locales:
+    - de
+    - es
+    - fr
+    - cs
+    - it
+    - pt
+  rps: 0.3
+  save_every: 25
+  max_chars: 450
+  batch_size: 10
+  batch_max_chars: 450
+  language_map:
+    no: "nb"
+    zh_TRA: "zh"
+
 # Offline build-time metadata quality pruning.
 # Scores are computed before BirdNET IDs are assigned; dropped species do not
 # receive IDs in the generated registry when --reassign-ids is used.

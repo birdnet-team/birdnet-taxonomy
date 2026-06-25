@@ -935,15 +935,16 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         # Wikipedia: use English extract independently from locale extracts.
         # Locale-only Wikipedia data must not block English fallback sources.
         wp_extracts = wp.get("extracts", {})
+        wp_extract_sources = wp.get("extract_sources", {}) or {}
         wp_en = wp.get("extract") or wp_extracts.get("en", "")
         if wp_en:
             descriptions["en"] = wp_en
-            description_sources["en"] = "wikipedia"
+            description_sources["en"] = wp_extract_sources.get("en") or "wikipedia"
 
         for loc, text in wp_extracts.items():
             if loc != "en" and text:
                 descriptions[loc] = text
-                description_sources[loc] = "wikipedia"
+                description_sources[loc] = wp_extract_sources.get(loc) or "wikipedia"
         for loc, url in wp.get("wikipedia_urls", {}).items():
             if url:
                 wikipedia_urls[loc] = url

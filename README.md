@@ -52,11 +52,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For Claude translations and Xeno-Canto lookups, add API keys to a `.env` file:
+For optional Claude translations, Xeno-Canto lookups, and translation-service
+keys, add API keys to a `.env` file:
 
 ```
 ANTHROPIC_API_KEY=...
 XC_API_KEY=...
+LIBRETRANSLATE_API_KEY=...
 ```
 
 For sub-path deployment behind a reverse proxy (e.g. `https://example.com/taxonomy/`),
@@ -126,6 +128,7 @@ utils/
     audit_descriptions.py  # Focused description coverage report
     audit_metadata.py      # Release-readiness metadata audit
     description_quality.py # Shared description length/identity helpers
+    translate.py           # Optional public-service translation gap filler
     images.py              # Image download, crop, cache-state, and WebP helpers
 web/
     server.py              # FastAPI app serving HTML, REST API, and image endpoints
@@ -264,6 +267,23 @@ Rate-limited (default 25 rps), with exponential backoff on 429s and server error
 Description quality thresholds such as minimum English word count, target
 length, extra early sections, and minimum retained paragraphs are configured
 under `descriptions` in `config.yml`.
+
+Missing locale excerpts can be filled from English Wikipedia excerpts with an
+optional public translation-service utility:
+
+```bash
+python -m utils.translate --dry-run
+python -m utils.translate --locales de,es,fr,cs,it,pt --limit 100
+```
+
+The utility is incremental and only fills blank locale excerpts when English
+Wikipedia text exists. It stores per-locale provenance in `extract_sources`,
+for example `Source: Wikipedia, translated by LibreTranslate`, which the build
+carries through to `description_sources`. Service endpoint, rate limit, and
+default target locales live under `translation` in `config.yml`. By default it
+only fills German, Spanish, French, Czech (`cs`), Italian, and Portuguese. If
+the selected service needs a key, set the configured `LIBRETRANSLATE_API_KEY`
+environment variable.
 
 **Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, ar, ja, ko, tr, sw
 
@@ -551,12 +571,12 @@ curl '/api/species/eurblk1'
 - **[iNaturalist](https://www.inaturalist.org)** — Taxonomy, common names, observation counts, and photos via the public API. Data licensed under various Creative Commons licenses by individual contributors.
 - **[eBird](https://ebird.org)** — Species descriptions, images, and common names (62 locales) from the Cornell Lab of Ornithology. Species codes from the eBird/Clements taxonomy.
 - **[Wikidata](https://www.wikidata.org)** — External identifiers (GBIF, NCBI, Avibase, BirdLife), eBird codes, common name labels, and P18 images via SPARQL. Data available under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
-- **[Wikipedia](https://www.wikipedia.org)** — English summaries and localized article links via the REST and MediaWiki APIs. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- **[Wikipedia](https://www.wikipedia.org)** — English summaries, localized article links, and optional public-service translations from English Wikipedia excerpts. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2025). AviList Core Team, 2025. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2025](https://doi.org/10.2173/avilist.v2025).
 - **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.
 - **[Xeno-Canto](https://xeno-canto.org)** — Scientific name mappings for cross-referencing the world's largest shared bird and wildlife sound collection.
 - **[observation.org](https://observation.org)** — Species IDs for cross-referencing to one of Europe's largest biodiversity recording platforms. Uses AviList taxonomy for birds.
-- **[Claude](https://www.anthropic.com/claude)** (Anthropic) — AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts.
+- **[Claude](https://www.anthropic.com/claude)** (Anthropic) — Optional AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts.
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
