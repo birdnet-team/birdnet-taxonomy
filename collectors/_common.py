@@ -25,6 +25,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw_data"
+MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
 
 USER_AGENT = "BirdNET Species Metadata Crawler (https://github.com/birdnet-team/species-data)"
 
@@ -178,6 +179,7 @@ def load_canonical_species(cfg: dict | None = None,
     """
     taxonomy_path = RAW_DIR / "taxonomy.json"
     species: dict[str, dict] = {}
+    manual_aliases = load_manual_species_aliases()
     if taxonomy_path.exists():
         taxonomy = load_json(taxonomy_path)
         for sci, rec in taxonomy.items():
@@ -185,7 +187,7 @@ def load_canonical_species(cfg: dict | None = None,
                 continue
             if group and rec.get("taxon_group") != group:
                 continue
-            species[sci] = rec
+            species[sci] = _with_manual_aliases(sci, rec, manual_aliases)
         return species
 
     inat_path = RAW_DIR / "inat_data.json"
@@ -196,15 +198,47 @@ def load_canonical_species(cfg: dict | None = None,
                 continue
             if group and rec.get("taxon_group") != group:
                 continue
-            species[sci] = rec
+            species[sci] = _with_manual_aliases(sci, rec, manual_aliases)
 
     csv_name = (cfg or {}).get("avilist", {}).get("csv_file", "")
     if csv_name and (not group or group == "Aves"):
         for sci, rec in load_avilist_species(RAW_DIR / csv_name).items():
             if not group or rec.get("taxon_group") == group:
-                species.setdefault(sci, rec)
+                species.setdefault(sci, _with_manual_aliases(sci, rec, manual_aliases))
 
     return species
+
+
+def load_manual_species_aliases() -> dict[str, list[str]]:
+    """Load reviewed species aliases for collector fallback lookups."""
+    if not MANUAL_ALIASES_FILE.exists():
+        return {}
+    aliases: dict[str, list[str]] = {}
+    with MANUAL_ALIASES_FILE.open(encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            sci = (row.get("scientific_name") or "").strip()
+            alias = (row.get("alias") or "").strip()
+            if not is_clean_scientific_name(sci) or not is_clean_scientific_name(alias):
+                continue
+            aliases.setdefault(sci, []).append(alias)
+    return {sci: clean_aliases(values) for sci, values in aliases.items()}
+
+
+def _with_manual_aliases(
+    sci: str,
+    rec: dict,
+    manual_aliases: dict[str, list[str]],
+) -> dict:
+    aliases = clean_aliases([
+        *(rec.get("scientific_name_aliases", []) or []),
+        *manual_aliases.get(sci, []),
+    ])
+    if not aliases:
+        return rec
+    merged = dict(rec)
+    merged["scientific_name_aliases"] = aliases
+    return merged
 
 
 # ---------------------------------------------------------------------------

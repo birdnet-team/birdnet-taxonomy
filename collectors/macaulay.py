@@ -302,7 +302,11 @@ def main():
         for sci in progress:
             if is_shutting_down():
                 break
-            synonyms = _gbif_synonyms(sci)
+            rec = species.get(sci, {})
+            synonyms = [
+                *rec.get("scientific_name_aliases", []),
+                *_gbif_synonyms(sci),
+            ]
             for syn in synonyms:
                 code = _ml_lookup(syn)
                 if code:

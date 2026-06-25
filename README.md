@@ -306,7 +306,7 @@ Resolution cascade:
 1. **eBird code** — reuses existing eBird species code for birds (instant, no API call)
 2. **ML taxonomy API** — queries by scientific name for non-birds
 3. **Wikidata P10794** — bulk SPARQL lookup of Macaulay Library taxon IDs
-4. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the ML API
+4. **Alias synonym fallback** — tries reviewed aliases from `overrides/species_aliases.csv`, then GBIF synonyms, and retries the ML API
 
 | Flag | Description |
 |------|-------------|
@@ -323,7 +323,7 @@ Resolution cascade:
 1. **Wikidata P2426** — bulk SPARQL fetch of XC species IDs (~31k species pre-mapped)
 2. **XC API direct** — queries by genus + epithet
 3. **XC API epithet search** — epithet-only search with group filter (catches genus transfers)
-4. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the XC API
+4. **Alias synonym fallback** — tries reviewed aliases from `overrides/species_aliases.csv`, then GBIF synonyms, and retries the XC API
 5. **XC English name search** — last resort, matches by common name
 
 | Flag | Description |
@@ -331,6 +331,7 @@ Resolution cascade:
 | `--limit N` | Cap new species to process (0 = all) |
 | `--group NAME` | Process only this taxon group |
 | `--new-only` | Only species not yet in xc_data.json |
+| `--retry-unresolved` | Retry species cached with no XC mapping |
 | `--dry-run` | Preview without API calls |
 
 ### Step 8 — observation.org
@@ -339,7 +340,7 @@ Maps each species to its [observation.org](https://observation.org) species ID, 
 
 Resolution cascade:
 1. **Direct API search** — queries `/api/v1/species/search/` by scientific name
-2. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the API
+2. **Alias synonym fallback** — tries reviewed aliases from `overrides/species_aliases.csv`, then GBIF synonyms, and retries the API
 
 | Flag | Description |
 |------|-------------|
@@ -348,6 +349,7 @@ Resolution cascade:
 | `--workers N` | Parallel workers (default: from config.yml) |
 | `--save-every N` | Save every N completed species (default: from config.yml) |
 | `--new-only` | Only species not yet in observationorg_data.json |
+| `--retry-unresolved` | Retry species cached with no observation.org ID |
 | `--dry-run` | Preview without API calls |
 
 ### Step 9 — Claude

@@ -171,6 +171,8 @@ def main() -> None:
                         help="Show what would be done without saving")
     parser.add_argument("--new-only", action="store_true",
                         help="Skip species already in output file")
+    parser.add_argument("--retry-unresolved", action="store_true",
+                        help="Retry species cached with no observation.org ID")
     args = parser.parse_args()
 
     setup_shutdown()
@@ -196,6 +198,15 @@ def main() -> None:
     print(f"observation.org collector")
     print(f"  Input species: {len(species)}")
     print(f"  Existing:      {len(existing)}")
+
+    if args.retry_unresolved:
+        retry_names = {
+            sci for sci in species
+            if sci in existing and existing.get(sci, {}).get("observationorg_id") is None
+        }
+        for sci in retry_names:
+            existing.pop(sci, None)
+        print(f"  Retrying unresolved: {len(retry_names)}")
 
     # Build work list
     species_list: list[tuple[str, dict]] = []
@@ -264,8 +275,12 @@ def main() -> None:
     phase2_hits = 0
 
     def _resolve_via_gbif(sci: str) -> tuple[str, int | None, str]:
-        """Try GBIF synonyms → observation.org lookup. Returns (sci, id, alias)."""
-        synonyms = _gbif_get_synonyms(sci)
+        """Try aliases/synonyms → observation.org lookup. Returns (sci, id, alias)."""
+        rec = species.get(sci, {})
+        synonyms = [
+            *rec.get("scientific_name_aliases", []),
+            *_gbif_get_synonyms(sci),
+        ]
         for alt in synonyms:
             obs_id = _obs_lookup(alt)
             if obs_id is not None:
