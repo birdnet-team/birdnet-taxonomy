@@ -87,9 +87,22 @@ wikipedia:
 # Description quality settings
 descriptions:
   min_english_words: 40       # release gate for English descriptions
-  target_words: 120           # preferred concise description length
+  target_words: 180           # preferred concise description length
   max_words: 500              # long descriptions can be shortened
-  wikipedia_extra_sections: 2 # extra early sections to try for short leads
+  wikipedia_extra_sections: 3 # extra early sections to try for short leads
+  wikipedia_min_paragraphs: 2 # keep at least two early paragraphs when available
+
+# Offline build-time metadata quality pruning.
+# Scores are computed before BirdNET IDs are assigned; dropped species do not
+# receive IDs in the generated registry when --reassign-ids is used.
+metadata_quality:
+  enabled: true
+  min_score: 20
+  group_min_scores:
+    Insecta: 35
+  report_path: "dev/metadata_quality_report.csv"
+  drop_if_missing_image_and_description: true
+  max_external_ids_for_thin_records: 1
 
 # AviList checklist download
 avilist:
@@ -100,6 +113,7 @@ avilist:
 # Locales listed here are the target languages for Claude-generated
 # translations. Core European + Chinese, Russian, Arabic.
 claude:
+  enabled: false
   model: "claude-sonnet-4-20250514"
   locales:
     - en         # English

@@ -106,7 +106,7 @@ build/
 collectors/
     _common.py             # Shared collector utilities (cache, JSON I/O, shutdown)
     avilist.py             # Download and normalize AviList taxonomy input
-    claude.py              # Claude enrichment for shortened/translated descriptions
+    claude.py              # Optional Claude enrichment for shortened/translated descriptions
     ebird.py               # eBird names and localized common-name collection
     images.py              # Batch image generation for dev/dist outputs
     inat.py                # iNaturalist taxa, sounds, and observation-photo fallback
@@ -185,7 +185,7 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 10. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
 | 11. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 uses Claude to shorten excessively long extracts and translate missing locales. Step 10 downloads species images. Step 11 merges everything into the final output — no API calls, purely offline.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 is optional Claude enrichment when explicitly enabled. Step 10 downloads species images. Step 11 merges everything into the final output — no API calls, purely offline.
 
 ### Step 1 — AviList
 
@@ -258,11 +258,12 @@ Fetches multilingual Wikipedia data in four phases:
 - **Phase 1b — Extract backfill:** Scans existing data for species that have an English Wikipedia URL but are missing the English extract (can happen due to API glitches during bulk fetching). Re-fetches just the extracts for those species with redirect resolution.
 - **Phase 2 — Locale extracts:** For each target language (20 configured locales), batch-fetches intro extracts from the corresponding Wikipedia. Runs locales concurrently with a thread pool. Skips species that already have extracts for a given locale.
 - **Phase 3 — Image licenses:** Batch-fetches license metadata (artist, license, license URL) from Wikimedia Commons for all page images found in Phase 1.
-- **Quality refetch — description depth:** Optional `--quality-refetch` pass for missing or too-short extracts in all configured Wikipedia locales. It fetches richer plain-text article content from the matching language wiki, validates that the article title/text contains the canonical scientific name or a clean alias, stores per-locale retry/status metadata, and avoids retrying indefinitely. Use `--quality-locales en` to restrict this to the English release gate.
+- **Quality refetch — description depth:** Optional `--quality-refetch` pass for missing or too-short extracts in all configured Wikipedia locales. It fetches richer plain-text article content from the matching language wiki, validates that the article title/text contains the canonical scientific name or a clean alias, stores per-locale retry/status metadata, and avoids retrying indefinitely. The selector can keep multiple early paragraphs through `descriptions.wikipedia_min_paragraphs`. Use `--quality-locales en` to restrict this to the English release gate.
 
 Rate-limited (default 25 rps), with exponential backoff on 429s and server errors. All phases save incrementally.
-Description quality thresholds such as minimum English word count and target
-length are configured under `descriptions` in `config.yml`.
+Description quality thresholds such as minimum English word count, target
+length, extra early sections, and minimum retained paragraphs are configured
+under `descriptions` in `config.yml`.
 
 **Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, ar, ja, ko, tr, sw
 
@@ -406,9 +407,11 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 Assembles per-species descriptions from multiple sources with the following priority:
 - **Base layer — Wikipedia:** English extract plus all locale extracts and Wikipedia URLs
 - **Fallback — eBird:** English description only, used when Wikipedia has no English extract
-- **Claude overlay:** For each locale Claude provides, replaces the description for that locale. Claude locales are tracked in the `claude_locales` field
+- **Claude overlay:** Disabled by default. When `claude.enabled: true`, each locale Claude provides replaces the description for that locale. Claude locales are tracked in the `claude_locales` field
 
-The effective priority is **Claude > Wikipedia > eBird**, applied per-locale.
+The effective priority is **Claude > Wikipedia > eBird**, applied per-locale,
+when Claude is enabled. Default builds use only Wikipedia and eBird
+descriptions.
 The JSON output also includes `description_sources`, a per-locale source map,
 and `scientific_name_aliases`, a list of clean binomial scientific names that
 resolve to the canonical species.
@@ -416,7 +419,13 @@ Reviewed manual scientific-name bridges live in `overrides/species_aliases.csv`.
 The build also filters source-derived aliases that collide with another
 canonical species and fails if any alias conflict remains.
 
-The JSON output contains full multilingual descriptions. The CSV output is a lighter export and does not include description excerpts; scientific aliases are exported as a pipe-separated `scientific_name_aliases` field.
+The build also computes `metadata_quality_score` and
+`metadata_quality_flags` before BirdNET IDs are assigned. When
+`metadata_quality.enabled` is true, species below `metadata_quality.min_score`
+or matching the configured thin-record rule are dropped and listed in the
+configured report CSV, defaulting to `dev/metadata_quality_report.csv`.
+
+The JSON output contains full multilingual descriptions. The CSV output is a lighter export and does not include description excerpts; scientific aliases and metadata quality flags are exported as pipe-separated fields.
 
 Image fields in the final metadata:
 
@@ -443,15 +452,14 @@ python -m utils.audit_descriptions dist/species_metadata.json --output dev/descr
 
 By default this report includes short excerpts in every available locale plus
 English release-gate gaps. Add `--english-only` to report only the English gate.
-Prefer Wikipedia quality refetches before Claude fallback:
+Prefer Wikipedia quality refetches before optional Claude fallback:
 
 ```bash
 python -m collectors.wikipedia --quality-refetch
 ```
 
-Claude fallback should be reserved for remaining gaps where traceable
-non-English Wikipedia source text exists but no English Wikipedia/eBird text is
-available.
+Claude fallback is disabled by default and should only be enabled deliberately
+for a release that accepts generated description text.
 
 The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
 

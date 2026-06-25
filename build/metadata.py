@@ -42,10 +42,11 @@ from urllib.parse import quote
 from config import load_config, image_url_prefix
 from collectors._common import (
     ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE,
-    clean_aliases, is_clean_scientific_name,
+    clean_aliases, is_clean_common_name, is_clean_scientific_name,
     is_full_species_name, load_json, save_json,
 )
 from utils.audit_metadata import audit_records, has_failures, print_report
+from utils.description_quality import word_count
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -64,6 +65,15 @@ TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
 BN_IDS_FILE = ROOT / "bn_ids.json"
+
+ID_FIELDS = (
+    "inat_id", "ebird_code", "gbif_id", "ncbi_id", "avibase_id",
+    "birdlife_id", "ml_taxon_code", "xc_name", "observationorg_id",
+)
+EXTERNAL_ID_FIELDS = (
+    "ebird_code", "gbif_id", "ncbi_id", "avibase_id", "birdlife_id",
+    "ml_taxon_code", "xc_name", "observationorg_id",
+)
 
 
 
@@ -744,11 +754,138 @@ def _save_bn_ids(bn_ids: dict[str, int]) -> None:
     os.replace(tmp, BN_IDS_FILE)
 
 
+def _metadata_quality(record: dict) -> tuple[int, list[str], int]:
+    """Score metadata completeness for build-time pruning."""
+    score = 0
+    flags: list[str] = []
+
+    descriptions = record.get("descriptions", {}) or {}
+    english = descriptions.get("en", "")
+    english_words = word_count(english)
+    if english_words >= 80:
+        score += 30
+    elif english_words >= 40:
+        score += 22
+    elif english:
+        score += 10
+        flags.append("short_english_description")
+    else:
+        flags.append("missing_english_description")
+
+    rich_locale_count = sum(1 for text in descriptions.values() if word_count(text) >= 40)
+    score += min(20, rich_locale_count * 2)
+    if rich_locale_count <= 1:
+        flags.append("few_localized_descriptions")
+
+    if record.get("image"):
+        score += 20
+    else:
+        flags.append("missing_image")
+
+    id_count = sum(1 for field in ID_FIELDS if record.get(field))
+    external_id_count = sum(1 for field in EXTERNAL_ID_FIELDS if record.get(field))
+    score += min(20, id_count * 3)
+    if external_id_count < 2:
+        flags.append("weak_external_ids")
+
+    if (
+        record.get("common_name")
+        and record.get("common_name") != record.get("scientific_name")
+    ):
+        score += 5
+    else:
+        flags.append("missing_common_name")
+
+    if record.get("observations_count"):
+        score += 5
+
+    return min(100, score), flags, external_id_count
+
+
+def _apply_metadata_quality_filter(
+    records: list[dict],
+    quality_cfg: dict | None,
+) -> list[dict]:
+    if not (quality_cfg or {}).get("enabled", False):
+        return records
+
+    min_score = int(quality_cfg.get("min_score", 0) or 0)
+    group_min_scores = {
+        str(group): int(score or 0)
+        for group, score in (quality_cfg.get("group_min_scores", {}) or {}).items()
+    }
+    drop_thin = bool(quality_cfg.get("drop_if_missing_image_and_description", False))
+    max_thin_external_ids = int(
+        quality_cfg.get("max_external_ids_for_thin_records", 1) or 0
+    )
+    report_path = str(quality_cfg.get("report_path", "") or "").strip()
+
+    kept: list[dict] = []
+    report_rows: list[dict] = []
+    drop_reasons: Counter[str] = Counter()
+    for record in records:
+        score, flags, external_id_count = _metadata_quality(record)
+        record["metadata_quality_score"] = score
+        record["metadata_quality_flags"] = flags
+
+        reasons: list[str] = []
+        threshold = group_min_scores.get(str(record.get("taxon_group") or ""), min_score)
+        if threshold and score < threshold:
+            reasons.append(f"score_below_{threshold}")
+        if (
+            drop_thin
+            and "missing_image" in flags
+            and "missing_english_description" in flags
+            and external_id_count <= max_thin_external_ids
+        ):
+            reasons.append("thin_record")
+
+        action = "drop" if reasons else "keep"
+        if reasons:
+            drop_reasons.update(reasons)
+        else:
+            kept.append(record)
+
+        report_rows.append({
+            "action": action,
+            "score": score,
+            "scientific_name": record.get("scientific_name", ""),
+            "common_name": record.get("common_name", ""),
+            "taxon_group": record.get("taxon_group", ""),
+            "flags": "|".join(flags),
+            "drop_reasons": "|".join(reasons),
+            "threshold": threshold,
+            "external_id_count": external_id_count,
+            "description_source": record.get("description_source", ""),
+            "has_image": "1" if record.get("image") else "0",
+        })
+
+    if report_path:
+        path = ROOT / report_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(report_rows[0]))
+            writer.writeheader()
+            writer.writerows(report_rows)
+        print(f"  Metadata quality report: {path}")
+
+    dropped = len(records) - len(kept)
+    if dropped:
+        print(f"  Metadata quality: dropped {dropped}/{len(records)} species")
+        for reason, count in drop_reasons.most_common():
+            print(f"    {reason}: {count}")
+    else:
+        print(f"  Metadata quality: kept all {len(records)} species")
+
+    return kept
+
+
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    claude: dict = None,
                    manual_overrides: dict | None = None,
                    manual_aliases: dict[str, list[str]] | None = None,
-                   reassign_ids: bool = False) -> list[dict]:
+                   reassign_ids: bool = False,
+                   quality_cfg: dict | None = None) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
     Each record:
@@ -849,9 +986,17 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                 "medium": f"{image_prefix}/api/image/{encoded_sci}?size=medium",
             }
 
-        common_name = tax.get("preferred_common_name", "") or sci_name
-        common_name_alt = tax.get("common_name_alt", "")
-        common_names = tax.get("common_names", {})
+        raw_common_name = tax.get("preferred_common_name", "")
+        common_name = raw_common_name if is_clean_common_name(raw_common_name) else sci_name
+        raw_common_name_alt = tax.get("common_name_alt", "")
+        common_name_alt = (
+            raw_common_name_alt if is_clean_common_name(raw_common_name_alt) else ""
+        )
+        common_names = {
+            loc: name
+            for loc, name in (tax.get("common_names", {}) or {}).items()
+            if is_clean_common_name(str(name))
+        }
         source_aliases = clean_aliases(tax.get("scientific_name_aliases", []))
         source_aliases = [
             alias for alias in source_aliases
@@ -892,6 +1037,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "observations_count": tax.get("observations_count", 0),
         }
         records.append(record)
+
+    records = _apply_metadata_quality_filter(records, quality_cfg)
 
     # Assign BirdNET species IDs (persistent, append-only)
     if reassign_ids:
@@ -973,6 +1120,7 @@ def records_to_csv(records: list[dict]) -> str:
         "observationorg_id",
         "observations_count",
         "description_source",
+        "metadata_quality_score", "metadata_quality_flags",
         "image_url",
         "image_author", "image_license", "image_source",
     ]
@@ -986,6 +1134,7 @@ def records_to_csv(records: list[dict]) -> str:
     for rec in records:
         row = {k: rec.get(k, "") for k in base_cols}
         row["scientific_name_aliases"] = "|".join(rec.get("scientific_name_aliases", []))
+        row["metadata_quality_flags"] = "|".join(rec.get("metadata_quality_flags", []))
         row["image_url"] = (rec.get("image") or {}).get("medium", "")
         for loc in top_locales:
             row[f"common_name_{loc}"] = rec.get("common_names", {}).get(loc, "")
@@ -1061,10 +1210,14 @@ def main():
     print("\nLoading enrichment data...")
     ebird = load_json(EBIRD_DATA_FILE)
     wiki = load_json(WIKI_DATA_FILE)
-    claude = load_json(CLAUDE_DATA_FILE)
+    claude_enabled = bool(cfg.get("claude", {}).get("enabled", False))
+    claude = load_json(CLAUDE_DATA_FILE) if claude_enabled else {}
     print(f"  eBird:     {len(ebird):>8} species")
     print(f"  Wikipedia: {len(wiki):>8} species")
-    print(f"  Claude:    {len(claude):>8} species")
+    if claude_enabled:
+        print(f"  Claude:    {len(claude):>8} species")
+    else:
+        print("  Claude:    disabled")
     manual_overrides = load_manual_overrides()
     unknown_overrides = sorted(set(manual_overrides) - set(taxonomy))
     if unknown_overrides:
@@ -1097,6 +1250,7 @@ def main():
         manual_overrides,
         manual_aliases,
         reassign_ids=args.reassign_ids,
+        quality_cfg=cfg.get("metadata_quality", {}),
     )
 
     print("\nAuditing final metadata...")
