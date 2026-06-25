@@ -146,16 +146,12 @@ llm:
   provider: "auto"        # auto-detect from .env; or "gemini"/"openai"/"anthropic"
   model: ""               # leave empty to use provider default
   locales:
-    - en         # English
     - de         # German
     - fr         # French
-    - es         # Spanish
-    - pt         # Portuguese
     - it         # Italian
-    - nl         # Dutch
-    - zh         # Chinese
-    - ru         # Russian
-    - ar         # Arabic
+    - es         # Spanish
+    - cs         # Czech
+    - pt         # Portuguese
   batch_size: 12          # max species per API call (char budget may reduce this)
   translate_workers: 4    # parallel translation workers
   save_every: 10          # save raw_data/translate_data.json every N completed batches
@@ -164,7 +160,7 @@ llm:
   max_tokens: 16384       # max output tokens per API call
   max_extract_words: 500  # shorten extracts longer than this
   target_words: 150       # target length for shortened extracts
-  request_delay: 5.0      # seconds between requests; free Gemini tier: 15 req/min → ≥4s
+  request_delay: 1.0      # seconds between requests; paid tier has high RPM limits
 
 # Image settings (served via /api/image endpoint)
 images:

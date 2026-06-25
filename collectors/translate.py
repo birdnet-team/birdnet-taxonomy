@@ -30,6 +30,7 @@ from collectors._common import (
     ROOT, RAW_DIR, setup_shutdown, is_shutting_down,
     load_json, save_json,
 )
+from utils.description_quality import word_count as _word_count
 from utils.llm import call_llm, detect_provider, parse_json_response, PROVIDERS
 
 setup_shutdown()
@@ -242,10 +243,6 @@ def fallback_english_descriptions(
 # ---------------------------------------------------------------------------
 # Pipeline helpers
 # ---------------------------------------------------------------------------
-
-def _word_count(text: str) -> int:
-    return len(text.split())
-
 
 def _batch_by_char_budget(
     items: list, text_getter, char_budget: int, max_items: int

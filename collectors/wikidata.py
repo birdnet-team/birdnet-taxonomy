@@ -189,7 +189,16 @@ def query_identifiers(
     for i in range(0, len(search_items), _SPARQL_BATCH):
         batch = search_items[i:i + _SPARQL_BATCH]
         values = " ".join(f'"{name}"' for _, name in batch)
-        name_to_sci = {name: sci for sci, name in batch}
+        # Build name→sci mapping, dropping names claimed by more than one species
+        # in this batch to avoid attributing Wikidata IDs to the wrong taxon.
+        name_to_sci: dict[str, str] = {}
+        for sci, name in batch:
+            if name in name_to_sci:
+                if name_to_sci[name] != sci:
+                    name_to_sci[name] = ""  # ambiguous — mark and skip
+            else:
+                name_to_sci[name] = sci
+        name_to_sci = {k: v for k, v in name_to_sci.items() if v}
         query = (
             f"SELECT {select_str} WHERE {{\n"
             f"  VALUES ?taxonName {{ {values} }}\n"

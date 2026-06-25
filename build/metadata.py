@@ -342,8 +342,11 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
 
     avi_by_sci = {}
     avi_by_en = {}
+    avi_by_code: dict[str, dict] = {}
     for row in avilist_rows:
         avi_by_sci[row["scientific_name"]] = row
+        if row["ebird_code"]:
+            avi_by_code[row["ebird_code"]] = row
         for name in (row["common_name_clements"], row["common_name_avilist"]):
             if name:
                 avi_by_en[name.lower()] = row
@@ -396,12 +399,18 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
                     matched_sci.add(avi_row["scientific_name"])
                     stats["common_name"] += 1
                 else:
+                    avi_row = None  # discard stale common-name hit before wikidata path
                     # Try Wikidata for eBird code
                     wd_code = wikidata.get(sci_name, {}).get("ebird_code", "")
                     if wd_code:
                         ebird_code = wd_code
                         match_source = "wikidata"
                         stats["wikidata"] += 1
+                        # Claim the AviList row for this eBird code so Pass 2
+                        # doesn't add it again as a phantom "avilist_only" entry.
+                        avi_wd_row = avi_by_code.get(wd_code)
+                        if avi_wd_row:
+                            matched_sci.add(avi_wd_row["scientific_name"])
                     else:
                         # Bird not on AviList — skip it
                         stats["excluded_bird_no_avilist"] += 1
@@ -865,7 +874,7 @@ def _apply_metadata_quality_filter(
             "has_image": "1" if record.get("image") else "0",
         })
 
-    if report_path:
+    if report_path and report_rows:
         path = ROOT / report_path
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8", newline="") as f:
@@ -1011,7 +1020,13 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             and source_alias_claims[alias.lower()] == 1
         ]
         aliases = clean_aliases([*source_aliases, *manual_aliases.get(sci_name, [])])
-        aliases = [a for a in aliases if a != sci_name]
+        # Drop aliases that equal this species' own name or are the canonical
+        # name of a different species — catches manual aliases that shadow taxonomy keys.
+        aliases = [
+            a for a in aliases
+            if a != sci_name
+            and canonical_names.get(a.lower(), sci_name) == sci_name
+        ]
 
         record = {
             "birdnet_id": None,
