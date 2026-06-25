@@ -4,7 +4,7 @@
 # locales, taxon groups, API settings, etc.
 
 taxonomy:
-  version: "v0.1-Mar2026"
+  version: "v0.2-Jun2026"
 
 # iNaturalist iconic taxon groups to fetch.
 # sounds_only: if true, only fetch species with sound observations on iNat.
@@ -18,18 +18,25 @@ taxon_groups:
     taxon_id: 40151
     sounds_only: true
     min_observations: 1    # min sound obs
+    subtaxa:
+      - name: Chiroptera     # bats
+        rank: order
+        taxon_id: 40268
+        sounds_only: true
+        min_observations: 1
+        min_total_observations: 100
   - name: Insecta            # insects
     taxon_id: 47158
     sounds_only: true
-    min_observations: 5
+    min_observations: 1
   - name: Reptilia           # reptiles
     taxon_id: 26036
     sounds_only: true
-    min_observations: 5
+    min_observations: 1
   - name: Amphibia           # amphibians (frogs, toads, salamanders)
     taxon_id: 20978
     sounds_only: true
-    min_observations: 5
+    min_observations: 1
 
 # Disabled taxon groups (cached data retained but excluded from builds):
 #   Actinopterygii (47178), Chondrichthyes (196614),
@@ -76,6 +83,13 @@ wikipedia:
     - ko         # Korean (KR)
     - tr         # Turkish (TR)
     - sw         # Swahili (East Africa)
+
+# Description quality settings
+descriptions:
+  min_english_words: 40       # release gate for English descriptions
+  target_words: 120           # preferred concise description length
+  max_words: 500              # long descriptions can be shortened
+  wikipedia_extra_sections: 2 # extra early sections to try for short leads
 
 # AviList checklist download
 avilist:

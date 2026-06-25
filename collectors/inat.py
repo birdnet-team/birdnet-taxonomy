@@ -37,12 +37,13 @@ from urllib.error import HTTPError, URLError
 
 from config import load_config
 from collectors._common import (
-    RAW_DIR, USER_AGENT, ACCEPTABLE_LICENSES,
+    ROOT, RAW_DIR, USER_AGENT, ACCEPTABLE_LICENSES,
     setup_shutdown, is_shutting_down,
     is_full_species_name, load_json, save_json,
 )
 
 OUTPUT_FILE = RAW_DIR / "inat_data.json"
+PRIORITY_SPECIES_FILE = ROOT / "overrides" / "priority_species.csv"
 CACHE_DIR = RAW_DIR / "cache"
 SPECIES_COUNTS_URL = "https://api.inaturalist.org/v1/observations/species_counts"
 TAXA_URL = "https://api.inaturalist.org/v1/taxa"
@@ -189,6 +190,69 @@ def fetch_sound_species(taxon_id: int, min_obs: int,
     return species
 
 
+def fetch_observed_species(taxon_id: int, min_obs: int,
+                           delay: float) -> list[dict]:
+    """Fetch species with at least min_obs total iNat observations."""
+    species = []
+    page = 1
+
+    while not is_shutting_down():
+        url = (
+            f"{SPECIES_COUNTS_URL}"
+            f"?taxon_id={taxon_id}"
+            f"&per_page={COUNTS_PER_PAGE}&page={page}"
+        )
+        data = _api_get(url)
+        if not data:
+            time.sleep(delay * 3)
+            data = _api_get(url)
+            if not data:
+                print(f"  FAILED observed page {page}, stopping")
+                break
+
+        results = data.get("results", [])
+        if not results:
+            break
+
+        total = data.get("total_results", 0)
+        total_pages = (total + COUNTS_PER_PAGE - 1) // COUNTS_PER_PAGE
+        hit_cutoff = False
+
+        for r in results:
+            obs_count = r.get("count", 0)
+            if min_obs and obs_count < min_obs:
+                hit_cutoff = True
+                break
+
+            taxon = r.get("taxon", {})
+            sci_name = taxon.get("name", "")
+            if not is_full_species_name(sci_name):
+                continue
+            species.append({
+                "id": taxon.get("id"),
+                "name": sci_name,
+                "sound_count": 0,
+                "observations_count": obs_count,
+            })
+
+        print(
+            f"  Observation counts page {page}/{total_pages} — "
+            f"{len(results)} results, {len(species)} species so far",
+            flush=True,
+        )
+
+        if hit_cutoff:
+            print(f"  Reached min_total_observations cutoff ({min_obs} observations)")
+            break
+        if page >= total_pages:
+            break
+
+        page += 1
+        time.sleep(delay)
+
+    return species
+
+
 # ── Phase 2: full taxon details ────────────────────────────────────────
 
 def fetch_taxa_batch(taxon_ids: list[int], all_names: bool,
@@ -301,7 +365,7 @@ def fetch_all_species(taxon_id: int, per_page: int, all_names: bool,
 
 def fetch_group(group: dict, existing: dict, cfg: dict,
                 limit: int = 0, save_every: int = 500,
-                refresh: bool = False) -> int:
+                refresh: bool = False, new_only: bool = False) -> int:
     """Fetch species for one taxon group. Returns count of new records.
 
     If sounds_only is true: bulk-query species_counts for species with sounds,
@@ -312,29 +376,66 @@ def fetch_group(group: dict, existing: dict, cfg: dict,
     Set refresh=True to bypass cached Phase 1 data.
     """
     group_name = group["name"]
-    taxon_id = group["taxon_id"]
-    sounds_only = group.get("sounds_only", True)
-    min_obs = group.get("min_observations", 0)
+    total_new = _fetch_taxon_scope(
+        group_name=group_name,
+        scope=group,
+        cfg=cfg,
+        existing=existing,
+        limit=limit,
+        save_every=save_every,
+        refresh=refresh,
+        new_only=new_only,
+    )
+
+    for sub in group.get("subtaxa", []) or []:
+        if is_shutting_down():
+            break
+        total_new += _fetch_taxon_scope(
+            group_name=group_name,
+            scope=sub,
+            cfg=cfg,
+            existing=existing,
+            limit=limit,
+            save_every=save_every,
+            refresh=refresh,
+            new_only=new_only,
+        )
+
+    return total_new
+
+
+def _fetch_taxon_scope(group_name: str, scope: dict, cfg: dict,
+                       existing: dict, limit: int, save_every: int,
+                       refresh: bool, new_only: bool) -> int:
+    taxon_id = scope["taxon_id"]
+    sounds_only = scope.get("sounds_only", True)
+    min_obs = scope.get("min_observations", 0)
+    min_total_obs = scope.get("min_total_observations", 0)
     inat_cfg = cfg.get("inat", {})
     all_names = inat_cfg.get("all_names", True)
     delay = inat_cfg.get("request_delay", 1.1)
 
     print(f"\n{'='*60}")
+    if scope.get("name") and scope.get("name") != group_name:
+        print(f"Scope: {group_name} / {scope['name']} ({scope.get('rank', 'taxon')})")
 
     if sounds_only:
         return _fetch_sounds_only(group_name, taxon_id, min_obs,
                                   all_names, delay, existing, limit,
-                                  save_every, refresh)
+                                  save_every, refresh, new_only,
+                                  min_total_obs=min_total_obs)
     else:
         return _fetch_all_species(group_name, taxon_id,
                                   all_names, delay, existing, limit,
-                                  save_every, refresh)
+                                  save_every, refresh, new_only)
 
 
 def _fetch_sounds_only(group_name: str, taxon_id: int, min_obs: int,
                        all_names: bool, delay: float, existing: dict,
                        limit: int, save_every: int,
-                       refresh: bool = False) -> int:
+                       refresh: bool = False,
+                       new_only: bool = False,
+                       min_total_obs: int = 0) -> int:
     """Fetch only species with sound observations (sounds_only=true groups)."""
     min_obs_label = f"≥{min_obs} sound obs" if min_obs else "all with sounds"
     print(f"Fetching {group_name} (taxon_id={taxon_id}, {min_obs_label})")
@@ -364,6 +465,50 @@ def _fetch_sounds_only(group_name: str, taxon_id: int, min_obs: int,
                              if s.get("sound_count", 0) >= min_obs]
     print(f"  Found {len(sound_species)} species with sound observations")
 
+    observed_species = []
+    if min_total_obs:
+        if not refresh:
+            cached, ts = _load_cache("observation_counts", taxon_id)
+            if cached is not None:
+                observed_species = [
+                    s for s in cached
+                    if s.get("observations_count", 0) >= min_total_obs
+                ]
+                print(f"  Phase 1b: Using cached observation counts "
+                      f"({_cache_age_str(ts)}, {len(observed_species)} species)")
+        if not observed_species:
+            print("  Phase 1b: Fetching total observation counts...")
+            observed_all = fetch_observed_species(taxon_id, min_obs=0, delay=delay)
+            _save_cache("observation_counts", taxon_id, observed_all,
+                        total_unfiltered=len(observed_all))
+            observed_species = [
+                s for s in observed_all
+                if s.get("observations_count", 0) >= min_total_obs
+            ]
+        print(f"  Found {len(observed_species)} species with ≥{min_total_obs} observations")
+
+    if observed_species:
+        merged: dict[int, dict] = {}
+        for rec in observed_species:
+            if rec.get("id"):
+                merged[rec["id"]] = rec
+        for rec in sound_species:
+            tid = rec.get("id")
+            if not tid:
+                continue
+            existing_rec = merged.get(tid, {})
+            merged[tid] = {
+                **existing_rec,
+                **rec,
+                "observations_count": max(
+                    rec.get("observations_count", 0),
+                    existing_rec.get("observations_count", 0),
+                ),
+                "sound_count": rec.get("sound_count", existing_rec.get("sound_count", 0)),
+            }
+        sound_species = list(merged.values())
+        print(f"  Combined sound/observation scope: {len(sound_species)} species")
+
     if is_shutting_down():
         return 0
 
@@ -384,6 +529,8 @@ def _fetch_sounds_only(group_name: str, taxon_id: int, min_obs: int,
     print(f"  Need to fetch details for: {len(to_fetch)} new species")
 
     if not to_fetch:
+        if new_only:
+            return 0
         updated = _update_sound_counts(existing, sound_lookup, group_name)
         if updated:
             save_json(existing, OUTPUT_FILE)
@@ -395,7 +542,7 @@ def _fetch_sounds_only(group_name: str, taxon_id: int, min_obs: int,
     new_count = _batch_fetch_taxa(to_fetch, group_name, all_names, delay,
                                   existing, save_every)
 
-    updated = _update_sound_counts(existing, sound_lookup, group_name)
+    updated = 0 if new_only else _update_sound_counts(existing, sound_lookup, group_name)
     save_json(existing, OUTPUT_FILE)
     print(f"  Done {group_name}: {new_count} new species added")
     if updated:
@@ -406,7 +553,8 @@ def _fetch_sounds_only(group_name: str, taxon_id: int, min_obs: int,
 def _fetch_all_species(group_name: str, taxon_id: int,
                        all_names: bool, delay: float, existing: dict,
                        limit: int, save_every: int,
-                       refresh: bool = False) -> int:
+                       refresh: bool = False,
+                       new_only: bool = False) -> int:
     """Fetch ALL species for a group (sounds_only=false), enrich with sound counts."""
     print(f"Fetching {group_name} (taxon_id={taxon_id}, all species)")
 
@@ -474,7 +622,7 @@ def _fetch_all_species(group_name: str, taxon_id: int,
                     total_unfiltered=len(sound_species))
 
     sound_lookup = {s["id"]: s["sound_count"] for s in sound_species}
-    updated = _update_sound_counts(existing, sound_lookup, group_name)
+    updated = 0 if new_only else _update_sound_counts(existing, sound_lookup, group_name)
 
     save_json(existing, OUTPUT_FILE)
     print(f"  Done {group_name}: {new_count} new species, {updated} sound counts updated")
@@ -710,6 +858,150 @@ def reconcile_avilist(existing: dict, cfg: dict, delay: float,
     return new_count
 
 
+# ── Priority species ──────────────────────────────────────────────────
+
+def load_priority_species() -> list[dict]:
+    """Load reviewed forced-inclusion species from overrides."""
+    if not PRIORITY_SPECIES_FILE.exists():
+        return []
+
+    required = {"scientific_name", "taxon_group", "source", "reason"}
+    rows: list[dict] = []
+    with open(PRIORITY_SPECIES_FILE, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        missing_cols = required - set(reader.fieldnames or [])
+        if missing_cols:
+            raise ValueError(
+                f"{PRIORITY_SPECIES_FILE}: missing columns: {', '.join(sorted(missing_cols))}"
+            )
+        for line_no, row in enumerate(reader, start=2):
+            sci = (row.get("scientific_name") or "").strip()
+            group = (row.get("taxon_group") or "").strip()
+            if not is_full_species_name(sci):
+                raise ValueError(
+                    f"{PRIORITY_SPECIES_FILE}: line {line_no}: invalid scientific_name '{sci}'"
+                )
+            if not group:
+                raise ValueError(
+                    f"{PRIORITY_SPECIES_FILE}: line {line_no}: taxon_group is required"
+                )
+            inat_raw = (row.get("inat_id") or "").strip()
+            inat_id = None
+            if inat_raw:
+                try:
+                    inat_id = int(inat_raw)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{PRIORITY_SPECIES_FILE}: line {line_no}: invalid inat_id '{inat_raw}'"
+                    ) from exc
+            rows.append({
+                "scientific_name": sci,
+                "taxon_group": group,
+                "source": (row.get("source") or "").strip(),
+                "reason": (row.get("reason") or "").strip(),
+                "inat_id": inat_id,
+                "gbif_id": (row.get("gbif_id") or "").strip(),
+                "common_name": (row.get("common_name") or "").strip(),
+            })
+    return rows
+
+
+def fetch_priority_species(existing: dict, cfg: dict, delay: float,
+                           all_names: bool, limit: int = 0,
+                           save_every: int = 200,
+                           new_only: bool = False) -> int:
+    """Fetch reviewed priority species by iNat ID or scientific name."""
+    rows = load_priority_species()
+    print(f"\n{'='*60}")
+    print("Priority species")
+
+    if not rows:
+        print("  No priority species file found")
+        return 0
+
+    allowed_groups = {g.get("name") for g in cfg.get("taxon_groups", [])}
+    rows = [r for r in rows if r["taxon_group"] in allowed_groups]
+    missing = [
+        r for r in rows
+        if r["scientific_name"] not in existing
+        or existing[r["scientific_name"]].get("inat_id") is None
+    ]
+    if new_only:
+        missing = [r for r in missing if r["scientific_name"] not in existing]
+    if limit:
+        missing = missing[:limit]
+
+    print(f"  Reviewed rows: {len(rows)}")
+    print(f"  Need to fetch: {len(missing)}")
+    if not missing:
+        return 0
+
+    found_taxa: list[tuple[dict, int]] = []
+    not_found: list[str] = []
+    for row in missing:
+        if is_shutting_down():
+            break
+        if row.get("inat_id"):
+            found_taxa.append((row, row["inat_id"]))
+        else:
+            result = _search_taxon(row["scientific_name"], delay)
+            if result:
+                found_taxa.append((row, result.get("id")))
+            else:
+                not_found.append(row["scientific_name"])
+            time.sleep(delay)
+
+    if not_found:
+        print(f"  Not found: {', '.join(not_found)}")
+    if not found_taxa:
+        return 0
+
+    new_count = 0
+    batches = [
+        found_taxa[i:i + TAXA_BATCH_SIZE]
+        for i in range(0, len(found_taxa), TAXA_BATCH_SIZE)
+    ]
+    for batch_idx, batch in enumerate(batches):
+        if is_shutting_down():
+            break
+        batch_ids = [tid for _, tid in batch]
+        rows_by_id = {tid: row for row, tid in batch}
+        results = fetch_taxa_batch(batch_ids, all_names, delay)
+        for result in results:
+            tid = result.get("id")
+            row = rows_by_id.get(tid)
+            if not row:
+                continue
+            sci = row["scientific_name"]
+            if sci in existing and existing[sci].get("inat_id") is not None:
+                continue
+            if result.get("rank") != "species":
+                continue
+            record = extract_record(result, row["taxon_group"], sound_count=0)
+            if row.get("common_name"):
+                record["preferred_common_name"] = row["common_name"]
+                record.setdefault("common_names", {})["en"] = row["common_name"]
+            record["priority_source"] = row.get("source", "")
+            record["priority_reason"] = row.get("reason", "")
+            if row.get("gbif_id"):
+                record["priority_gbif_id"] = row["gbif_id"]
+            existing[sci] = record
+            new_count += 1
+
+        print(
+            f"  Detail batch {batch_idx + 1}/{len(batches)} — "
+            f"{new_count} new records",
+            flush=True,
+        )
+        if new_count > 0 and new_count % save_every < TAXA_BATCH_SIZE:
+            save_json(existing, OUTPUT_FILE)
+        time.sleep(delay)
+
+    save_json(existing, OUTPUT_FILE)
+    print(f"  Priority species complete: {new_count} species added")
+    return new_count
+
+
 # ── Observation photo fallback ─────────────────────────────────────────
 
 INAT_OBS_URL = "https://api.inaturalist.org/v1/observations"
@@ -834,6 +1126,60 @@ def fetch_obs_photos(existing: dict, delay: float,
     return found
 
 
+def _print_dry_run_scope(group_name: str, scope: dict,
+                         existing: dict, delay: float) -> None:
+    """Print dry-run counts for a configured taxon scope."""
+    sounds_only = scope.get("sounds_only", True)
+    min_obs = scope.get("min_observations", 0)
+    min_total_obs = scope.get("min_total_observations", 0)
+    taxon_id = scope["taxon_id"]
+    label_name = group_name
+    if scope.get("name") and scope.get("name") != group_name:
+        label_name = f"{group_name}/{scope['name']}"
+
+    if sounds_only:
+        url = (
+            f"{SPECIES_COUNTS_URL}"
+            f"?taxon_id={taxon_id}&sounds=true&per_page=1"
+        )
+        data = _api_get(url)
+        total_sounds = data["total_results"] if data else "?"
+        label = f" (≥{min_obs} sound obs)" if min_obs else ""
+        desc = f"{total_sounds} species with sounds{label}"
+        if min_total_obs:
+            time.sleep(delay)
+            url2 = (
+                f"{SPECIES_COUNTS_URL}"
+                f"?taxon_id={taxon_id}&per_page=1"
+            )
+            data2 = _api_get(url2)
+            total_obs = data2["total_results"] if data2 else "?"
+            desc += f"; {total_obs} species with observations (include ≥{min_total_obs})"
+    else:
+        url = (
+            f"{TAXA_URL}?is_active=true&rank=species"
+            f"&taxon_id={taxon_id}&per_page=1"
+        )
+        data = _api_get(url)
+        total = data["total_results"] if data else "?"
+        time.sleep(delay)
+        url2 = (
+            f"{SPECIES_COUNTS_URL}"
+            f"?taxon_id={taxon_id}&sounds=true&per_page=1"
+        )
+        data2 = _api_get(url2)
+        total_sounds = data2["total_results"] if data2 else "?"
+        desc = f"{total} total species ({total_sounds} with sounds)"
+
+    existing_in_group = sum(
+        1 for v in existing.values()
+        if v.get("taxon_group") == group_name
+        and v.get("inat_id") is not None
+    )
+    print(f"  {label_name}: {desc}, {existing_in_group} already fetched")
+    time.sleep(delay)
+
+
 # ── CLI ────────────────────────────────────────────────────────────────
 
 def main():
@@ -857,6 +1203,10 @@ def main():
         help="Show species counts with sound observations per group"
     )
     parser.add_argument(
+        "--new-only", action="store_true",
+        help="Only fetch new species; skip count/photo refresh work"
+    )
+    parser.add_argument(
         "--save-every", type=int, default=0,
         help="Save progress every N new species (default: from config.yml)"
     )
@@ -867,6 +1217,14 @@ def main():
     parser.add_argument(
         "--skip-avilist", action="store_true",
         help="Skip AviList reconciliation phase"
+    )
+    parser.add_argument(
+        "--skip-priority", action="store_true",
+        help="Skip reviewed priority species phase"
+    )
+    parser.add_argument(
+        "--priority-only", action="store_true",
+        help="Only run reviewed priority species phase"
     )
     parser.add_argument(
         "--avilist-only", action="store_true",
@@ -900,42 +1258,16 @@ def main():
     if args.dry_run:
         delay = cfg.get("inat", {}).get("request_delay", 1.1)
         for g in groups:
-            sounds_only = g.get("sounds_only", True)
-            min_obs = g.get("min_observations", 0)
-
-            if sounds_only:
-                url = (
-                    f"{SPECIES_COUNTS_URL}"
-                    f"?taxon_id={g['taxon_id']}&sounds=true&per_page=1"
-                )
-                data = _api_get(url)
-                total_sounds = data["total_results"] if data else "?"
-                label = f" (≥{min_obs} sound obs)" if min_obs else ""
-                desc = f"{total_sounds} species with sounds{label}"
-            else:
-                url = (
-                    f"{TAXA_URL}?is_active=true&rank=species"
-                    f"&taxon_id={g['taxon_id']}&per_page=1"
-                )
-                data = _api_get(url)
-                total = data["total_results"] if data else "?"
-                # Also check sound species count
-                time.sleep(delay)
-                url2 = (
-                    f"{SPECIES_COUNTS_URL}"
-                    f"?taxon_id={g['taxon_id']}&sounds=true&per_page=1"
-                )
-                data2 = _api_get(url2)
-                total_sounds = data2["total_results"] if data2 else "?"
-                desc = f"{total} total species ({total_sounds} with sounds)"
-
-            existing_in_group = sum(
-                1 for v in existing.values()
-                if v.get("taxon_group") == g["name"]
-                and v.get("inat_id") is not None
-            )
-            print(f"  {g['name']}: {desc}, {existing_in_group} already fetched")
-            time.sleep(delay)
+            _print_dry_run_scope(g["name"], g, existing, delay)
+            for sub in g.get("subtaxa", []) or []:
+                _print_dry_run_scope(g["name"], sub, existing, delay)
+        priority = load_priority_species()
+        priority_missing = [
+            r for r in priority
+            if r["scientific_name"] not in existing
+            or existing[r["scientific_name"]].get("inat_id") is None
+        ]
+        print(f"  Priority species: {len(priority)} reviewed, {len(priority_missing)} need fetch")
         return
 
     inat_cfg = cfg.get("inat", {})
@@ -943,16 +1275,30 @@ def main():
         args.save_every = inat_cfg.get("save_every", 500)
     total_new = 0
 
-    if not args.avilist_only and not args.obs_photos_only:
+    if not args.avilist_only and not args.obs_photos_only and not args.priority_only:
         for group in groups:
             if is_shutting_down():
                 break
             new = fetch_group(group, existing, cfg, limit=args.limit,
-                              save_every=args.save_every, refresh=args.refresh)
+                              save_every=args.save_every, refresh=args.refresh,
+                              new_only=args.new_only)
             total_new += new
 
+    # Priority species — reviewed exceptions / issue-driven additions
+    if (not args.skip_priority and not args.avilist_only
+            and not args.obs_photos_only and not is_shutting_down()):
+        priority_new = fetch_priority_species(
+            existing, cfg,
+            delay=inat_cfg.get("request_delay", 1.1),
+            all_names=inat_cfg.get("all_names", True),
+            limit=args.limit,
+            save_every=args.save_every,
+            new_only=args.new_only,
+        )
+        total_new += priority_new
+
     # AviList reconciliation — find AviList species missing from iNat data
-    if (not args.skip_avilist and not args.obs_photos_only
+    if (not args.skip_avilist and not args.obs_photos_only and not args.priority_only
             and not is_shutting_down()):
         avilist_new = reconcile_avilist(
             existing, cfg,
@@ -964,7 +1310,8 @@ def main():
         total_new += avilist_new
 
     # Observation photo fallback — CC-licensed photos from observations
-    if not args.skip_obs_photos and not is_shutting_down():
+    if (not args.skip_obs_photos and not args.new_only
+            and not args.priority_only and not is_shutting_down()):
         obs_found = fetch_obs_photos(
             existing,
             delay=inat_cfg.get("request_delay", 1.1),

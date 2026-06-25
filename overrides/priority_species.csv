@@ -1,0 +1,3 @@
+scientific_name,taxon_group,source,reason,inat_id,gbif_id,common_name
+Cnephaeus nilssonii,Mammalia,https://github.com/birdnet-team/geomodel/issues/17,Geomodel issue names Eptesicus nilssonii; iNaturalist accepted name has sound observations,1596132,,Northern Serotine
+Cnephaeus serotinus,Mammalia,https://github.com/birdnet-team/geomodel/issues/17,Geomodel issue names Eptesicus serotinus; iNaturalist accepted name has sound observations,1596127,,Eurasian Serotine
