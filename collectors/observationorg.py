@@ -28,7 +28,7 @@ from tqdm import tqdm
 from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT,
-    is_full_species_name, load_json, save_json,
+    is_full_species_name, load_canonical_species, load_json, save_json,
     setup_shutdown, is_shutting_down,
     RateLimiter,
 )
@@ -187,23 +187,19 @@ def main() -> None:
         args.save_every = obs_cfg.get("save_every", 200)
 
     # Load input data
-    inat = load_json(INAT_FILE)
-    if not inat:
-        print("ERROR: No iNat data. Run: python -m collectors.inat")
+    species = load_canonical_species(cfg, group=args.group)
+    if not species:
+        print("ERROR: No species data. Run: python -m collectors.inat and build taxonomy")
         raise SystemExit(1)
 
     existing: dict = load_json(OUTPUT_FILE) or {}
     print(f"observation.org collector")
-    print(f"  Input species: {len(inat)}")
+    print(f"  Input species: {len(species)}")
     print(f"  Existing:      {len(existing)}")
 
     # Build work list
     species_list: list[tuple[str, dict]] = []
-    for sci, rec in inat.items():
-        if not is_full_species_name(sci):
-            continue
-        if args.group and rec.get("taxon_group") != args.group:
-            continue
+    for sci, rec in species.items():
         if args.new_only and sci in existing:
             continue
         species_list.append((sci, rec))
@@ -267,14 +263,14 @@ def main() -> None:
                   if s not in existing]
     phase2_hits = 0
 
-    def _resolve_via_gbif(sci: str) -> tuple[str, int | None]:
-        """Try GBIF synonyms → observation.org lookup. Returns (sci, id)."""
+    def _resolve_via_gbif(sci: str) -> tuple[str, int | None, str]:
+        """Try GBIF synonyms → observation.org lookup. Returns (sci, id, alias)."""
         synonyms = _gbif_get_synonyms(sci)
         for alt in synonyms:
             obs_id = _obs_lookup(alt)
             if obs_id is not None:
-                return sci, obs_id
-        return sci, None
+                return sci, obs_id, alt
+        return sci, None, ""
 
     if unresolved:
         print(f"\n  Phase 2: GBIF synonym fallback ({len(unresolved)} "
@@ -292,9 +288,13 @@ def main() -> None:
             for future in as_completed(futures):
                 sci = futures[future]
                 try:
-                    _, obs_id = future.result()
+                    _, obs_id, alias = future.result()
                     if obs_id is not None:
-                        existing[sci] = {"observationorg_id": obs_id}
+                        existing[sci] = {
+                            "observationorg_id": obs_id,
+                            "matched_name": alias,
+                            "aliases": [alias] if alias else [],
+                        }
                         phase2_hits += 1
                     else:
                         existing[sci] = {"observationorg_id": None}

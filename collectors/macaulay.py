@@ -29,7 +29,7 @@ from tqdm import tqdm
 from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT,
-    is_full_species_name, load_json, save_json,
+    load_canonical_species, load_json, save_json,
     setup_shutdown, is_shutting_down,
     RateLimiter,
 )
@@ -199,23 +199,14 @@ def main():
     ML_API_KEY = ml_cfg.get("api_key", ML_API_KEY)
 
     print("Loading species list...")
-    inat = load_json(INAT_FILE)
-    if not inat:
-        print("ERROR: No species found. Run collectors/inat.py first.")
+    species = load_canonical_species(cfg, group=args.group)
+    if not species:
+        print("ERROR: No species found. Run collectors/inat.py and build taxonomy first.")
         raise SystemExit(1)
 
     ebird = load_json(EBIRD_FILE)
     wikidata = load_json(WIKIDATA_FILE)
     existing = load_json(OUTPUT_FILE)
-
-    # Build target species list
-    species = {}
-    for sci, rec in inat.items():
-        if not is_full_species_name(sci):
-            continue
-        if args.group and rec.get("taxon_group", "") != args.group:
-            continue
-        species[sci] = rec
 
     print(f"  {len(species)} species"
           + (f" (group: {args.group})" if args.group else ""))
@@ -315,7 +306,11 @@ def main():
             for syn in synonyms:
                 code = _ml_lookup(syn)
                 if code:
-                    existing[sci] = {"ml_taxon_code": code}
+                    existing[sci] = {
+                        "ml_taxon_code": code,
+                        "matched_name": syn,
+                        "aliases": [syn],
+                    }
                     phase4_count += 1
                     break
             else:
