@@ -299,7 +299,10 @@ def _build_translation_batches(
 
 def _merge_updates(target: dict, updates: dict[str, dict[str, str]]) -> None:
     for sci, extracts in updates.items():
-        target.setdefault(sci, {}).setdefault("extracts", {}).update(extracts)
+        existing_extracts = target.setdefault(sci, {}).setdefault("extracts", {})
+        for loc, text in extracts.items():
+            if loc not in existing_extracts:
+                existing_extracts[loc] = text
 
 
 def _mark_fallback_locales(target: dict, updates: dict[str, dict[str, str]]) -> None:
@@ -444,9 +447,10 @@ def main() -> None:
 
     existing = _load_existing_outputs()
 
+    n_existing_extracts = sum(len(v.get("extracts", {})) for v in existing.values())
     print(f"Provider:   {_provider} ({display_model})")
     print(f"Loaded {len(wiki)} species from Wikipedia")
-    print(f"Existing LLM data: {len(existing)} species")
+    print(f"Existing LLM data: {len(existing)} species, {n_existing_extracts} extracts (will not be overwritten)")
     print(f"Target locales: {', '.join(target_locales)}")
     print(f"Shorten threshold: >{max_words} words → ~{target_words} words")
 
