@@ -38,6 +38,206 @@ taxon_groups:
     sounds_only: true
     min_observations: 1
 
+# Non-species sound classes to include beside biological taxonomy.
+# scientific_name is intentionally the English display/search name.
+sound_classes:
+  - name: Power tools
+    group: Anthropogenic
+    wikidata_qid: Q1327701
+    aliases:
+      - power tool
+      - drill
+      - electric drill
+      - power drill
+    scientific_aliases:
+      - Power tool
+      - Drill
+      - Electric drill
+      - Power drill
+  - name: Siren
+    group: Anthropogenic
+    wikidata_qid: Q205234
+    aliases:
+      - alarm
+      - warning siren
+      - emergency siren
+      - police siren
+      - ambulance siren
+      - air raid siren
+    scientific_aliases:
+      - Alarm
+      - Warning siren
+      - Emergency siren
+      - Police siren
+      - Ambulance siren
+      - Air raid siren
+  - name: Gun
+    group: Anthropogenic
+    wikidata_qid: Q12796
+    aliases:
+      - firearm
+      - gunshot
+      - gun shot
+      - gunfire
+      - shooting
+      - shot
+      - shots
+      - rifle
+      - pistol
+      - handgun
+      - hunting
+      - poaching
+    scientific_aliases:
+      - Firearm
+      - Gunshot
+      - Gun shot
+      - Gunfire
+      - Shooting
+      - Shot
+      - Shots
+      - Rifle
+      - Pistol
+      - Handgun
+      - Hunting
+      - Poaching
+  - name: Chainsaw
+    group: Anthropogenic
+    wikidata_qid: Q208040
+    aliases:
+      - chain saw
+      - power saw
+      - motor saw
+      - saw
+    scientific_aliases:
+      - Chain saw
+      - Power saw
+      - Motor saw
+      - Saw
+  - name: Engine
+    group: Anthropogenic
+    wikidata_qid: Q44167
+    image_file: Renault_4cv_engine_1961.jpg
+    aliases:
+      - motor
+      - car
+      - cars
+      - car engine
+      - carengine
+      - vehicle
+      - automobile
+      - truck
+      - motorcycle
+      - machinery
+    scientific_aliases:
+      - Motor
+      - Car
+      - Cars
+      - Car engine
+      - Carengine
+      - Vehicle
+      - Automobile
+      - Truck
+      - Motorcycle
+      - Machinery
+  - name: Human
+    group: Anthropogenic
+    wikidata_qid: Q5
+    aliases:
+      - human vocal
+      - human non-vocal
+      - human voice
+      - speech
+      - voice
+      - talking
+      - speaking
+      - singing
+      - shouting
+      - yelling
+      - whispering
+      - laughing
+      - crying
+      - cough
+      - coughing
+      - sneeze
+      - sneezing
+      - clapping
+      - footsteps
+      - person
+      - people
+    scientific_aliases:
+      - Human vocal
+      - Human non-vocal
+      - Human voice
+      - Speech
+      - Voice
+      - Talking
+      - Speaking
+      - Singing
+      - Shouting
+      - Yelling
+      - Whispering
+      - Laughing
+      - Crying
+      - Cough
+      - Coughing
+      - Sneeze
+      - Sneezing
+      - Clapping
+      - Footsteps
+      - Person
+      - People
+  - name: Rain
+    group: Geophony
+    wikidata_qid: Q7925
+    aliases:
+      - rainfall
+      - raining
+      - drizzle
+      - downpour
+      - precipitation
+      - shower
+      - rain shower
+    scientific_aliases:
+      - Rainfall
+      - Raining
+      - Drizzle
+      - Downpour
+      - Precipitation
+      - Shower
+      - Rain shower
+  - name: Thunder
+    group: Geophony
+    wikidata_qid: Q83301
+    aliases:
+      - thunderclap
+      - thunder clap
+      - thunderstorm
+      - storm
+      - lightning
+    scientific_aliases:
+      - Thunderclap
+      - Thunder clap
+      - Thunderstorm
+      - Storm
+      - Lightning
+  - name: Wind
+    group: Geophony
+    wikidata_qid: Q8094
+    aliases:
+      - windy
+      - breeze
+      - gale
+      - gust
+      - wind gust
+      - storm wind
+    scientific_aliases:
+      - Windy
+      - Breeze
+      - Gale
+      - Gust
+      - Wind gust
+      - Storm wind
+
 # Disabled taxon groups (cached data retained but excluded from builds):
 #   Actinopterygii (47178), Chondrichthyes (196614),
 #   Malacostraca (47187), Arachnida (47119), Gastropoda (47114),

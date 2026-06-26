@@ -11,7 +11,7 @@
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-ff2d55"></a>
 </p>
 
-Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
+Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, amphibians, and configured non-species sound classes. All configuration (locales, taxon groups, sound classes, API settings) lives in `config.yml`.
 
 Current working taxonomy version: `v0.2-Jun2026`.
 
@@ -33,9 +33,10 @@ Current working taxonomy version: `v0.2-Jun2026`.
 - [Step 6 - Macaulay Library](#step-6--macaulay-library)
 - [Step 7 - Xeno-Canto](#step-7--xeno-canto)
 - [Step 8 - observation.org](#step-8--observationorg)
-- [Step 9 - LLM Translation](#step-9--llm-translation)
-- [Step 10 - Images](#step-10--images)
-- [Step 11 - Build](#step-11--build)
+- [Step 9 - Sound Classes](#step-9--sound-classes)
+- [Step 10 - LLM Translation](#step-10--llm-translation)
+- [Step 11 - Images](#step-11--images)
+- [Step 12 - Build](#step-12--build)
 - [Web Server](#web-server)
 - [Data Sources](#data-sources)
 - [License](#license)
@@ -56,7 +57,7 @@ For LLM-based translations, Xeno-Canto lookups, and optional public
 translation-service keys, add API keys to a `.env` file:
 
 ```
-# LLM translation (Step 9) — add whichever you have; Gemini is preferred
+# LLM translation (Step 10) — add whichever you have; Gemini is preferred
 GEMINI_API_KEY=...
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
@@ -103,7 +104,7 @@ Current manual override support covers image replacement and manual crop anchori
 
 ```
 config.py                  # Configuration helpers for config.yml access
-config.yml                 # Project settings: taxonomy version, groups, filters, API params
+config.yml                 # Project settings: taxonomy version, groups, sound classes, filters, API params
 requirements.txt           # Python dependencies
 bn_ids.json                # Persistent BirdNET species ID registry (git-tracked)
 build/
@@ -120,6 +121,7 @@ collectors/
     wikipedia.py           # Wikipedia summaries, langlinks, and image metadata
     xenocanto.py           # Xeno-Canto scientific name mapping
     observationorg.py      # observation.org species ID mapping
+    sound_classes.py       # Configured anthropogenic/geophony sound classes
 dev/                       # Development metadata snapshots and local build artifacts
 dist/                      # Published metadata and generated site image assets
 overrides/
@@ -159,7 +161,7 @@ at least 100 total iNaturalist observations.
 
 ## Taxonomy Rules
 
-The final taxonomy is species-level only. Scientific names must be clean
+The biological taxonomy is species-level only. Scientific names must be clean
 binomial species names: no genera-only rows, higher ranks, subspecies,
 trinomials, hybrids, parenthetical qualifiers, slash alternatives, or informal
 annotations. Subspecies encountered in source data are folded into their parent
@@ -173,6 +175,11 @@ are part of the accepted name.
 Bird taxonomy and English bird names come from AviList. Non-bird groups are
 included through configured iNaturalist coverage rules and reviewed priority
 species additions.
+
+Configured non-species sound classes live under `sound_classes` in
+`config.yml`. These records use their English display name as
+`scientific_name`, carry `record_type: sound_class`, and are grouped separately
+from biological taxa, for example `Anthropogenic` and `Geophony`.
 
 ## Pipeline
 
@@ -188,11 +195,12 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 6. Macaulay Library | `python -m collectors.macaulay` | `raw_data/macaulay_data.json` |
 | 7. Xeno-Canto | `python -m collectors.xenocanto` | `raw_data/xc_data.json` |
 | 8. observation.org | `python -m collectors.observationorg` | `raw_data/observationorg_data.json` |
-| 9. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
-| 10. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
-| 11. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
+| 9. Sound Classes | `python -m collectors.sound_classes` | `raw_data/sound_classes.json` |
+| 10. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
+| 11. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
+| 12. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 is optional LLM-based translation and description shortening, disabled by default. Step 10 downloads species images. Step 11 merges everything into the final output — no API calls, purely offline.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 10 is optional LLM-based translation and description shortening, disabled by default. Step 11 downloads images. Step 12 merges everything into the final output — no API calls, purely offline.
 
 ### Step 1 — AviList
 
@@ -359,7 +367,25 @@ Resolution cascade:
 | `--retry-unresolved` | Retry species cached with no observation.org ID |
 | `--dry-run` | Preview without API calls |
 
-### Step 9 — LLM Translation
+### Step 9 — Sound Classes
+
+Collects configured non-species sound classes from `config.yml`. Each entry uses
+its English common name as the final `scientific_name`, fetches localized labels
+from Wikidata, and uses a licensed Wikimedia Commons image when available.
+Set `image_file` to a Commons filename to override the Wikidata P18 image for a
+specific class. Use `overrides/species_overrides.csv` for fixed crop anchors.
+Current classes include anthropogenic sounds such as power tools, siren, gun,
+chainsaw, engine, and human, plus geophony classes such as rain, thunder, and
+wind. `Human` includes common-name aliases for `human vocal` and
+`human non-vocal` so those searches resolve to the canonical `Human` entry.
+
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap new sound classes to process (0 = all) |
+| `--new-only` | Only process sound classes not already cached |
+| `--dry-run` | Preview without fetching |
+
+### Step 10 — LLM Translation
 
 Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia extracts — no content is generated from scratch:
 
@@ -404,7 +430,7 @@ This step is disabled by default (`llm.enabled: false`). Enable it in `config.ym
 | `--fallback-only` | Only generate English fallbacks |
 | `--dry-run` | Preview without API calls |
 
-### Step 10 — Images
+### Step 11 — Images
 
 Batch-downloads species images as WebP files with content-aware smart cropping. Each species gets two sizes stored in subdirectories:
 
@@ -434,12 +460,12 @@ The collector also prunes obsolete cached `.webp` files and stale `.state` metad
 | `--new-only` | Only species with no cached image files yet |
 | `--dry-run` | Preview without downloading |
 
-### Step 11 — Build
+### Step 12 — Build
 
 Merges all pre-collected data into the final metadata file. Runs purely offline — no API calls. Two phases:
 
 **Taxonomy phase:**
-1. Cross-references iNaturalist, AviList, and Wikidata to build a canonical species list
+1. Cross-references iNaturalist, AviList, Wikidata, and configured sound classes to build a canonical entry list
 2. Resolves eBird codes from AviList and pre-collected Wikidata data
 3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife)
 4. Collects common names from eBird (62 locales) and Wikidata labels
@@ -460,7 +486,9 @@ when LLM translation is enabled. Default builds use only Wikipedia and eBird
 descriptions.
 The JSON output also includes `description_sources`, a per-locale source map,
 and `scientific_name_aliases`, a list of clean binomial scientific names that
-resolve to the canonical species.
+resolve to the canonical species. Non-species sound classes use
+`record_type: sound_class`; their `scientific_name_aliases` and
+`common_name_aliases` are both search fallbacks rather than biological names.
 Reviewed manual scientific-name bridges live in `overrides/species_aliases.csv`.
 The build also filters source-derived aliases that collide with another
 canonical species and fails if any alias conflict remains.
@@ -531,6 +559,7 @@ uvicorn web.server:app --reload
 - Common name in any locale (e.g., `Amsel`, `Merle noir`)
 - BirdNET ID (e.g., `BN10600`)
 - Scientific alias from `scientific_name_aliases`
+- Common-name alias from `common_name_aliases`
 - eBird species code (e.g., `eurblk1`)
 - iNaturalist taxon ID (e.g., `12727`)
 

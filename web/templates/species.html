@@ -89,6 +89,13 @@
         font-size: 0.9rem;
         border-bottom: 1px solid #f0f0f0;
     }
+    .names-grid .name-entry-active {
+        background: #e8f0fb;
+        border-radius: 4px;
+        padding-left: 0.4rem;
+        padding-right: 0.4rem;
+        font-weight: 500;
+    }
     .names-grid .locale-code {
         color: var(--muted);
         font-weight: 500;
@@ -207,6 +214,21 @@
 {% endblock %}
 
 {% block content %}
+{% set descriptions = s.descriptions or {} %}
+{% set wiki_urls = s.wikipedia_urls or {} %}
+{% set cl_locales = s.claude_locales or [] %}
+{% set desc_sources = s.description_sources or {} %}
+
+{# Determine the best description to show as primary #}
+{% set desc_active = descriptions.get(lang, '') if lang else '' %}
+{% set desc_en = descriptions.get('en', '') %}
+{% set primary_desc = desc_active or desc_en %}
+{% set primary_lang = lang if desc_active else 'en' %}
+{% set primary_source = desc_sources.get(primary_lang) or s.description_source %}
+
+{# Locale-specific common name (falls back to English) #}
+{% set display_common = (s.common_names or {}).get(lang, s.common_name) if lang else s.common_name %}
+
 <p style="margin-bottom: 1rem;"><a href="{{ base }}/" id="backLink">&larr; Back to browse</a></p>
 <script>{
     const u = sessionStorage.getItem('browseUrl');
@@ -215,15 +237,19 @@
 
 <div class="species-header">
     <div class="species-photo">
-        <img src="{{ base }}/api/image/{{ quote_path(s.scientific_name) }}?size=medium" alt="{{ s.common_name or s.scientific_name }}">
+        <img src="{{ base }}/api/image/{{ quote_path(s.scientific_name) }}?size=medium" alt="{{ display_common or s.scientific_name }}">
         {% if s.image_author %}
         <div class="attribution">{{ s.image_author }}{% if s.image_license %} ({{ s.image_license }}){% endif %}</div>
         {% endif %}
     </div>
 
     <div class="species-info">
-        <h1>{{ s.common_name or s.scientific_name }}</h1>
-        {% if s.common_name_alt %}<div style="font-size: 0.95rem; color: var(--muted); margin-bottom: 0.2rem;">also known as {{ s.common_name_alt }}</div>{% endif %}
+        <h1>{{ display_common or s.scientific_name }}</h1>
+        {% if lang and display_common and display_common != s.common_name %}
+        <div style="font-size: 0.95rem; color: var(--muted); margin-bottom: 0.2rem;">{{ s.common_name }}{% if s.common_name_alt %} · {{ s.common_name_alt }}{% endif %}</div>
+        {% elif s.common_name_alt %}
+        <div style="font-size: 0.95rem; color: var(--muted); margin-bottom: 0.2rem;">also known as {{ s.common_name_alt }}</div>
+        {% endif %}
         <div class="sci-name">{{ s.scientific_name }}</div>
 
         <table class="info-table">
@@ -255,43 +281,47 @@
     </div>
 </div>
 
-{% set desc_en = (s.descriptions or {}).get('en', '') %}
-{% set translations = {} %}
-{% if s.descriptions %}
-{% for lang, text in s.descriptions.items() if lang != 'en' %}
-{% if translations.update({lang: text}) %}{% endif %}
-{% endfor %}
-{% endif %}
-
-{% set wiki_urls = s.wikipedia_urls or {} %}
-{% set cl_locales = s.claude_locales or [] %}
-
-{% if desc_en %}
+{% if primary_desc %}
 <div class="description">
     <h3>Description
-        {% if 'en' in cl_locales %}
+        {% if primary_lang in cl_locales or primary_source == 'claude' %}
         <span class="desc-source src-claude">claude</span>
-        {% elif s.description_source == 'wikipedia' and wiki_urls.en %}
-        <a href="{{ wiki_urls.en }}" target="_blank" class="desc-source src-wikipedia" style="text-decoration:none">wikipedia</a>
-        {% elif s.description_source == 'ebird' and s.ebird_code %}
+        {% elif primary_source == 'wikipedia' %}
+        {% set wiki_url = wiki_urls.get(primary_lang) or wiki_urls.get('en') %}
+        {% if wiki_url %}
+        <a href="{{ wiki_url }}" target="_blank" class="desc-source src-wikipedia" style="text-decoration:none">wikipedia</a>
+        {% else %}
+        <span class="desc-source src-wikipedia">wikipedia</span>
+        {% endif %}
+        {% elif primary_source == 'ebird' and s.ebird_code %}
         <a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank" class="desc-source src-ebird" style="text-decoration:none">ebird</a>
         {% endif %}
+        {% if lang and lang != 'en' %}
+        {% if desc_active %}
+        <span style="background:#e9ecef; padding:0.1rem 0.45rem; border-radius:4px; font-size:0.72rem; font-weight:500; color:var(--muted); vertical-align:middle; margin-left:0.4rem;">{{ lang_name }}</span>
+        {% else %}
+        <span style="background:#fff3cd; padding:0.1rem 0.45rem; border-radius:4px; font-size:0.72rem; font-weight:500; color:#856404; vertical-align:middle; margin-left:0.4rem;" title="No {{ lang_name }} description available">EN fallback</span>
+        {% endif %}
+        {% endif %}
     </h3>
-    <p>{{ desc_en }}</p>
+    <p>{{ primary_desc }}</p>
 </div>
 {% endif %}
 
-{% if translations %}
+{% if descriptions|length > 1 %}
 <div class="section translations">
-    <h3>Translated Descriptions ({{ translations|length }})</h3>
-    {% for lang, text in translations|dictsort %}
-    <details>
+    <h3>{{ 'Other Descriptions' if (lang and desc_active and lang != 'en') else 'Translated Descriptions' }} ({{ descriptions|length - 1 }})</h3>
+    {% for desc_lang, text in descriptions|dictsort if desc_lang != primary_lang %}
+    {% set t_source = desc_sources.get(desc_lang) or s.description_source %}
+    <details {% if desc_lang == 'en' and lang and lang != 'en' %}open{% endif %}>
         <summary>
-            {{ lang }}
-            {% if lang in cl_locales %}
+            {{ desc_lang }}
+            {% if desc_lang in cl_locales or t_source == 'claude' %}
             <span class="desc-source src-claude">claude</span>
-            {% elif wiki_urls[lang] %}
-            <a href="{{ wiki_urls[lang] }}" target="_blank" class="desc-source src-wikipedia" style="text-decoration:none">wikipedia</a>
+            {% elif wiki_urls.get(desc_lang) %}
+            <a href="{{ wiki_urls[desc_lang] }}" target="_blank" class="desc-source src-wikipedia" style="text-decoration:none">wikipedia</a>
+            {% elif t_source == 'ebird' and s.ebird_code %}
+            <a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank" class="desc-source src-ebird" style="text-decoration:none">ebird</a>
             {% endif %}
         </summary>
         <div class="trans-text">{{ text }}</div>
@@ -306,7 +336,7 @@
     <h3>Common Names ({{ cn|length }} locales)</h3>
     <div class="names-grid">
         {% for locale, name in cn|dictsort %}
-        <div class="name-entry">
+        <div class="name-entry{% if locale == lang %} name-entry-active{% endif %}">
             <span class="locale-code">{{ locale }}</span>
             <span>{{ name }}</span>
         </div>

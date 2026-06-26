@@ -34,6 +34,10 @@ OPTIONAL_ID_FIELDS = (
     "observationorg_id",
 )
 
+
+def _is_sound_class(record: dict[str, Any]) -> bool:
+    return record.get("record_type") == "sound_class"
+
 def load_records(path: Path) -> list[dict[str, Any]]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
@@ -78,14 +82,19 @@ def audit_records(records: list[dict[str, Any]],
         english = ""
         if isinstance(descriptions, dict):
             english = str(descriptions.get("en") or "")
-        if not english:
+        if _is_sound_class(record):
+            pass
+        elif not english:
             missing_required["descriptions.en"].append(rec_id)
         else:
             words = word_count(english)
             if words < min_english_words:
                 short_english.append((rec_id, words))
 
-        if not is_clean_scientific_name(sci):
+        if _is_sound_class(record):
+            if not is_clean_common_name(sci):
+                bad_scientific.append(rec_id)
+        elif not is_clean_scientific_name(sci):
             bad_scientific.append(rec_id)
 
         for field in ("common_name", "common_name_alt"):
@@ -104,9 +113,19 @@ def audit_records(records: list[dict[str, Any]],
             for alias in aliases:
                 alias_text = str(alias).strip()
                 if alias_text:
-                    if not is_clean_scientific_name(alias_text):
+                    if _is_sound_class(record):
+                        if not is_clean_common_name(alias_text):
+                            bad_scientific.append(f"{rec_id} alias:{alias_text}")
+                    elif not is_clean_scientific_name(alias_text):
                         bad_scientific.append(f"{rec_id} alias:{alias_text}")
                     alias_to_species[alias_text.lower()].add(sci)
+
+        common_aliases = record.get("common_name_aliases")
+        if isinstance(common_aliases, list):
+            for alias in common_aliases:
+                alias_text = str(alias).strip()
+                if alias_text and not is_clean_common_name(alias_text):
+                    bad_common.append((rec_id, "common_name_aliases", alias_text))
 
         for field in OPTIONAL_ID_FIELDS:
             if not record.get(field):
@@ -142,7 +161,7 @@ def audit_records(records: list[dict[str, Any]],
 
 
 def print_report(report: dict[str, Any], sample_limit: int) -> None:
-    print(f"Metadata audit: {report['total']} species")
+    print(f"Metadata audit: {report['total']} entries")
     print("Groups:")
     for group, count in report["groups"].items():
         print(f"  {group or '<blank>'}: {count}")
@@ -213,6 +232,17 @@ def run_self_test() -> None:
         "descriptions": {"en": " ".join(["duck"] * 40)},
         "scientific_name_aliases": ["Anas boschas"],
     }
+    sound_class = {
+        "birdnet_id": "BN00002",
+        "scientific_name": "Human",
+        "common_name": "Human",
+        "taxon_group": "Anthropogenic",
+        "record_type": "sound_class",
+        "description_source": "",
+        "descriptions": {},
+        "scientific_name_aliases": ["Human vocal"],
+        "common_name_aliases": ["human vocal", "human non-vocal"],
+    }
     bad = {
         "birdnet_id": "",
         "scientific_name": "Anas platyrhynchos domesticus",
@@ -222,7 +252,7 @@ def run_self_test() -> None:
         "descriptions": {"en": "Too short."},
         "scientific_name_aliases": ["Anas / bad"],
     }
-    report = audit_records([good, bad], min_english_words=40)
+    report = audit_records([good, sound_class, bad], min_english_words=40)
     assert "birdnet_id" in report["missing_required"]
     assert "taxon_group" in report["missing_required"]
     assert "description_source" in report["missing_required"]

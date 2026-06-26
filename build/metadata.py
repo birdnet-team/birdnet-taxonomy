@@ -61,6 +61,7 @@ TRANSLATE_DATA_FILE = RAW_DIR / "translate_data.json"
 MACAULAY_DATA_FILE = RAW_DIR / "macaulay_data.json"
 XC_DATA_FILE = RAW_DIR / "xc_data.json"
 OBSERVATIONORG_DATA_FILE = RAW_DIR / "observationorg_data.json"
+SOUND_CLASSES_FILE = RAW_DIR / "sound_classes.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
@@ -294,6 +295,72 @@ def load_manual_aliases() -> dict[str, list[str]]:
     return aliases
 
 
+def is_sound_class_record(record: dict) -> bool:
+    return record.get("record_type") == "sound_class"
+
+
+def is_clean_sound_class_name(name: str) -> bool:
+    return is_clean_common_name(name)
+
+
+def clean_common_aliases(values: list[str] | tuple[str, ...] | set[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in values or []:
+        value = str(raw or "").strip()
+        key = value.lower()
+        if not value or key in seen or not is_clean_common_name(value):
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
+
+
+def load_sound_classes() -> dict[str, dict]:
+    """Load configured non-species sound classes collected offline."""
+    classes = load_json(SOUND_CLASSES_FILE)
+    result: dict[str, dict] = {}
+    for name, rec in classes.items():
+        sci = str(rec.get("scientific_name") or name).strip()
+        if not is_clean_sound_class_name(sci):
+            continue
+        common_name = str(rec.get("common_name") or sci).strip()
+        result[sci] = {
+            "inat_id": None,
+            "taxon_group": rec.get("taxon_group", ""),
+            "iconic_taxon_name": rec.get("taxon_group", ""),
+            "preferred_common_name": common_name if is_clean_common_name(common_name) else sci,
+            "common_name_alt": "",
+            "common_names": {
+                LOCALE_NORMALIZE.get(k, k): v
+                for k, v in (rec.get("common_names", {}) or {}).items()
+                if is_clean_common_name(str(v))
+            },
+            "common_name_aliases": clean_common_aliases(rec.get("common_name_aliases", [])),
+            "observations_count": 0,
+            "ebird_code": "",
+            "gbif_id": "",
+            "ncbi_id": "",
+            "avibase_id": "",
+            "birdlife_id": "",
+            "ml_taxon_code": "",
+            "xc_name": "",
+            "observationorg_id": "",
+            "image_url": rec.get("image_url", ""),
+            "image_author": rec.get("image_author", ""),
+            "image_license": rec.get("image_license", ""),
+            "image_source": rec.get("image_source", ""),
+            "match_source": "sound_class",
+            "scientific_name_aliases": clean_common_aliases(
+                rec.get("scientific_name_aliases", [])
+            ),
+            "record_type": "sound_class",
+            "wikidata_qid": rec.get("wikidata_qid", ""),
+        }
+        result[sci]["common_names"].setdefault("en", sci)
+    return result
+
+
 def print_manual_alias_stats(aliases: dict[str, list[str]]):
     """Print active manual aliases in a concise, human-readable form."""
     if not aliases:
@@ -363,7 +430,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     stats = {"direct": 0, "common_name": 0, "wikidata": 0,
              "avilist_only": 0, "non_bird": 0, "excluded_non_species": 0,
              "excluded_extinct": 0, "excluded_bird_no_avilist": 0,
-             "excluded_group": 0}
+             "excluded_group": 0, "sound_classes": 0}
 
     # Pass 1: Process all iNat species
     for sci_name, rec in inat.items():
@@ -678,6 +745,10 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
                 coverage[loc] = coverage.get(loc, 0) + 1
     stats["coverage"] = coverage
 
+    sound_classes = load_sound_classes()
+    taxonomy.update(sound_classes)
+    stats["sound_classes"] = len(sound_classes)
+
     return taxonomy, stats
 
 
@@ -688,7 +759,7 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     matched_birds = stats["direct"] + stats["common_name"] + stats["wikidata"]
     total = len(taxonomy)
 
-    print(f"\n  Total species: {total}")
+    print(f"\n  Total entries: {total}")
     print(f"  Birds:         {total_birds}")
     print(f"    Direct match:     {stats['direct']}")
     print(f"    Common name:      {stats['common_name']}")
@@ -697,6 +768,8 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     print(f"    Match rate:       {matched_birds}/{matched_birds + stats.get('excluded_bird_no_avilist', 0)} "
           f"iNat birds ({100 * matched_birds / max(1, matched_birds + stats.get('excluded_bird_no_avilist', 0)):.1f}%)")
     print(f"  Non-birds:     {stats['non_bird']}")
+    if stats.get("sound_classes"):
+        print(f"  Sound classes: {stats['sound_classes']}")
     if stats.get("excluded_non_species"):
         print(f"  Excluded:      {stats['excluded_non_species']} non-species iNat taxa")
     if stats.get("excluded_extinct"):
@@ -709,7 +782,7 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     # Wikidata identifiers
     wd_ids = stats.get("wikidata_ids", {})
     wd_cov = stats.get("wikidata_coverage", 0)
-    print(f"\n  Wikidata identifiers ({wd_cov}/{total} species found):")
+    print(f"\n  Wikidata identifiers ({wd_cov}/{total} entries found):")
     for key, count in wd_ids.items():
         print(f"    {key}: {count}")
 
@@ -719,7 +792,7 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     wd_labels = stats.get("wikidata_labels", {})
     n_locales = len(coverage)
     top_n = 30
-    print(f"\n  Common name coverage ({total} species, "
+    print(f"\n  Common name coverage ({total} entries, "
           f"{n_locales} locales, top {top_n}):")
     print(f"    {'Locale':<8} {'Total':>7} {'%':>6}  "
           f"{'eBird':>7} {'Wikidata':>8}")
@@ -737,7 +810,7 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     img = stats.get("images", {})
     total_with_img = (img.get("inat", 0) + img.get("ebird", 0)
                       + img.get("wikimedia", 0) + img.get("inat_obs", 0))
-    print(f"\n  Default images ({total_with_img}/{total} species):")
+    print(f"\n  Default images ({total_with_img}/{total} entries):")
     print(f"    iNat (taxon photo):    {img.get('inat', 0)}")
     print(f"    eBird:                 {img.get('ebird', 0)}")
     print(f"    Wikimedia Commons:     {img.get('wikimedia', 0)}")
@@ -841,6 +914,22 @@ def _apply_metadata_quality_filter(
         score, flags, external_id_count = _metadata_quality(record)
         record["metadata_quality_score"] = score
         record["metadata_quality_flags"] = flags
+        if record.get("record_type") == "sound_class":
+            kept.append(record)
+            report_rows.append({
+                "action": "keep",
+                "score": score,
+                "scientific_name": record.get("scientific_name", ""),
+                "common_name": record.get("common_name", ""),
+                "taxon_group": record.get("taxon_group", ""),
+                "flags": "|".join(flags),
+                "drop_reasons": "",
+                "threshold": 0,
+                "external_id_count": external_id_count,
+                "description_source": record.get("description_source", ""),
+                "has_image": "1" if record.get("image") else "0",
+            })
+            continue
 
         reasons: list[str] = []
         threshold = group_min_scores.get(str(record.get("taxon_group") or ""), min_score)
@@ -932,7 +1021,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     image_prefix = image_url_prefix()
 
     for sci_name, tax in taxonomy.items():
-        if not is_clean_scientific_name(sci_name):
+        if is_sound_class_record(tax):
+            if not is_clean_sound_class_name(sci_name):
+                continue
+        elif not is_clean_scientific_name(sci_name):
             continue
         wp = wiki.get(sci_name, {})
         eb = ebird.get(sci_name, {})
@@ -1012,21 +1104,24 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             for loc, name in (tax.get("common_names", {}) or {}).items()
             if is_clean_common_name(str(name))
         }
-        source_aliases = clean_aliases(tax.get("scientific_name_aliases", []))
-        source_aliases = [
-            alias for alias in source_aliases
-            if alias != sci_name
-            and canonical_names.get(alias.lower(), sci_name) == sci_name
-            and source_alias_claims[alias.lower()] == 1
-        ]
-        aliases = clean_aliases([*source_aliases, *manual_aliases.get(sci_name, [])])
-        # Drop aliases that equal this species' own name or are the canonical
-        # name of a different species — catches manual aliases that shadow taxonomy keys.
-        aliases = [
-            a for a in aliases
-            if a != sci_name
-            and canonical_names.get(a.lower(), sci_name) == sci_name
-        ]
+        if is_sound_class_record(tax):
+            aliases = clean_common_aliases(tax.get("scientific_name_aliases", []))
+        else:
+            source_aliases = clean_aliases(tax.get("scientific_name_aliases", []))
+            source_aliases = [
+                alias for alias in source_aliases
+                if alias != sci_name
+                and canonical_names.get(alias.lower(), sci_name) == sci_name
+                and source_alias_claims[alias.lower()] == 1
+            ]
+            aliases = clean_aliases([*source_aliases, *manual_aliases.get(sci_name, [])])
+            # Drop aliases that equal this species' own name or are the canonical
+            # name of a different species — catches manual aliases that shadow taxonomy keys.
+            aliases = [
+                a for a in aliases
+                if a != sci_name
+                and canonical_names.get(a.lower(), sci_name) == sci_name
+            ]
 
         record = {
             "birdnet_id": None,
@@ -1034,7 +1129,11 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "common_name": common_name,
             "common_name_alt": common_name_alt,
             "taxon_group": tax.get("taxon_group", ""),
+            "record_type": tax.get("record_type", "species"),
             "common_names": common_names,
+            "common_name_aliases": clean_common_aliases(
+                tax.get("common_name_aliases", [])
+            ),
             "descriptions": descriptions,
             "description_source": description_source,
             "description_sources": description_sources,
@@ -1055,6 +1154,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "ml_taxon_code": tax.get("ml_taxon_code", ""),
             "xc_name": tax.get("xc_name", ""),
             "observationorg_id": tax.get("observationorg_id", ""),
+            "wikidata_qid": tax.get("wikidata_qid", ""),
             "observations_count": tax.get("observations_count", 0),
         }
         records.append(record)
@@ -1100,7 +1200,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         for r in records
     )
 
-    print(f"  {len(records)} species")
+    print(f"  {len(records)} entries")
     for g, n in sorted(groups.items()):
         print(f"    {g}: {n}")
 
@@ -1135,10 +1235,10 @@ def records_to_csv(records: list[dict]) -> str:
     base_cols = [
         "birdnet_id",
         "scientific_name", "common_name", "common_name_alt", "taxon_group",
-        "scientific_name_aliases",
+        "record_type", "scientific_name_aliases", "common_name_aliases",
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "ml_taxon_code", "xc_name",
-        "observationorg_id",
+        "observationorg_id", "wikidata_qid",
         "observations_count",
         "description_source",
         "metadata_quality_score", "metadata_quality_flags",
@@ -1155,6 +1255,7 @@ def records_to_csv(records: list[dict]) -> str:
     for rec in records:
         row = {k: rec.get(k, "") for k in base_cols}
         row["scientific_name_aliases"] = "|".join(rec.get("scientific_name_aliases", []))
+        row["common_name_aliases"] = "|".join(rec.get("common_name_aliases", []))
         row["metadata_quality_flags"] = "|".join(rec.get("metadata_quality_flags", []))
         row["image_url"] = (rec.get("image") or {}).get("medium", "")
         for loc in top_locales:

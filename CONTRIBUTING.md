@@ -47,9 +47,14 @@ HOST_NAME=https://birdnet.cornell.edu
 
 ## Naming Rules
 
-Final taxonomy records are species-level only. Do not add genera, higher ranks,
-subspecies, trinomials, hybrids, or informal taxa. Fold subspecies into their
-parent binomial species for now.
+Biological taxonomy records are species-level only. Do not add genera, higher
+ranks, subspecies, trinomials, hybrids, or informal taxa. Fold subspecies into
+their parent binomial species for now.
+
+Non-species sound classes are the only exception. Add them under
+`sound_classes` in `config.yml`, not in biological taxonomy or priority-species
+overrides. These records use the English display name as `scientific_name` and
+must carry `record_type: sound_class` in built metadata.
 
 Scientific and common names must be canonical display names. Do not use
 parenthetical qualifiers, bracketed notes, slash alternatives, or informal
