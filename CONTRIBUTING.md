@@ -40,9 +40,26 @@ HOST_NAME=https://birdnet.cornell.edu
 
 1. Update or collect raw source data as needed.
 2. Rebuild metadata with `python -m build.metadata` or `python -m build.metadata --merge-only`.
-3. If image behavior changed, run `python -m collectors.images` or test the image proxy directly.
-4. Verify the resulting files in `dist/` or `dev/`.
-5. Update documentation when behavior or contributor workflow changes.
+3. If description coverage changed, run `python -m utils.audit_descriptions dist/species_metadata.json --output dev/description_audit.csv` or the same command against `dev/species_metadata.json`.
+4. If image behavior changed, run `python -m collectors.images` or test the image proxy directly.
+5. Verify the resulting files in `dist/` or `dev/`.
+6. Update documentation when behavior or contributor workflow changes.
+
+## Naming Rules
+
+Biological taxonomy records are species-level only. Do not add genera, higher
+ranks, subspecies, trinomials, hybrids, or informal taxa. Fold subspecies into
+their parent binomial species for now.
+
+Non-species sound classes are the only exception. Add them under
+`sound_classes` in `config.yml`, not in biological taxonomy or priority-species
+overrides. These records use the English display name as `scientific_name` and
+must carry `record_type: sound_class` in built metadata.
+
+Scientific and common names must be canonical display names. Do not use
+parenthetical qualifiers, bracketed notes, slash alternatives, or informal
+symbols. Regular spaces, apostrophes, and dashes/hyphens are fine when they are
+part of the accepted name.
 
 ## Manual Overrides
 
@@ -56,6 +73,56 @@ Rules:
 - `source_url` and `notes` are optional but useful for review.
 
 The build fails on invalid anchors, duplicate rows, partial image overrides, or unknown species names.
+
+## Priority Species
+
+Reviewed issue-specific taxonomy additions live in `overrides/priority_species.csv` and are fetched during `python -m collectors.inat`.
+
+Use this only for species that should be included even if they need special review outside the normal group thresholds. Prefer an iNaturalist taxon ID whenever possible.
+
+Required columns:
+
+- `scientific_name`
+- `taxon_group`
+- `source`
+- `reason`
+
+Optional columns:
+
+- `inat_id`
+- `gbif_id`
+- `common_name`
+
+Rules:
+
+- `scientific_name` must be a clean binomial species name.
+- Do not add subspecies; fold them into the parent species for now.
+- Use the accepted/current source name as the row's `scientific_name`.
+- Put old names or issue-specific context in `reason`.
+- Keep additions small and reviewed.
+
+## Scientific Aliases
+
+Reviewed manual scientific-name bridges live in `overrides/species_aliases.csv`
+and are applied during `python -m build.metadata`.
+
+Required columns:
+
+- `scientific_name`
+- `alias`
+
+Optional columns:
+
+- `source`
+- `notes`
+
+Rules:
+
+- Both `scientific_name` and `alias` must be clean binomial species names.
+- `scientific_name` must already exist in the taxonomy.
+- Do not add subspecies, hybrids, genera, parenthetical notes, slash alternatives, or informal annotations.
+- Do not use an alias that is the canonical scientific name of another included species.
+- Keep each alias reviewed and source-backed; broad synonym imports belong in collectors, not this file.
 
 ## Pull Requests
 

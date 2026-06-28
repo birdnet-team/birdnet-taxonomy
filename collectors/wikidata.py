@@ -5,7 +5,7 @@ and Wikimedia Commons.
 
 Queries Wikidata SPARQL for:
   - eBird species codes (P3444) via scientific name (P225) or iNat ID (P3151)
-  - External identifiers: GBIF (P846), NCBI (P685), Avibase (P2426),
+  - External identifiers: GBIF (P846), NCBI (P685), Avibase (P2026),
     BirdLife (P5257)
   - Common name labels (rdfs:label) in all available languages
   - P18 images → Wikimedia Commons license checks
@@ -31,8 +31,9 @@ import urllib.request
 from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT, LOCALE_NORMALIZE,
-    is_full_species_name, load_json, save_json,
+    clean_aliases, is_full_species_name, load_json, save_json,
     strip_html_tags, cache_key, cache_get, cache_put,
+    load_manual_species_aliases,
 )
 
 INAT_FILE = RAW_DIR / "inat_data.json"
@@ -40,6 +41,8 @@ OUTPUT_FILE = RAW_DIR / "wikidata_data.json"
 
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 _COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+GBIF_MATCH_URL = "https://api.gbif.org/v1/species/match"
+GBIF_SYNONYMS_URL = "https://api.gbif.org/v1/species/{key}/synonyms"
 
 _SPARQL_BATCH = 150
 _COMMONS_BATCH = 50
@@ -51,9 +54,13 @@ WD_IDENTIFIERS = {
     "ebird_code": "P3444",
     "gbif_id": "P846",
     "ncbi_id": "P685",
-    "avibase_id": "P2426",
+    "avibase_id": "P2026",
     "birdlife_id": "P5257",
 }
+EXTERNAL_IDENTIFIER_FIELDS = tuple(
+    key for key in WD_IDENTIFIERS
+    if key != "ebird_code"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -152,11 +159,15 @@ def query_ebird_codes(
 # Phase 2: External identifiers (GBIF, NCBI, Avibase, BirdLife)
 # ---------------------------------------------------------------------------
 
-def query_identifiers(species_names: list[str]) -> dict[str, dict]:
+def query_identifiers(
+    species: list[tuple[str, int | None]],
+    aliases: dict[str, list[str]] | None = None,
+) -> dict[str, dict]:
     """Batch-query Wikidata for external identifiers."""
-    if not species_names:
+    if not species:
         return {}
 
+    aliases = aliases or {}
     optionals = ""
     selects = ["?taxonName"]
     for key, prop in WD_IDENTIFIERS.items():
@@ -169,9 +180,25 @@ def query_identifiers(species_names: list[str]) -> dict[str, dict]:
     results = {}
     select_str = " ".join(selects)
 
-    for i in range(0, len(species_names), _SPARQL_BATCH):
-        batch = species_names[i:i + _SPARQL_BATCH]
-        values = " ".join(f'"{s}"' for s in batch)
+    search_items: list[tuple[str, str]] = []
+    for sci, _ in species:
+        names = clean_aliases([sci, *aliases.get(sci, [])])
+        for name in names:
+            search_items.append((sci, name))
+
+    for i in range(0, len(search_items), _SPARQL_BATCH):
+        batch = search_items[i:i + _SPARQL_BATCH]
+        values = " ".join(f'"{name}"' for _, name in batch)
+        # Build name→sci mapping, dropping names claimed by more than one species
+        # in this batch to avoid attributing Wikidata IDs to the wrong taxon.
+        name_to_sci: dict[str, str] = {}
+        for sci, name in batch:
+            if name in name_to_sci:
+                if name_to_sci[name] != sci:
+                    name_to_sci[name] = ""  # ambiguous — mark and skip
+            else:
+                name_to_sci[name] = sci
+        name_to_sci = {k: v for k, v in name_to_sci.items() if v}
         query = (
             f"SELECT {select_str} WHERE {{\n"
             f"  VALUES ?taxonName {{ {values} }}\n"
@@ -180,18 +207,45 @@ def query_identifiers(species_names: list[str]) -> dict[str, dict]:
         )
         rows = _sparql_query(query)
         for r in rows:
-            sci = r["taxonName"]["value"]
-            ids = {}
+            taxon_name = r["taxonName"]["value"]
+            sci = name_to_sci.get(taxon_name, taxon_name)
+            ids = results.setdefault(sci, {})
             for key in WD_IDENTIFIERS:
                 if key == "ebird_code":
                     continue
                 val = r.get(key, {}).get("value", "")
-                if val:
+                if val and not ids.get(key):
                     ids[key] = val
-            if ids:
-                results[sci] = ids
 
-    return results
+    results = {sci: ids for sci, ids in results.items() if ids}
+    remaining = [(sci, iid) for sci, iid in species
+                 if sci not in results and iid is not None]
+    if remaining:
+        iid_to_sci = {str(iid): sci for sci, iid in remaining}
+        for i in range(0, len(remaining), _SPARQL_BATCH):
+            batch = remaining[i:i + _SPARQL_BATCH]
+            inat_values = " ".join(f'"{iid}"' for _, iid in batch)
+            query = (
+                f"SELECT ?inatId {select_str.replace('?taxonName', '')} WHERE {{\n"
+                f"  VALUES ?inatId {{ {inat_values} }}\n"
+                f"  ?item wdt:P3151 ?inatId .\n"
+                f"{optionals}}}"
+            )
+            rows = _sparql_query(query)
+            for r in rows:
+                iid = r["inatId"]["value"]
+                sci = iid_to_sci.get(iid)
+                if not sci:
+                    continue
+                ids = results.setdefault(sci, {})
+                for key in WD_IDENTIFIERS:
+                    if key == "ebird_code":
+                        continue
+                    val = r.get(key, {}).get("value", "")
+                    if val and not ids.get(key):
+                        ids[key] = val
+
+    return {sci: ids for sci, ids in results.items() if ids}
 
 
 # ---------------------------------------------------------------------------
@@ -250,12 +304,13 @@ def _is_commons_license_ok(license_short: str) -> bool:
     return any(x in low for x in ("cc", "public domain", "pd", "gfdl"))
 
 
-def query_images(species_names: list[str]) -> dict[str, str]:
+def query_images(species: list[tuple[str, int | None]]) -> dict[str, str]:
     """Query Wikidata P18 (image) → {scientific_name: Commons filename}."""
-    if not species_names:
+    if not species:
         return {}
 
     results: dict[str, str] = {}
+    species_names = [s for s, _ in species]
     for i in range(0, len(species_names), _SPARQL_BATCH):
         batch = species_names[i:i + _SPARQL_BATCH]
         values = " ".join(f'"{s}"' for s in batch)
@@ -273,7 +328,68 @@ def query_images(species_names: list[str]) -> dict[str, str]:
             if sci not in results:
                 results[sci] = filename
 
+    remaining = [(sci, iid) for sci, iid in species
+                 if sci not in results and iid is not None]
+    if remaining:
+        iid_to_sci = {str(iid): sci for sci, iid in remaining}
+        for i in range(0, len(remaining), _SPARQL_BATCH):
+            batch = remaining[i:i + _SPARQL_BATCH]
+            inat_values = " ".join(f'"{iid}"' for _, iid in batch)
+            rows = _sparql_query(
+                f"SELECT ?inatId ?image WHERE {{\n"
+                f"  VALUES ?inatId {{ {inat_values} }}\n"
+                f"  ?item wdt:P3151 ?inatId .\n"
+                f"  ?item wdt:P18 ?image .\n"
+                f"}}"
+            )
+            for r in rows:
+                iid = r["inatId"]["value"]
+                sci = iid_to_sci.get(iid)
+                if not sci or sci in results:
+                    continue
+                image_url = r["image"]["value"]
+                results[sci] = urllib.parse.unquote(image_url.split("/")[-1])
+
     return results
+
+
+def gbif_aliases(scientific_name: str) -> list[str]:
+    """Fetch accepted/synonym binomials from GBIF for alias bridging."""
+    params = urllib.parse.urlencode({
+        "name": scientific_name,
+        "strict": "true",
+        "kingdom": "Animalia",
+    })
+    url = f"{GBIF_MATCH_URL}?{params}"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            match = json.loads(resp.read())
+    except Exception:
+        return []
+
+    names = []
+    accepted = (match.get("species") or "").strip()
+    if accepted and accepted != scientific_name:
+        names.append(accepted)
+
+    key = match.get("usageKey")
+    if not key:
+        return clean_aliases(names)
+
+    syn_url = GBIF_SYNONYMS_URL.format(key=key) + "?limit=50"
+    req = urllib.request.Request(syn_url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            syns = json.loads(resp.read())
+    except Exception:
+        return clean_aliases(names)
+
+    for rec in syns.get("results", []):
+        raw = (rec.get("canonicalName") or rec.get("species") or "").strip()
+        if raw and raw != scientific_name:
+            names.append(raw)
+    return clean_aliases(names)
 
 
 def check_commons_licenses(
@@ -399,6 +515,19 @@ def _load_species_list(cfg: dict) -> dict[str, int | None]:
     return species
 
 
+def _load_aliases(species_names: list[str]) -> dict[str, list[str]]:
+    aliases = load_manual_species_aliases()
+    taxonomy = load_json(RAW_DIR / "taxonomy.json")
+    for sci in species_names:
+        rec = taxonomy.get(sci, {})
+        if rec.get("scientific_name_aliases"):
+            aliases[sci] = clean_aliases([
+                *aliases.get(sci, []),
+                *rec.get("scientific_name_aliases", []),
+            ])
+    return aliases
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -415,6 +544,22 @@ def main():
         "--new-only",
         action="store_true",
         help="Only query species not yet present in wikidata_data.json",
+    )
+    parser.add_argument(
+        "--ids-only",
+        action="store_true",
+        help="Only query external identifiers; skip labels and images",
+    )
+    parser.add_argument(
+        "--refresh-identifiers",
+        action="store_true",
+        help="Replace existing GBIF/NCBI/Avibase/BirdLife IDs with fresh Wikidata values",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Cap species queried in this run (0 = all)",
     )
     args = parser.parse_args()
 
@@ -453,16 +598,21 @@ def main():
 
     all_names = list(species.keys())
     target_names = new_species if args.new_only else all_names
+    if args.limit > 0:
+        target_names = target_names[:args.limit]
+    aliases = _load_aliases(all_names)
 
     if args.new_only:
         print(f"  New-only mode: {len(target_names)} species without Wikidata entries")
+    if args.limit > 0:
+        print(f"  Limit: querying first {len(target_names)} target species")
 
     # Phase 1: eBird codes
     # Only query for species that don't already have an eBird code
     need_ebird = [
         (sci, species[sci])
         for sci in target_names
-        if not existing.get(sci, {}).get("ebird_code")
+        if not args.ids_only and not existing.get(sci, {}).get("ebird_code")
     ]
     n_batches = (len(need_ebird) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 1: eBird codes ({len(need_ebird)} species, "
@@ -474,19 +624,54 @@ def main():
         existing.setdefault(sci, {})["ebird_code"] = code
 
     # Phase 2: External identifiers
-    need_ids = [sci for sci in target_names
-                if not existing.get(sci, {}).get("gbif_id")]
+    need_ids = [
+        (sci, species[sci])
+        for sci in target_names
+        if args.refresh_identifiers
+        or any(not existing.get(sci, {}).get(key) for key in EXTERNAL_IDENTIFIER_FIELDS)
+    ]
     n_batches = (len(need_ids) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 2: Identifiers ({len(need_ids)} species, "
           f"{n_batches} batches)...")
-    identifiers = query_identifiers(need_ids)
+    identifiers = query_identifiers(need_ids, aliases=aliases)
     print(f"  Found identifiers for {len(identifiers)} species")
+
+    if args.refresh_identifiers:
+        for sci, _ in need_ids:
+            entry = existing.setdefault(sci, {})
+            for key in EXTERNAL_IDENTIFIER_FIELDS:
+                entry.pop(key, None)
 
     for sci, ids in identifiers.items():
         entry = existing.setdefault(sci, {})
         for key, val in ids.items():
             entry[key] = val
 
+    save_json(existing, OUTPUT_FILE)
+
+    if args.ids_only:
+        total = len(existing)
+        print(f"\nDone! {total} species in {OUTPUT_FILE.name}")
+        for key in EXTERNAL_IDENTIFIER_FIELDS:
+            print(f"  {key}: {sum(1 for v in existing.values() if v.get(key))}")
+        return
+
+    # Phase 2b: GBIF aliases for taxonomy bridges
+    need_aliases = [
+        sci for sci in target_names
+        if not existing.get(sci, {}).get("aliases")
+        and not existing.get(sci, {}).get("gbif_id")
+    ]
+    print(f"\nPhase 2b: GBIF aliases ({len(need_aliases)} species)...")
+    alias_count = 0
+    for idx, sci in enumerate(need_aliases, start=1):
+        aliases = [a for a in gbif_aliases(sci) if a != sci]
+        if aliases:
+            existing.setdefault(sci, {})["aliases"] = aliases
+            alias_count += 1
+        if idx % 200 == 0:
+            save_json(existing, OUTPUT_FILE)
+    print(f"  Found aliases for {alias_count} species")
     save_json(existing, OUTPUT_FILE)
 
     # Phase 3: Labels (all languages)
@@ -504,8 +689,11 @@ def main():
     save_json(existing, OUTPUT_FILE)
 
     # Phase 4: Images (P18 + Commons license check)
-    need_image = [sci for sci in target_names
-                  if not existing.get(sci, {}).get("image")]
+    need_image = [
+        (sci, species[sci])
+        for sci in target_names
+        if not existing.get(sci, {}).get("image")
+    ]
     n_batches = (len(need_image) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 4: Images ({len(need_image)} species, "
           f"{n_batches} batches)...")

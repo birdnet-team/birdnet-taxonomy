@@ -320,15 +320,19 @@ def main():
     parser = argparse.ArgumentParser(description="Fetch eBird species descriptions, images, and common names")
     parser.add_argument("--limit", type=int, default=0, help="Max species to fetch (0 = all)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be fetched without fetching")
-    parser.add_argument("--workers", type=int, default=default_workers,
+    parser.add_argument("--workers", type=int, default=0,
                         help=f"Number of parallel fetchers (default: {default_workers})")
-    parser.add_argument("--rps", type=float, default=default_rps,
+    parser.add_argument("--rps", type=float, default=0,
                         help=f"Max requests per second (default: {default_rps})")
     parser.add_argument("--names-only", action="store_true",
                         help="Only run Phase 2 (download common names)")
     parser.add_argument("--skip-names", action="store_true",
                         help="Skip Phase 2 (common name download)")
     args = parser.parse_args()
+    if not args.workers:
+        args.workers = default_workers
+    if not args.rps:
+        args.rps = default_rps
 
     # Set global rate limiter
     global _rate

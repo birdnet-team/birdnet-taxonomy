@@ -29,7 +29,7 @@ from tqdm import tqdm
 from config import load_config, load_env_value
 from collectors._common import (
     RAW_DIR, USER_AGENT,
-    is_full_species_name, load_json, save_json,
+    is_full_species_name, load_canonical_species, load_json, save_json,
     setup_shutdown, is_shutting_down,
     RateLimiter,
 )
@@ -252,6 +252,8 @@ def main():
                         help="Preview without fetching")
     parser.add_argument("--new-only", action="store_true",
                         help="Only species not yet in xc_data.json")
+    parser.add_argument("--retry-unresolved", action="store_true",
+                        help="Retry species cached with no XC mapping")
     args = parser.parse_args()
 
     setup_shutdown()
@@ -264,21 +266,12 @@ def main():
     api_key = _get_xc_key()
 
     print("Loading species list...")
-    inat = load_json(INAT_FILE)
-    if not inat:
-        print("ERROR: No species found. Run collectors/inat.py first.")
+    species = load_canonical_species(cfg, group=args.group)
+    if not species:
+        print("ERROR: No species found. Run collectors.inat.py and build taxonomy first.")
         raise SystemExit(1)
 
     existing = load_json(OUTPUT_FILE)
-
-    # Build target species list
-    species = {}
-    for sci, rec in inat.items():
-        if not is_full_species_name(sci):
-            continue
-        if args.group and rec.get("taxon_group", "") != args.group:
-            continue
-        species[sci] = rec
 
     print(f"  {len(species)} species"
           + (f" (group: {args.group})" if args.group else ""))
@@ -286,6 +279,15 @@ def main():
     if args.new_only:
         species = {s: r for s, r in species.items() if s not in existing}
         print(f"  {len(species)} without XC mapping")
+
+    if args.retry_unresolved:
+        retry_names = {
+            sci for sci in species
+            if sci in existing and existing.get(sci, {}).get("xc_name") is None
+        }
+        for sci in retry_names:
+            existing.pop(sci, None)
+        print(f"  Retrying unresolved XC mappings: {len(retry_names)}")
 
     if args.limit:
         species = dict(list(species.items())[:args.limit])
@@ -382,18 +384,25 @@ def main():
         for sci in progress:
             if is_shutting_down():
                 break
-            synonyms = _gbif_synonyms(sci)
+            rec = species[sci]
+            synonyms = [
+                *rec.get("scientific_name_aliases", []),
+                *_gbif_synonyms(sci),
+            ]
             resolved = False
             for syn in synonyms:
                 xc_name = _xc_lookup_direct(syn, api_key)
                 if xc_name:
-                    existing[sci] = {"xc_name": xc_name}
+                    existing[sci] = {
+                        "xc_name": xc_name,
+                        "matched_name": syn,
+                        "aliases": [syn, xc_name],
+                    }
                     phase4_count += 1
                     resolved = True
                     break
             if not resolved:
                 # Phase 5 inline: try English name as last resort
-                rec = species[sci]
                 en_name = rec.get("preferred_common_name", "")
                 xc_name = _xc_lookup_english(en_name, api_key)
                 if xc_name:

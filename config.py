@@ -7,7 +7,7 @@ to all settings. All scripts should use this instead of hardcoding values.
 Usage:
     from config import load_config
     cfg = load_config()
-    print(cfg["claude"]["locales"])  # ['en', 'de', 'fr', ...]
+    print(cfg["llm"]["locales"])  # ['en', 'de', 'fr', ...]
     print(cfg["inat"]["per_page"])   # 200
 """
 
@@ -30,8 +30,10 @@ def load_config() -> dict:
 
 
 def get_locales() -> list[str]:
-    """Shorthand: return the list of Claude translation target locales."""
-    return load_config()["claude"]["locales"]
+    """Shorthand: return the list of LLM translation target locales."""
+    cfg = load_config()
+    llm_cfg = cfg.get("llm") or cfg.get("claude", {})
+    return llm_cfg.get("locales", ["en"])
 
 
 def get_taxon_groups() -> list[dict]:

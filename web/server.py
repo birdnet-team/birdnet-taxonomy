@@ -69,7 +69,7 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
         "license": "cc-by-sa",
     },
     "description_source": "wikipedia",
-    "claude_locales": ["pt"],
+    "translate_locales": ["pt"],
     "descriptions": {
         "en": "This large, familiar duck inhabits diverse aquatic environments...",
         "de": "Diese große, bekannte Ente bewohnt vielfältige Gewässer...",
@@ -97,9 +97,20 @@ class SpeciesRecord(BaseModel):
     taxonomy_version: Optional[str] = Field(None, examples=["v2025-11Jun"])
     birdnet_id: Optional[str] = Field(None, examples=["BN00498"])
     scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
+    scientific_name_aliases: Optional[list[str]] = Field(
+        None,
+        description="Clean binomial scientific names that resolve to this canonical species",
+        examples=[["Anas boschas"]],
+    )
+    common_name_aliases: Optional[list[str]] = Field(
+        None,
+        description="Additional common-name search aliases for non-species sound classes",
+        examples=[["human vocal", "human non-vocal"]],
+    )
     common_name: str = Field("", examples=["Mallard"])
     common_name_alt: Optional[str] = Field(None, description="Alternative English name (Clements/eBird)", examples=["Rock Pigeon"])
     taxon_group: str = Field("", examples=["Aves"])
+    record_type: Optional[str] = Field("species", examples=["species", "sound_class"])
     observations_count: Optional[int] = Field(None, examples=[829418])
     inat_id: Optional[int] = Field(None, examples=[6930])
     ebird_code: Optional[str] = Field(None, examples=["mallar3"])
@@ -131,14 +142,19 @@ class SpeciesRecord(BaseModel):
         }],
     )
     description_source: Optional[str] = Field(None, examples=["wikipedia"])
+    description_sources: Optional[dict[str, str]] = Field(
+        None,
+        description="Per-locale description source labels",
+        examples=[{"en": "wikipedia", "de": "llm"}],
+    )
     image_crop_anchor: Optional[int] = Field(
         None,
         description="Optional manual 3x3 crop anchor for the species image (1=top-left, 5=center, 9=bottom-right)",
         examples=[5],
     )
-    claude_locales: Optional[list[str]] = Field(
+    translate_locales: Optional[list[str]] = Field(
         None,
-        description="Locales whose description text is provided by Claude rather than the base source",
+        description="Locales whose description text is provided by the LLM translator rather than the base source",
         examples=[["pt"]],
     )
     descriptions: Optional[dict[str, str]] = Field(None, examples=[{"en": "A large, familiar duck...", "de": "Eine große, bekannte Ente..."}])
@@ -242,7 +258,8 @@ _species_by_ml_code: dict[str, dict] = {}
 _species_by_xc: dict[str, dict] = {}
 _species_by_birdnet: dict[str, dict] = {}
 _species_by_inat_id: dict[int, dict] = {}
-_search_index: list[tuple[str, str, str, dict]] = []  # (lower_sci, lower_common, search_text, record)
+_species_by_alias: dict[str, dict] = {}
+_search_index: list[tuple[str, str, str, set[str], dict]] = []
 _all_locales: list[tuple[str, str]] = []  # (code, display_name) sorted
 
 
@@ -250,6 +267,10 @@ def _find_species(identifier: str) -> dict | None:
     """Resolve a species by scientific name, common name, eBird code, or iNat ID."""
     # Scientific name (exact, case-insensitive)
     rec = _species_by_name.get(identifier) or _species_by_name.get(identifier.lower())
+    if rec:
+        return rec
+    # Scientific aliases (case-insensitive)
+    rec = _species_by_alias.get(identifier.lower())
     if rec:
         return rec
     # Common name (case-insensitive)
@@ -285,7 +306,7 @@ def _find_species(identifier: str) -> dict | None:
 def load_data(dev: bool = False):
     """Load species_metadata.json into memory."""
     global _species_list, _species_by_name, _species_by_common
-    global _species_by_ebird, _species_by_ml_code, _species_by_xc, _species_by_birdnet, _species_by_inat_id
+    global _species_by_ebird, _species_by_ml_code, _species_by_xc, _species_by_birdnet, _species_by_inat_id, _species_by_alias
     global _search_index, _all_locales
 
     for d in (["dev", "dist"] if dev else ["dist", "dev"]):
@@ -307,6 +328,7 @@ def load_data(dev: bool = False):
     _species_by_xc = {}
     _species_by_birdnet = {}
     _species_by_inat_id = {}
+    _species_by_alias = {}
     _search_index = []
 
     locale_set: set[str] = set()
@@ -337,11 +359,25 @@ def load_data(dev: bool = False):
         inat_id = rec.get("inat_id")
         if inat_id:
             _species_by_inat_id[int(inat_id)] = rec
+        common_alt = rec.get("common_name_alt", "")
         common_lower = _normalise(common)
-        search_text = _normalise(f"{sci} {common}")
+        search_text = _normalise(f"{sci} {common} {common_alt}")
+        alias_norms: set[str] = set()
+        for alias in rec.get("scientific_name_aliases", []):
+            if alias and alias != sci:
+                _species_by_alias.setdefault(alias.lower(), rec)
+                alias_norm = _normalise(alias)
+                alias_norms.add(alias_norm)
+                search_text += " " + alias_norm
+        for alias in rec.get("common_name_aliases", []):
+            if alias:
+                _species_by_common.setdefault(alias.lower(), rec)
+                alias_norm = _normalise(alias)
+                alias_norms.add(alias_norm)
+                search_text += " " + alias_norm
         for name in rec.get("common_names", {}).values():
             search_text += " " + _normalise(name)
-        _search_index.append((sci.lower(), common_lower, search_text, rec))
+        _search_index.append((sci.lower(), common_lower, search_text, alias_norms, rec))
         locale_set.update(rec.get("common_names", {}).keys())
 
     locale_set.discard("en")
@@ -569,10 +605,16 @@ async def home(request: FRequest, q: str = "", group: str = "",
     """Home page with search and species listing."""
     results = _search(q, group)
 
+    def _name_sort_key(r):
+        name = r.get("common_name") or r.get("scientific_name", "")
+        if lang:
+            name = (r.get("common_names") or {}).get(lang) or name
+        return name.lower()
+
     if sort == "a-z":
-        results = sorted(results, key=lambda r: (r.get("common_name") or r.get("scientific_name", "")).lower())
+        results = sorted(results, key=_name_sort_key)
     elif sort == "z-a":
-        results = sorted(results, key=lambda r: (r.get("common_name") or r.get("scientific_name", "")).lower(), reverse=True)
+        results = sorted(results, key=_name_sort_key, reverse=True)
     elif sort == "obs":
         results = sorted(results, key=lambda r: r.get("observations_count", 0) or 0, reverse=True)
     elif sort == "bn":
@@ -638,7 +680,7 @@ async def about_page(request: FRequest):
 
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
          include_in_schema=False)
-async def species_page(request: FRequest, scientific_name: str):
+async def species_page(request: FRequest, scientific_name: str, lang: str = ""):
     """Species detail page. Accepts scientific name, common name, eBird code, or iNat ID."""
     rec = _find_species(scientific_name)
     if not rec:
@@ -647,14 +689,17 @@ async def species_page(request: FRequest, scientific_name: str):
     # Redirect to canonical URL if accessed via alias
     canonical = rec.get("scientific_name", "")
     if canonical and scientific_name != canonical:
-        return RedirectResponse(
-            url=_with_root_path(f"/species/{_quote_path(canonical)}"),
-            status_code=302,
-        )
+        redirect_url = _with_root_path(f"/species/{_quote_path(canonical)}")
+        if lang:
+            redirect_url += f"?lang={lang}"
+        return RedirectResponse(url=redirect_url, status_code=302)
 
+    lang_name = dict(_all_locales).get(lang, lang) if lang else ""
     return templates.TemplateResponse("species.html", _template_context(
         request,
         s=rec,
+        lang=lang,
+        lang_name=lang_name,
     ))
 
 
@@ -891,6 +936,13 @@ async def api_groups():
     return [{"name": g, "count": c} for g, c in sorted(groups.items())]
 
 
+@app.get("/api/locales", tags=["API"],
+         summary="List available locale codes")
+async def api_locales():
+    """List all locale codes present in the dataset with their display names."""
+    return [{"code": code, "name": name} for code, name in _all_locales]
+
+
 @app.get("/api/fields", tags=["API"], response_model=list[str])
 async def api_fields():
     """List all available top-level field names in species records.
@@ -958,6 +1010,7 @@ async def api_search(
 async def api_suggest(
     q: str = Query("", description="Search prefix"),
     limit: int = Query(8, ge=1, le=20, description="Max suggestions"),
+    lang: str = Query("", description="Locale code for localized common names (e.g. de, fr)"),
 ):
     """Return lightweight suggestions for search-as-you-type."""
     if len(q) < 2:
@@ -965,9 +1018,12 @@ async def api_suggest(
     results = _search(q, "")
     suggestions = []
     for rec in results[:limit]:
+        common_name = rec.get("common_name", "")
+        if lang:
+            common_name = (rec.get("common_names") or {}).get(lang) or common_name
         suggestions.append({
             "scientific_name": rec.get("scientific_name", ""),
-            "common_name": rec.get("common_name", ""),
+            "common_name": common_name,
         })
     return suggestions
 
@@ -976,6 +1032,7 @@ async def api_suggest(
          response_model=PaginatedSpecies,
          response_model_exclude_none=True)
 async def api_species_list(
+    q: str = Query("", description="Search query (scientific or common name)"),
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
@@ -991,8 +1048,9 @@ async def api_species_list(
     per_page: int = Query(50, ge=1, le=500, description="Results per page"),
 ):
     """List all species with filtering, sorting, field selection, and pagination."""
+    base_list = _search(q, group) if q else _species_list
     data = _filter_species(
-        _species_list, group=group,
+        base_list, group=group,
         has_image=has_image, has_description=has_description,
         description_source=description_source,
         min_observations=min_observations, max_observations=max_observations,
@@ -1057,7 +1115,7 @@ def _search(q: str, group: str = "") -> list[dict]:
     terms = q_norm.split()
 
     scored = []
-    for sci_lower, common_lower, search_text, rec in _search_index:
+    for sci_lower, common_lower, search_text, alias_norms, rec in _search_index:
         if group and rec.get("taxon_group", "").lower() != group.lower():
             continue
         if not all(t in search_text for t in terms):
@@ -1070,6 +1128,12 @@ def _search(q: str, group: str = "") -> list[dict]:
         # Exact match on common or scientific name
         if q_norm == common_lower or q_norm == sci_lower:
             score = 200
+        # Exact alias match
+        elif q_norm in alias_norms:
+            score = 190
+        # Alias starts with query (word boundary)
+        elif any(alias.startswith(q_norm + " ") for alias in alias_norms):
+            score = 150
         # Common name starts with query (word boundary)
         elif common_lower.startswith(q_norm + " "):
             score = 160
@@ -1154,11 +1218,16 @@ def main():
     parser = argparse.ArgumentParser(description="Species metadata web server")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host")
     parser.add_argument("--port", type=int, default=8000, help="Bind port")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of worker processes (incompatible with --reload)")
     parser.add_argument("--dev", action="store_true",
                         help="Load metadata from dev/ instead of dist/")
     parser.add_argument("--reload", action="store_true",
-                        help="Auto-reload on code changes")
+                        help="Auto-reload on code changes (single worker only)")
     args = parser.parse_args()
+
+    if args.reload and args.workers > 1:
+        parser.error("--reload and --workers > 1 are mutually exclusive")
 
     load_data(dev=args.dev)
     _init_image_config(dev=args.dev)
@@ -1167,6 +1236,7 @@ def main():
         host=args.host,
         port=args.port,
         reload=args.reload,
+        workers=args.workers if args.workers > 1 else None,
     )
 
 

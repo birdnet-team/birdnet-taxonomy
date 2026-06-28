@@ -27,20 +27,25 @@ serves the dataset (HTML UI, REST API, image proxy).
   Save progress periodically so long runs survive interruption.
 - **The build step is purely offline.** `build/metadata.py` must not make network
   calls. It only merges data already present in `raw_data/`.
-- **Species only.** The pipeline tracks binomial species, not genera, higher ranks,
-  subspecies, or hybrids. Use the shared binomial-name filter in
-  `collectors/_common.py`; do not reinvent name validation.
+- **Species only, with canonical names.** The pipeline tracks binomial species,
+  not genera, higher ranks, subspecies, or hybrids. Subspecies are folded into
+  their top-level species for now. Use the shared binomial-name filter in
+  `collectors/_common.py`; do not reinvent name validation. Final scientific and
+  common names must be canonical display names only: no parenthetical qualifiers,
+  bracketed notes, slashes, symbols, or informal annotations. Regular spaces,
+  apostrophes, and dashes/hyphens are fine when they are part of the accepted
+  name.
 
 ## Pipeline order
 
 Collectors depend on earlier output, so order matters:
 
 1. AviList → 2. iNaturalist → 3. eBird → 4. Wikidata → 5. Wikipedia →
-6. Macaulay Library → 7. Xeno-Canto → 8. observation.org → 9. Claude (optional) →
+6. Macaulay Library → 7. Xeno-Canto → 8. observation.org → 9. LLM Translation (optional) →
 10. Images (optional) → 11. Build
 
-Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 fills description
-gaps with Claude; 10 generates images; 11 merges everything.
+Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 optionally fills
+description gaps via LLM (Gemini/OpenAI/Anthropic); 10 generates images; 11 merges everything.
 
 ## Taxon groups
 
@@ -56,10 +61,12 @@ gaps with Claude; 10 generates images; 11 merges everything.
 
 ## Identifiers and stability
 
-- Each species has a permanent **BirdNET ID** in the form `BN{5 digits}`, stored in
-  the git-tracked `bn_ids.json` registry. IDs are assigned once and **never
-  reassigned** — removed species keep their ID reserved. Only regenerate the registry
-  with an explicit `--reassign-ids` (pre-release only); never do this casually.
+- Each species has a **BirdNET ID** in the form `BN{5 digits}`, stored in the
+  git-tracked `bn_ids.json` registry. Before the 1.0 release, BirdNET IDs may be
+  reassigned as an intentional breaking change when taxonomy cleanup requires it.
+  Reassignment must be explicit (`--reassign-ids`), documented in the same
+  change, and never done accidentally. After 1.0, treat IDs as permanent unless
+  project maintainers explicitly change that policy.
 
 ## Manual overrides
 
@@ -91,8 +98,9 @@ gaps with Claude; 10 generates images; 11 merges everything.
 
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`
   and `overrides/species_overrides.csv` are git-tracked and meaningful.
-- Secrets (`ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.) live in `.env`, never in
-  `config.yml` or source.
+- Secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.)
+  live in `.env`, never in `config.yml` or source.
+  `utils/llm.py` auto-detects which LLM key is present and uses it.
 
 ## Documentation rule
 

@@ -11,7 +11,11 @@
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-ff2d55"></a>
 </p>
 
-Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, and amphibians. All configuration (locales, taxon groups, API settings) lives in `config.yml`.
+Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, amphibians, and configured non-species sound classes. All configuration (locales, taxon groups, sound classes, API settings) lives in `config.yml`.
+
+Current working taxonomy version: `v0.2-Jun2026`.
+
+**Important note: While still in development (i.e., all releases prior to 1.0), species IDs may change. We will freeze species IDs upon official release.**
 
 ## Table of Contents
 
@@ -19,6 +23,7 @@ Pipeline for collecting and merging species metadata from multiple sources. Cove
 - [Contributing](#contributing)
 - [Project Structure](#project-structure)
 - [Taxon Groups](#taxon-groups)
+- [Taxonomy Rules](#taxonomy-rules)
 - [Pipeline](#pipeline)
 - [Step 1 - AviList](#step-1--avilist)
 - [Step 2 - iNaturalist](#step-2--inaturalist)
@@ -28,9 +33,10 @@ Pipeline for collecting and merging species metadata from multiple sources. Cove
 - [Step 6 - Macaulay Library](#step-6--macaulay-library)
 - [Step 7 - Xeno-Canto](#step-7--xeno-canto)
 - [Step 8 - observation.org](#step-8--observationorg)
-- [Step 9 - Claude](#step-9--claude)
-- [Step 10 - Images](#step-10--images)
-- [Step 11 - Build](#step-11--build)
+- [Step 9 - Sound Classes](#step-9--sound-classes)
+- [Step 10 - LLM Translation](#step-10--llm-translation)
+- [Step 11 - Images](#step-11--images)
+- [Step 12 - Build](#step-12--build)
 - [Web Server](#web-server)
 - [Data Sources](#data-sources)
 - [License](#license)
@@ -47,10 +53,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-For Claude translations and Xeno-Canto lookups, add API keys to a `.env` file:
+For LLM-based translations, Xeno-Canto lookups, and optional public
+translation-service keys, add API keys to a `.env` file:
 
 ```
+# LLM translation (Step 10) — add whichever you have; Gemini is preferred
+GEMINI_API_KEY=...
+OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
+# Xeno-Canto (Step 7)
 XC_API_KEY=...
 ```
 
@@ -93,7 +104,7 @@ Current manual override support covers image replacement and manual crop anchori
 
 ```
 config.py                  # Configuration helpers for config.yml access
-config.yml                 # Project settings: taxonomy version, groups, filters, API params
+config.yml                 # Project settings: taxonomy version, groups, sound classes, filters, API params
 requirements.txt           # Python dependencies
 bn_ids.json                # Persistent BirdNET species ID registry (git-tracked)
 build/
@@ -101,7 +112,7 @@ build/
 collectors/
     _common.py             # Shared collector utilities (cache, JSON I/O, shutdown)
     avilist.py             # Download and normalize AviList taxonomy input
-    claude.py              # Claude enrichment for shortened/translated descriptions
+    translate.py           # Optional LLM translation: shorten/translate Wikipedia extracts
     ebird.py               # eBird names and localized common-name collection
     images.py              # Batch image generation for dev/dist outputs
     inat.py                # iNaturalist taxa, sounds, and observation-photo fallback
@@ -110,12 +121,20 @@ collectors/
     wikipedia.py           # Wikipedia summaries, langlinks, and image metadata
     xenocanto.py           # Xeno-Canto scientific name mapping
     observationorg.py      # observation.org species ID mapping
+    sound_classes.py       # Configured anthropogenic/geophony sound classes
 dev/                       # Development metadata snapshots and local build artifacts
 dist/                      # Published metadata and generated site image assets
 overrides/
+    priority_species.csv  # Git-tracked reviewed taxonomy additions
+    species_aliases.csv   # Git-tracked manual scientific-name aliases
     species_overrides.csv  # Git-tracked manual image and crop overrides
 raw_data/                  # Cached upstream source payloads and intermediate collector output
 utils/
+    audit_descriptions.py  # Focused description coverage report
+    audit_metadata.py      # Release-readiness metadata audit
+    description_quality.py # Shared description length/identity helpers
+    llm.py                 # Unified LLM caller: Gemini / OpenAI / Anthropic from .env
+    translate.py           # Public-service translation gap filler (MyMemory/LibreTranslate)
     images.py              # Image download, crop, cache-state, and WebP helpers
 web/
     server.py              # FastAPI app serving HTML, REST API, and image endpoints
@@ -131,9 +150,36 @@ Configured in `config.yml`. Birds include all species; other groups are limited 
 |-------|---------------|------|------------------------|
 | Aves | 3 | All species | — |
 | Mammalia | 40151 | Sounds only | 1 |
-| Insecta | 47158 | Sounds only | 5 |
-| Reptilia | 26036 | Sounds only | 5 |
-| Amphibia | 20978 | Sounds only | 5 |
+| Insecta | 47158 | Sounds only | 1 |
+| Reptilia | 26036 | Sounds only | 1 |
+| Amphibia | 20978 | Sounds only | 1 |
+
+Mammals can define nested sub-taxa for focused coverage. The current v0.2
+configuration includes `Chiroptera` (iNat taxon ID `40268`) under `Mammalia`
+to include bat species with at least one sound observation, plus species with
+at least 100 total iNaturalist observations.
+
+## Taxonomy Rules
+
+The biological taxonomy is species-level only. Scientific names must be clean
+binomial species names: no genera-only rows, higher ranks, subspecies,
+trinomials, hybrids, parenthetical qualifiers, slash alternatives, or informal
+annotations. Subspecies encountered in source data are folded into their parent
+binomial species for now.
+
+Common names are also treated as display names. Parenthetical qualifiers,
+bracketed notes, slash alternatives, and informal symbols are rejected in final
+metadata. Regular spaces, apostrophes, and dashes/hyphens are allowed when they
+are part of the accepted name.
+
+Bird taxonomy and English bird names come from AviList. Non-bird groups are
+included through configured iNaturalist coverage rules and reviewed priority
+species additions.
+
+Configured non-species sound classes live under `sound_classes` in
+`config.yml`. These records use their English display name as
+`scientific_name`, carry `record_type: sound_class`, and are grouped separately
+from biological taxa, for example `Anthropogenic` and `Geophony`.
 
 ## Pipeline
 
@@ -149,11 +195,12 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 6. Macaulay Library | `python -m collectors.macaulay` | `raw_data/macaulay_data.json` |
 | 7. Xeno-Canto | `python -m collectors.xenocanto` | `raw_data/xc_data.json` |
 | 8. observation.org | `python -m collectors.observationorg` | `raw_data/observationorg_data.json` |
-| 9. Claude (optional) | `python -m collectors.claude` | `raw_data/claude_data.json` |
-| 10. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
-| 11. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
+| 9. Sound Classes | `python -m collectors.sound_classes` | `raw_data/sound_classes.json` |
+| 10. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
+| 11. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
+| 12. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 uses Claude to shorten excessively long extracts and translate missing locales. Step 10 downloads species images. Step 11 merges everything into the final output — no API calls, purely offline.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 10 is optional LLM-based translation and description shortening, disabled by default. Step 11 downloads images. Step 12 merges everything into the final output — no API calls, purely offline.
 
 ### Step 1 — AviList
 
@@ -167,12 +214,15 @@ Downloads the AviList Global Avian Checklist (XLSX), converts to CSV. Provides a
 
 Paginates the iNat taxa API to fetch all species for each taxon group. For birds, fetches all species. For other groups, queries the iNat sounds API to find species with audio observations meeting the `min_observations` threshold. Collects taxonomy, common names (all locales when `all_names: true`), observation counts, default photos, and Wikipedia URLs.
 
+Reviewed issue-specific additions can be listed in `overrides/priority_species.csv`. These species are fetched after configured groups, preferably by iNaturalist taxon ID, and keep the normal species-only validation rules.
+
 After group fetching, runs an **observation photo fallback** phase: for any species whose default taxon photo is missing or not CC-licensed, queries the iNat observations API for a CC-licensed photo from a research-grade observation (sorted by community votes). The result is stored in the `obs_photo` field, and unsuccessful lookups are cached in `inat_data.json` so later runs do not repeat the same slow checks.
 
 | Flag | Description |
 |------|-------------|
 | `--group NAME` | Fetch only this taxon group |
 | `--limit N` | Cap new species per group (0 = all) |
+| `--new-only` | Only fetch new species; skip count/photo refresh work |
 | `--save-every N` | Save progress every N new species (default: from config.yml) |
 | `--refresh` | Bypass cached Phase 1 data and re-fetch from API |
 | `--obs-photos-only` | Only run observation photo fallback |
@@ -180,6 +230,8 @@ After group fetching, runs an **observation photo fallback** phase: for any spec
 | `--refresh-obs-photos` | Recheck species cached as having no obs photo |
 | `--avilist-only` | Only run AviList reconciliation |
 | `--skip-avilist` | Skip AviList reconciliation phase |
+| `--priority-only` | Only run reviewed priority species |
+| `--skip-priority` | Skip reviewed priority species |
 | `--dry-run` | Preview without fetching |
 
 ### Step 3 — eBird
@@ -203,13 +255,16 @@ Collects eBird species data in two phases:
 Fetches species identifiers, common name labels, and images from Wikidata and Wikimedia Commons via SPARQL queries.
 
 - **Phase 1 — eBird codes:** Resolves eBird species codes (P3444) for species not yet matched via AviList, using scientific name (P225) and iNat taxon ID (P3151) as lookup keys.
-- **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2426), BirdLife (P5257).
+- **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257). Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases.
 - **Phase 3 — Labels:** Fetches `rdfs:label` common names in all available languages.
 - **Phase 4 — Images:** Fetches Wikidata P18 images and checks Wikimedia Commons licenses (CC, PD, GFDL).
 
 | Flag | Description |
 |------|-------------|
 | `--new-only` | Only species not yet in wikidata_data.json |
+| `--ids-only` | Only query external identifiers; skip labels and images |
+| `--refresh-identifiers` | Replace existing GBIF/NCBI/Avibase/BirdLife IDs with fresh Wikidata values |
+| `--limit N` | Cap species queried in this run (0 = all) |
 | `--no-cache` | Bypass request cache |
 | `--dry-run` | Show species count without querying |
 
@@ -221,8 +276,29 @@ Fetches multilingual Wikipedia data in four phases:
 - **Phase 1b — Extract backfill:** Scans existing data for species that have an English Wikipedia URL but are missing the English extract (can happen due to API glitches during bulk fetching). Re-fetches just the extracts for those species with redirect resolution.
 - **Phase 2 — Locale extracts:** For each target language (20 configured locales), batch-fetches intro extracts from the corresponding Wikipedia. Runs locales concurrently with a thread pool. Skips species that already have extracts for a given locale.
 - **Phase 3 — Image licenses:** Batch-fetches license metadata (artist, license, license URL) from Wikimedia Commons for all page images found in Phase 1.
+- **Quality refetch — description depth:** Optional `--quality-refetch` pass for missing or too-short extracts in all configured Wikipedia locales. It fetches richer plain-text article content from the matching language wiki, validates that the article title/text contains the canonical scientific name or a clean alias, stores per-locale retry/status metadata, and avoids retrying indefinitely. The selector can keep multiple early paragraphs through `descriptions.wikipedia_min_paragraphs`. Use `--quality-locales en` to restrict this to the English release gate.
 
 Rate-limited (default 25 rps), with exponential backoff on 429s and server errors. All phases save incrementally.
+Description quality thresholds such as minimum English word count, target
+length, extra early sections, and minimum retained paragraphs are configured
+under `descriptions` in `config.yml`.
+
+Missing locale excerpts can be filled from English Wikipedia excerpts with an
+optional public translation-service utility:
+
+```bash
+python -m utils.translate --dry-run
+python -m utils.translate --locales de,es,fr,cs,it,pt --limit 100
+```
+
+The utility is incremental and only fills blank locale excerpts when English
+Wikipedia text exists. It stores per-locale provenance in `extract_sources`,
+for example `Source: Wikipedia, translated by LibreTranslate`, which the build
+carries through to `description_sources`. Service endpoint, rate limit, and
+default target locales live under `translation` in `config.yml`. By default it
+only fills German, Spanish, French, Czech (`cs`), Italian, and Portuguese. If
+the selected service needs a key, set the configured `LIBRETRANSLATE_API_KEY`
+environment variable.
 
 **Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, ar, ja, ko, tr, sw
 
@@ -232,6 +308,9 @@ Rate-limited (default 25 rps), with exponential backoff on 429s and server error
 | `--rps N` | Max requests per second (default: 25) |
 | `--new-only` | Only species not yet in wikipedia_data.json |
 | `--refetch` | Re-fetch species with few locale extracts (conflicts with `--new-only`) |
+| `--quality-refetch` | Re-fetch missing/short extracts using richer article text |
+| `--quality-locales LIST` | `all` configured locales, or comma-separated locales such as `en,de,fr` |
+| `--quality-max-attempts N` | Skip quality refetch after N attempts per species |
 | `--dry-run` | Preview without fetching |
 
 ### Step 6 — Macaulay Library
@@ -242,7 +321,7 @@ Resolution cascade:
 1. **eBird code** — reuses existing eBird species code for birds (instant, no API call)
 2. **ML taxonomy API** — queries by scientific name for non-birds
 3. **Wikidata P10794** — bulk SPARQL lookup of Macaulay Library taxon IDs
-4. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the ML API
+4. **Alias synonym fallback** — tries reviewed aliases from `overrides/species_aliases.csv`, then GBIF synonyms, and retries the ML API
 
 | Flag | Description |
 |------|-------------|
@@ -259,7 +338,7 @@ Resolution cascade:
 1. **Wikidata P2426** — bulk SPARQL fetch of XC species IDs (~31k species pre-mapped)
 2. **XC API direct** — queries by genus + epithet
 3. **XC API epithet search** — epithet-only search with group filter (catches genus transfers)
-4. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the XC API
+4. **Alias synonym fallback** — tries reviewed aliases from `overrides/species_aliases.csv`, then GBIF synonyms, and retries the XC API
 5. **XC English name search** — last resort, matches by common name
 
 | Flag | Description |
@@ -267,6 +346,7 @@ Resolution cascade:
 | `--limit N` | Cap new species to process (0 = all) |
 | `--group NAME` | Process only this taxon group |
 | `--new-only` | Only species not yet in xc_data.json |
+| `--retry-unresolved` | Retry species cached with no XC mapping |
 | `--dry-run` | Preview without API calls |
 
 ### Step 8 — observation.org
@@ -275,7 +355,7 @@ Maps each species to its [observation.org](https://observation.org) species ID, 
 
 Resolution cascade:
 1. **Direct API search** — queries `/api/v1/species/search/` by scientific name
-2. **GBIF synonym fallback** — resolves alternate names via GBIF, then retries the API
+2. **Alias synonym fallback** — tries reviewed aliases from `overrides/species_aliases.csv`, then GBIF synonyms, and retries the API
 
 | Flag | Description |
 |------|-------------|
@@ -284,34 +364,73 @@ Resolution cascade:
 | `--workers N` | Parallel workers (default: from config.yml) |
 | `--save-every N` | Save every N completed species (default: from config.yml) |
 | `--new-only` | Only species not yet in observationorg_data.json |
+| `--retry-unresolved` | Retry species cached with no observation.org ID |
 | `--dry-run` | Preview without API calls |
 
-### Step 9 — Claude
+### Step 9 — Sound Classes
 
-Uses the Claude API (Sonnet 4) for two tasks on existing Wikipedia extracts — no content is generated from scratch:
+Collects configured non-species sound classes from `config.yml`. Each entry uses
+its English common name as the final `scientific_name`, fetches localized labels
+from Wikidata, and uses a licensed Wikimedia Commons image when available.
+Set `image_file` to a Commons filename to override the Wikidata P18 image for a
+specific class. Use `overrides/species_overrides.csv` for fixed crop anchors.
+Current classes include anthropogenic sounds such as power tools, siren, gun,
+chainsaw, engine, and human, plus geophony classes such as rain, thunder, and
+wind. `Human` includes common-name aliases for `human vocal` and
+`human non-vocal` so those searches resolve to the canonical `Human` entry.
 
-- **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks Claude to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
-- **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for Claude's target locales. Sends the English text to Claude for translation into all missing locales at once.
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap new sound classes to process (0 = all) |
+| `--new-only` | Only process sound classes not already cached |
+| `--dry-run` | Preview without fetching |
 
-Claude's output is stored separately in `claude_data.json` and overlaid on top of Wikipedia extracts during the build step. Claude only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
+### Step 10 — LLM Translation
 
-Translation batches are grouped by the exact set of missing locales for each species, then packed by source-text size. This keeps prompts smaller and makes parallel API calls practical on large repair runs.
+Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia extracts — no content is generated from scratch:
 
-**Claude locales:** en, de, fr, es, pt, it, nl, zh, ru, ar (subset of Wikipedia locales)
+- **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks the LLM to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
+- **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for the configured target locales. Sends the English text for translation into all missing locales at once.
+- **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English fallback descriptions only from traceable non-English Wikipedia extracts. Fallback locales are marked as `llm_fallback` in build output and never replace existing Wikipedia/eBird English text.
+
+LLM output is stored in `translate_data.json` and overlaid on Wikipedia extracts during the build step. The LLM only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
+
+**Provider selection:** the provider is auto-detected from whichever key is present in `.env`, with priority `GEMINI_API_KEY` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`. Add the relevant key(s) to `.env`:
+
+```
+GEMINI_API_KEY=...        # gemini-2.0-flash (default for Gemini)
+OPENAI_API_KEY=...        # gpt-4o-mini (default for OpenAI)
+ANTHROPIC_API_KEY=...     # claude-haiku-4-5-20251001 (default for Anthropic)
+```
+
+Override the provider or model per run:
+
+```bash
+python -m collectors.translate --provider gemini
+python -m collectors.translate --provider openai --model gpt-4o
+```
+
+**Target locales:** en, de, fr, es, pt, it, nl, zh, ru, ar (subset of Wikipedia locales, configurable under `llm.locales` in `config.yml`)
+
+This step is disabled by default (`llm.enabled: false`). Enable it in `config.yml` to include LLM descriptions in the build output.
 
 | Flag | Description |
 |------|-------------|
 | `--limit N` | Cap total work items (0 = all) |
+| `--provider NAME` | `gemini`, `openai`, or `anthropic` (auto-detected from `.env`) |
+| `--model NAME` | Override the provider default model |
 | `--batch-size N` | Species per API call (default: 12) |
 | `--workers N` | Parallel translation workers (default: 4) |
 | `--char-budget N` | Source-character budget per API call (default: 12000) |
-| `--max-source-chars N` | Max source chars per species sent to Claude |
+| `--max-source-chars N` | Max source chars per species sent to LLM |
 | `--save-every N` | Save every N completed batches |
 | `--shorten-only` | Only shorten long extracts |
 | `--translate-only` | Only translate missing locales |
+| `--fallback-missing` | Generate English fallbacks from non-English Wikipedia source extracts |
+| `--fallback-only` | Only generate English fallbacks |
 | `--dry-run` | Preview without API calls |
 
-### Step 10 — Images
+### Step 11 — Images
 
 Batch-downloads species images as WebP files with content-aware smart cropping. Each species gets two sizes stored in subdirectories:
 
@@ -341,12 +460,12 @@ The collector also prunes obsolete cached `.webp` files and stale `.state` metad
 | `--new-only` | Only species with no cached image files yet |
 | `--dry-run` | Preview without downloading |
 
-### Step 11 — Build
+### Step 12 — Build
 
 Merges all pre-collected data into the final metadata file. Runs purely offline — no API calls. Two phases:
 
 **Taxonomy phase:**
-1. Cross-references iNaturalist, AviList, and Wikidata to build a canonical species list
+1. Cross-references iNaturalist, AviList, Wikidata, and configured sound classes to build a canonical entry list
 2. Resolves eBird codes from AviList and pre-collected Wikidata data
 3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife)
 4. Collects common names from eBird (62 locales) and Wikidata labels
@@ -359,12 +478,28 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 **Merge phase:**
 Assembles per-species descriptions from multiple sources with the following priority:
 - **Base layer — Wikipedia:** English extract plus all locale extracts and Wikipedia URLs
-- **Fallback — eBird:** English description only, used when no Wikipedia article exists
-- **Claude overlay:** For each locale Claude provides, replaces the description for that locale. Claude locales are tracked in the `claude_locales` field
+- **Fallback — eBird:** English description only, used when Wikipedia has no English extract
+- **LLM overlay:** Disabled by default. When `llm.enabled: true`, each locale the LLM provides replaces the description for that locale. LLM locales are tracked in the `translate_locales` field
 
-The effective priority is **Claude > Wikipedia > eBird**, applied per-locale.
+The effective priority is **LLM > Wikipedia > eBird**, applied per-locale,
+when LLM translation is enabled. Default builds use only Wikipedia and eBird
+descriptions.
+The JSON output also includes `description_sources`, a per-locale source map,
+and `scientific_name_aliases`, a list of clean binomial scientific names that
+resolve to the canonical species. Non-species sound classes use
+`record_type: sound_class`; their `scientific_name_aliases` and
+`common_name_aliases` are both search fallbacks rather than biological names.
+Reviewed manual scientific-name bridges live in `overrides/species_aliases.csv`.
+The build also filters source-derived aliases that collide with another
+canonical species and fails if any alias conflict remains.
 
-The JSON output contains full multilingual descriptions. The CSV output is a lighter export and does not include description excerpts.
+The build also computes `metadata_quality_score` and
+`metadata_quality_flags` before BirdNET IDs are assigned. When
+`metadata_quality.enabled` is true, species below `metadata_quality.min_score`
+or matching the configured thin-record rule are dropped and listed in the
+configured report CSV, defaulting to `dev/metadata_quality_report.csv`.
+
+The JSON output contains full multilingual descriptions. The CSV output is a lighter export and does not include description excerpts; scientific aliases and metadata quality flags are exported as pipe-separated fields.
 
 Image fields in the final metadata:
 
@@ -372,7 +507,7 @@ Image fields in the final metadata:
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 
 **BirdNET species IDs:**
-Each species receives a permanent BirdNET ID in the format `BN{5 digits}` (e.g. `BN00498`). IDs are assigned once during the first build and stored in the git-tracked `bn_ids.json` registry. New species receive the next available number; removed species keep their ID reserved and it is never reassigned. This ensures stable, machine-readable identifiers that never change regardless of taxonomic renames or reordering.
+Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00498`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
 
 | Flag | Description |
 |------|-------------|
@@ -380,7 +515,25 @@ Each species receives a permanent BirdNET ID in the format `BN{5 digits}` (e.g. 
 | `--merge-only` | Skip taxonomy rebuild, re-merge only |
 | `--no-zip` | Skip zip archive creation |
 | `--reassign-ids` | Regenerate all BirdNET IDs from scratch (pre-release only) |
+| `--strict-validation` | Fail if release-gate metadata audit findings remain |
 | `--dry-run` | Show stats without writing |
+
+Focused description coverage can be audited with:
+
+```bash
+python -m utils.audit_descriptions dist/species_metadata.json --output dev/description_audit.csv
+```
+
+By default this report includes short excerpts in every available locale plus
+English release-gate gaps. Add `--english-only` to report only the English gate.
+Prefer Wikipedia quality refetches before optional LLM fallback:
+
+```bash
+python -m collectors.wikipedia --quality-refetch
+```
+
+LLM translation is disabled by default and should only be enabled deliberately
+for a release that accepts generated description text.
 
 The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
 
@@ -405,6 +558,8 @@ uvicorn web.server:app --reload
 - Scientific name (e.g., `Turdus merula`)
 - Common name in any locale (e.g., `Amsel`, `Merle noir`)
 - BirdNET ID (e.g., `BN10600`)
+- Scientific alias from `scientific_name_aliases`
+- Common-name alias from `common_name_aliases`
 - eBird species code (e.g., `eurblk1`)
 - iNaturalist taxon ID (e.g., `12727`)
 
@@ -438,7 +593,7 @@ All list/search endpoints (`/api/species`, `/api/search`) support these paramete
 | `group` | `?group=Aves` | Filter by taxon group |
 | `has_image` | `?has_image=true` | Filter species with/without images |
 | `has_description` | `?has_description=true` | Filter species with/without English description |
-| `description_source` | `?description_source=claude,wikipedia` | Filter by description source |
+| `description_source` | `?description_source=llm,wikipedia` | Filter by description source |
 | `min_observations` | `?min_observations=10000` | Minimum iNaturalist observation count |
 | `max_observations` | `?max_observations=50000` | Maximum iNaturalist observation count |
 | `format` | `?format=csv` | Response format — `json` (default) or `csv` |
@@ -471,19 +626,19 @@ curl '/api/species/eurblk1'
 - **[iNaturalist](https://www.inaturalist.org)** — Taxonomy, common names, observation counts, and photos via the public API. Data licensed under various Creative Commons licenses by individual contributors.
 - **[eBird](https://ebird.org)** — Species descriptions, images, and common names (62 locales) from the Cornell Lab of Ornithology. Species codes from the eBird/Clements taxonomy.
 - **[Wikidata](https://www.wikidata.org)** — External identifiers (GBIF, NCBI, Avibase, BirdLife), eBird codes, common name labels, and P18 images via SPARQL. Data available under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
-- **[Wikipedia](https://www.wikipedia.org)** — English summaries and localized article links via the REST and MediaWiki APIs. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- **[Wikipedia](https://www.wikipedia.org)** — English summaries, localized article links, and optional public-service translations from English Wikipedia excerpts. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2025). AviList Core Team, 2025. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2025](https://doi.org/10.2173/avilist.v2025).
 - **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.
 - **[Xeno-Canto](https://xeno-canto.org)** — Scientific name mappings for cross-referencing the world's largest shared bird and wildlife sound collection.
 - **[observation.org](https://observation.org)** — Species IDs for cross-referencing to one of Europe's largest biodiversity recording platforms. Uses AviList taxonomy for birds.
-- **[Claude](https://www.anthropic.com/claude)** (Anthropic) — AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts.
+- **LLM providers** — Optional AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts. Supported: [Google Gemini](https://ai.google.dev/) (`GEMINI_API_KEY`), [OpenAI](https://openai.com/) (`OPENAI_API_KEY`), [Anthropic Claude](https://www.anthropic.com/claude) (`ANTHROPIC_API_KEY`). Provider is auto-detected from `.env`.
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Funding
 
-Our work in the K. Lisa Yang Center for Conservation Bioacoustics is made possible by the generosity of K. Lisa Yang to advance innovative conservation technologies to inspire and inform the conservation of wildlife and habitats.
+Our work in the Cornell K. Lisa Yang Center for Conservation Bioacoustics is made possible by the generosity of K. Lisa Yang to advance innovative conservation technologies to inspire and inform the conservation of wildlife and habitats.
 
 The development of BirdNET is supported by the German Federal Ministry of Research, Technology and Space (FKZ 01|S22072), the German Federal Ministry for the Environment, Climate Action, Nature Conservation and Nuclear Safety (FKZ 67KI31040E), the German Federal Ministry of Economic Affairs and Energy (FKZ 16KN095550), the Deutsche Bundesstiftung Umwelt (project 39263/01) and the European Social Fund.
 

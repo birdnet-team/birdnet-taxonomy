@@ -108,7 +108,7 @@
 <div class="species-grid">
     {% for s in species %}
     <div class="species-card">
-        <a href="{{ base }}/species/{{ quote_path(s.scientific_name) }}">
+        <a href="{{ base }}/species/{{ quote_path(s.scientific_name) }}{% if lang %}?lang={{ lang }}{% endif %}">
             {% set display_name = s.common_names.get(lang, s.common_name) if lang and s.common_names else s.common_name %}
             <img src="{{ base }}/api/image/{{ quote_path(s.scientific_name) }}?size=medium" alt="{{ display_name or s.scientific_name }}" loading="lazy">
             <div class="card-body">
@@ -160,6 +160,7 @@
 sessionStorage.setItem('browseUrl', location.href);
 (function() {
     const base = '{{ base }}';
+    const lang = '{{ lang }}';
     const input = document.querySelector('.search-wrap input[name="q"]');
     const list = document.getElementById('ac-list');
     let debounce = null, active = -1, items = [];
@@ -168,12 +169,16 @@ sessionStorage.setItem('browseUrl', location.href);
         return name.split('/').map(encodeURIComponent).join('/');
     }
 
+    function speciesUrl(sci) {
+        return `${base}/species/${encodePath(sci)}${lang ? '?lang=' + encodeURIComponent(lang) : ''}`;
+    }
+
     function render(results) {
         items = results;
         active = -1;
         if (!results.length) { list.classList.remove('open'); return; }
         list.innerHTML = results.map((r, i) =>
-            `<a class="ac-item" href="${base}/species/${encodePath(r.scientific_name)}" data-idx="${i}">
+            `<a class="ac-item" href="${speciesUrl(r.scientific_name)}" data-idx="${i}">
                 <img src="${base}/api/image/${encodePath(r.scientific_name)}?size=thumb" alt="" loading="lazy">
                 <div>
                     <div class="ac-common">${r.common_name || ''}</div>
@@ -189,7 +194,8 @@ sessionStorage.setItem('browseUrl', location.href);
         clearTimeout(debounce);
         if (q.length < 2) { list.classList.remove('open'); return; }
         debounce = setTimeout(() => {
-            fetch(`${base}/api/suggest?q=${encodeURIComponent(q)}`)
+            const url = `${base}/api/suggest?q=${encodeURIComponent(q)}${lang ? '&lang=' + encodeURIComponent(lang) : ''}`;
+            fetch(url)
                 .then(r => r.json()).then(render)
                 .catch(() => list.classList.remove('open'));
         }, 200);
@@ -212,6 +218,14 @@ sessionStorage.setItem('browseUrl', location.href);
 
     input.addEventListener('focus', function() {
         if (items.length && this.value.trim().length >= 2) list.classList.add('open');
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === '/' && document.activeElement !== input && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            input.focus();
+            input.select();
+        }
     });
 })();
 
@@ -239,7 +253,10 @@ sessionStorage.setItem('browseUrl', location.href);
         document.getElementById('search-form').submit();
     });
 
-    selects.forEach(s => s.addEventListener('change', updateDot));
+    selects.forEach(s => s.addEventListener('change', function() {
+        updateDot();
+        document.getElementById('search-form').submit();
+    }));
 })();
 </script>
 {% endblock %}
