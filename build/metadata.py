@@ -39,7 +39,7 @@ from collections import Counter
 from pathlib import Path
 
 from urllib.parse import quote
-from config import load_config, image_url_prefix
+from config import load_config, image_url_prefix, LOCALE_NAMES
 from collectors._common import (
     ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE,
     clean_aliases, is_clean_common_name, is_clean_scientific_name,
@@ -1079,7 +1079,9 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         if cl.get("fallback"):
             fallback_locales.update(cl_extracts)
         for loc, text in cl_extracts.items():
-            if text:
+            # Guard against malformed locale keys (e.g. an LLM echoing the
+            # literal "locale" placeholder from a prompt example).
+            if text and loc in LOCALE_NAMES:
                 descriptions[loc] = text
                 description_sources[loc] = (
                     "llm_fallback" if loc in fallback_locales else "llm"

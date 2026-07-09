@@ -343,6 +343,7 @@ avilist:
 #   openai:    gpt-4o-mini
 #   anthropic: claude-haiku-4-5-20251001
 llm:
+  enabled: true           # merge translate_data.json descriptions into the build
   provider: "auto"        # auto-detect from .env; or "gemini"/"openai"/"anthropic"
   model: ""               # leave empty to use provider default
   locales:

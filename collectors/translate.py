@@ -121,8 +121,9 @@ def shorten_extracts(
         "- Single flowing paragraph, no bullet points, no markdown\n"
         "- Do not start with the species name\n"
         "- Do not add information not present in the source\n\n"
-        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
-        '{"Scientific name": {"locale": "shortened text..."}, ...}'
+        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences.\n"
+        "Key each text by the SAME locale code shown in brackets in the input:\n"
+        '{"Scientific name": {"de": "shortened text..."}, ...}'
     )
     entries = [f"- {sci} [{loc}]: {text}" for sci, loc, text in items]
     user = (
@@ -139,7 +140,7 @@ def shorten_extracts(
     for sci, locales in parsed.items():
         if isinstance(locales, dict):
             for loc, text in locales.items():
-                if isinstance(text, str) and text.strip():
+                if loc in LOCALE_NAMES and isinstance(text, str) and text.strip():
                     out.setdefault(sci, {})[loc] = text.strip()
     return out
 
