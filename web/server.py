@@ -40,13 +40,15 @@ from config import (
     load_root_path, load_host_name,
 )
 
+_taxonomy_version = get_taxonomy_version()
+
 
 # ---------------------------------------------------------------------------
 # Pydantic response models (for OpenAPI schema + Swagger examples)
 # ---------------------------------------------------------------------------
 
 _SPECIES_EXAMPLE: dict[str, Any] = {
-    "taxonomy_version": "v2025-11Jun",
+    "taxonomy_version": _taxonomy_version,
     "birdnet_id": "BN00498",
     "scientific_name": "Anas platyrhynchos",
     "common_name": "Mallard",
@@ -94,7 +96,7 @@ _SPECIES_LIST_EXAMPLE: dict[str, Any] = {
 
 class SpeciesRecord(BaseModel):
     """Full species metadata record."""
-    taxonomy_version: Optional[str] = Field(None, examples=["v2025-11Jun"])
+    taxonomy_version: Optional[str] = Field(None, examples=[_taxonomy_version])
     birdnet_id: Optional[str] = Field(None, examples=["BN00498"])
     scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
     scientific_name_aliases: Optional[list[str]] = Field(
@@ -166,7 +168,7 @@ class SpeciesRecord(BaseModel):
 
 class PaginatedSpecies(BaseModel):
     """Paginated list of species records."""
-    taxonomy_version: str = Field(..., examples=["v2025-11Jun"])
+    taxonomy_version: str = Field(..., examples=[_taxonomy_version])
     total: int = Field(..., examples=[13361])
     page: int = Field(..., examples=[1])
     per_page: int = Field(..., examples=[50])
@@ -175,7 +177,7 @@ class PaginatedSpecies(BaseModel):
     model_config = {
         "json_schema_extra": {
             "examples": [{
-                "taxonomy_version": "v2025-11Jun",
+                "taxonomy_version": _taxonomy_version,
                 "total": 13361,
                 "page": 1,
                 "per_page": 2,
@@ -193,7 +195,7 @@ class SearchResponse(PaginatedSpecies):
         "json_schema_extra": {
             "examples": [{
                 "query": "mallard",
-                "taxonomy_version": "v2025-11Jun",
+                "taxonomy_version": _taxonomy_version,
                 "total": 1,
                 "page": 1,
                 "per_page": 50,
@@ -205,7 +207,7 @@ class SearchResponse(PaginatedSpecies):
 
 class StatsResponse(BaseModel):
     """Dataset statistics."""
-    taxonomy_version: str = Field(..., examples=["v2025-11Jun"])
+    taxonomy_version: str = Field(..., examples=[_taxonomy_version])
     total_species: int = Field(..., examples=[13361])
     groups: dict[str, int] = Field(..., examples=[{"Aves": 11157, "Mammalia": 1087, "Insecta": 566, "Amphibia": 540, "Reptilia": 11}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
@@ -241,7 +243,6 @@ def _quote_path(value: Any) -> str:
 
 _root_path = load_root_path()
 _host_name = load_host_name()
-_taxonomy_version = get_taxonomy_version()
 _site_title = "BirdNET+ Taxonomy"
 
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"

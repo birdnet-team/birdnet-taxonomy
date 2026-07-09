@@ -13,9 +13,11 @@
 
 Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, amphibians, and configured non-species sound classes. All configuration (locales, taxon groups, sound classes, API settings) lives in `config.yml`.
 
-Current working taxonomy version: `v0.2-Jun2026`.
+Current working taxonomy version: `v0.3-Jul2026`.
 
 **Important note: While still in development (i.e., all releases prior to 1.0), species IDs may change. We will freeze species IDs upon official release.**
+
+Download the most recent version here: https://birdnet.cornell.edu/taxonomy/download
 
 ## Table of Contents
 
@@ -154,7 +156,7 @@ Configured in `config.yml`. Birds include all species; other groups are limited 
 | Reptilia | 26036 | Sounds only | 1 |
 | Amphibia | 20978 | Sounds only | 1 |
 
-Mammals can define nested sub-taxa for focused coverage. The current v0.2
+Mammals can define nested sub-taxa for focused coverage. The current v0.3
 configuration includes `Chiroptera` (iNat taxon ID `40268`) under `Mammalia`
 to include bat species with at least one sound observation, plus species with
 at least 100 total iNaturalist observations.
