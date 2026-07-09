@@ -182,14 +182,22 @@ def load_avilist(cfg: dict) -> list[dict]:
     rows = []
     with open(csv_path, encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter=";")
+        # AviList versions the Clements column name (e.g. _v2024, _v2025);
+        # resolve it by prefix so a new release doesn't silently drop alt names.
+        clements_col = next(
+            (c for c in (reader.fieldnames or []) if c.startswith("English_name_Clements")),
+            "English_name_Clements_v2025",
+        )
         for row in reader:
             if row.get("Taxon_rank") != "species":
                 continue
             sci = (row.get("Scientific_name") or "").strip()
             code = (row.get("Species_code_Cornell_Lab") or "").strip()
-            en_clements = (row.get("English_name_Clements_v2024") or "").strip()
+            en_clements = (row.get(clements_col) or "").strip()
             en_avilist = (row.get("English_name_AviList") or "").strip()
-            if sci and code:
+            # Keep species even without an eBird code: AviList is the naming
+            # authority for birds; a missing code just means no eBird linkage.
+            if sci:
                 rows.append({
                     "scientific_name": sci,
                     "ebird_code": code,
@@ -453,7 +461,10 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
         if is_bird:
             avi_row = avi_by_sci.get(sci_name)
             if avi_row:
-                ebird_code = avi_row["ebird_code"]
+                # AviList lacks a code for a few species; fall back to Wikidata
+                # so we keep eBird linkage (locale names, descriptions).
+                ebird_code = (avi_row["ebird_code"]
+                              or wikidata.get(sci_name, {}).get("ebird_code", ""))
                 match_source = "direct"
                 matched_sci.add(avi_row["scientific_name"])
                 stats["direct"] += 1
@@ -541,6 +552,8 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
         en = row["common_name_avilist"] or row["common_name_clements"] or ""
         clements_en = row["common_name_clements"] or ""
         alt_en = clements_en if clements_en and clements_en != en else ""
+        ebird_code = (row["ebird_code"]
+                      or wikidata.get(sci, {}).get("ebird_code", ""))
         taxonomy[sci] = {
             "inat_id": None,
             "taxon_group": "Aves",
@@ -549,7 +562,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             "common_name_alt": alt_en,
             "common_names": {"en": en} if en else {},
             "observations_count": 0,
-            "ebird_code": row["ebird_code"],
+            "ebird_code": ebird_code,
             "gbif_id": "",
             "ncbi_id": "",
             "avibase_id": "",

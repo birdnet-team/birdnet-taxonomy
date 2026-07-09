@@ -5,7 +5,7 @@ Download and convert the AviList checklist.
 Downloads the AviList XLSX from the official URL (configured in config.yml)
 and converts it to CSV for use by the rest of the pipeline.
 
-Output: raw_data/AviList-v2025-11Jun-extended.csv
+Output: the CSV named by avilist.csv_file in config.yml (under raw_data/)
 
 Usage:
     python -m collectors.avilist [--force]

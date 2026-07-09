@@ -4,7 +4,7 @@
 # locales, taxon groups, API settings, etc.
 
 taxonomy:
-  version: "v0.2-Jun2026"
+  version: "v0.3-Jul2026"
 
 # iNaturalist iconic taxon groups to fetch.
 # sounds_only: if true, only fetch species with sound observations on iNat.
@@ -330,8 +330,8 @@ metadata_quality:
 
 # AviList checklist download
 avilist:
-  url: "https://www.avilist.org/wp-content/uploads/2025/06/AviList-v2025-11Jun-extended.xlsx"
-  csv_file: "AviList-v2025-11Jun-extended.csv"   # converted from xlsx
+  url: "https://www.avilist.org/wp-content/uploads/2026/06/AviList-v2025b-10Jun2026-extended.xlsx" 
+  csv_file: "AviList-v2025b-10Jun2026-extended.csv"   # converted from xlsx
 
 # LLM translation settings (API key is in .env, not here)
 # Supports Gemini, OpenAI, and Anthropic — provider auto-detected from .env.
@@ -352,6 +352,9 @@ llm:
     - es         # Spanish
     - cs         # Czech
     - pt         # Portuguese
+    - ru         # Russian
+    - pl         # Polish
+    - nl         # Dutch
   batch_size: 12          # max species per API call (char budget may reduce this)
   translate_workers: 4    # parallel translation workers
   save_every: 10          # save raw_data/translate_data.json every N completed batches

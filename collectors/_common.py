@@ -150,6 +150,12 @@ def load_avilist_species(csv_path: Path) -> dict[str, dict]:
         return species
     with open(csv_path, encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter=";")
+        # AviList versions the Clements column name (e.g. _v2024, _v2025);
+        # resolve it by prefix so a new release doesn't silently drop names.
+        clements_col = next(
+            (c for c in (reader.fieldnames or []) if c.startswith("English_name_Clements")),
+            "English_name_Clements_v2025",
+        )
         for row in reader:
             if row.get("Taxon_rank") != "species":
                 continue
@@ -161,7 +167,7 @@ def load_avilist_species(csv_path: Path) -> dict[str, dict]:
                 "inat_id": None,
                 "preferred_common_name": (
                     row.get("English_name_AviList")
-                    or row.get("English_name_Clements_v2024")
+                    or row.get(clements_col)
                     or ""
                 ).strip(),
                 "ebird_code": (row.get("Species_code_Cornell_Lab") or "").strip(),
