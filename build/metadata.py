@@ -1742,9 +1742,16 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                     and not names_other_species(text, identity_names, canonical_set)):
                 descriptions[loc] = text
                 description_sources[loc] = wp_extract_sources.get(loc) or "wikipedia"
+        # Links follow the texts: a locale whose article text was rejected
+        # (disambiguation page, sister species) links to the wrong article.
+        rejected = {
+            loc for loc, text in {**wp_extracts, "en": wp_en}.items()
+            if text and loc not in descriptions
+        }
         for loc, url in wp.get("wikipedia_urls", {}).items():
-            if url:
-                wikipedia_urls[loc] = url
+            if url and loc not in rejected:
+                # Wikipedia's canonical form writes spaces as underscores.
+                wikipedia_urls[loc] = url.replace("%20", "_").replace(" ", "_")
 
         if (not descriptions.get("en") and eb.get("description")
                 and not EBIRD_BOILERPLATE.match(eb["description"])):
