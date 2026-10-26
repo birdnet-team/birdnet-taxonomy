@@ -286,6 +286,8 @@ Fetches species identifiers, common name labels, and images from Wikidata and Wi
 
 - **Phase 1 — eBird codes:** Resolves eBird species codes (P3444) for species not yet matched via AviList, using scientific name (P225) and iNat taxon ID (P3151) as lookup keys.
 - **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257). Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases. A species' own name wins over an alias, aliases shared by several species are skipped, and `id_sources` records which Wikidata taxon name supplied each ID so the build can reject IDs reached through an untrusted alias.
+- **Phase 2c — Wikipedia sitelinks:** Records each species' Wikipedia article titles in the configured `wikipedia.locales` (`wikipedia_sitelinks`), so the Wikipedia collector can fetch articles iNat does not link.
+- **Phase 2d — GBIF backbone match:** For species Wikidata has no GBIF ID for, queries the GBIF species match API (exact, species rank). An accepted match is the species' own ID; a synonym match records GBIF's accepted name in `id_sources`, so the build keeps it only when that name is a trusted alias. Misses are remembered (`gbif_match_checked`).
 - **Phase 3 — Labels:** Fetches `rdfs:label` common names in all available languages.
 - **Phase 4 — Images:** Fetches Wikidata P18 images and checks Wikimedia Commons licenses (CC, PD, GFDL).
 
@@ -302,7 +304,8 @@ Fetches species identifiers, common name labels, and images from Wikidata and Wi
 
 Fetches multilingual Wikipedia data in four phases:
 
-- **Phase 1 — English Wikipedia:** Batch-fetches extracts, langlinks, page images, and Wikidata descriptions for each species' Wikipedia article. Up to 50 titles per request. Includes a search fallback for titles not found in batch results.
+- **Phase 1 — English Wikipedia:** Batch-fetches extracts, langlinks, page images, and Wikidata descriptions for each species' Wikipedia article — the article iNat links, or for species iNat links none, the English article from Wikidata sitelinks. Up to 50 titles per request. Includes a search fallback for titles not found in batch results.
+- **Non-English-only articles:** Species without any English article but with articles in other configured locales (Wikidata sitelinks) get those intro extracts directly (identity-checked against the scientific name; disambiguation pages skipped).
 - **Phase 1b — Extract backfill:** Scans existing data for species that have an English Wikipedia URL but are missing the English extract (can happen due to API glitches during bulk fetching). Re-fetches just the extracts for those species with redirect resolution.
 - **Phase 2 — Locale extracts:** For each target language (20 configured locales), batch-fetches intro extracts from the corresponding Wikipedia. Runs locales concurrently with a thread pool. Skips species that already have extracts for a given locale.
 - **Phase 3 — Image licenses:** Batch-fetches license metadata (artist, license, license URL) from Wikimedia Commons for all page images found in Phase 1.
@@ -544,7 +547,7 @@ Image fields in the final metadata:
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 
 **BirdNET species IDs:**
-Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00724`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
+Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00726`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
 
 Downstream consumers should not use `birdnet_id` as a join key across pre-1.0 taxonomy versions; match on `scientific_name`, `scientific_name_aliases`, or an external identifier instead. IDs were last reassigned for the AviList v2026 / taxonomy-cleanup build (retired iNat taxa removed, AviList lumps folded, extinct birds excluded).
 

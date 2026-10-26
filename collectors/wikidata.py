@@ -320,6 +320,33 @@ def _is_commons_license_ok(license_short: str) -> bool:
     return any(x in low for x in ("cc", "public domain", "pd", "gfdl"))
 
 
+def query_sitelinks(species_names: list[str], locales: list[str]) -> dict[str, dict[str, str]]:
+    """Wikipedia article titles per locale for each species (Wikidata sitelinks).
+
+    iNat links only one English article and none for many species; Wikidata
+    knows articles iNat doesn't, including non-English-only ones.
+    """
+    if not species_names or not locales:
+        return {}
+    sites = " ".join(f"<https://{loc}.wikipedia.org/>" for loc in locales)
+    results: dict[str, dict[str, str]] = {}
+    for i in range(0, len(species_names), _SPARQL_BATCH):
+        batch = species_names[i:i + _SPARQL_BATCH]
+        values = " ".join(f'"{s}"' for s in batch)
+        rows = _sparql_query(
+            f"SELECT ?taxonName ?site ?title WHERE {{\n"
+            f"  VALUES ?taxonName {{ {values} }}\n"
+            f"  VALUES ?site {{ {sites} }}\n"
+            f"  ?item wdt:P225 ?taxonName .\n"
+            f"  ?article schema:about ?item ; schema:isPartOf ?site ; schema:name ?title .\n"
+            f"}}"
+        )
+        for r in rows:
+            loc = r["site"]["value"].split("//", 1)[1].split(".", 1)[0]
+            results.setdefault(r["taxonName"]["value"], {}).setdefault(loc, r["title"]["value"])
+    return results
+
+
 def query_images(species: list[tuple[str, int | None]]) -> dict[str, str]:
     """Query Wikidata P18 (image) → {scientific_name: Commons filename}."""
     if not species:
@@ -367,6 +394,32 @@ def query_images(species: list[tuple[str, int | None]]) -> dict[str, str]:
                 results[sci] = urllib.parse.unquote(image_url.split("/")[-1])
 
     return results
+
+
+def gbif_match_id(scientific_name: str) -> tuple[str, str] | None:
+    """GBIF backbone ID for a species name → (gbif_id, name it belongs to).
+
+    Returns None when the request fails (retried next run) and ("", "") when
+    GBIF has no exact species-rank match. A synonym match yields the
+    accepted taxon's key and name; the build keeps it only if that name is a
+    trusted alias, so a split daughter can't take its parent's ID.
+    """
+    params = urllib.parse.urlencode({
+        "name": scientific_name, "strict": "true", "kingdom": "Animalia",
+    })
+    req = urllib.request.Request(f"{GBIF_MATCH_URL}?{params}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            match = json.loads(resp.read())
+    except Exception:
+        return None
+    if match.get("matchType") != "EXACT" or match.get("rank") != "SPECIES":
+        return "", ""
+    if match.get("status") == "ACCEPTED" and match.get("usageKey"):
+        return str(match["usageKey"]), scientific_name
+    if match.get("acceptedUsageKey") and match.get("species"):
+        return str(match["acceptedUsageKey"]), match["species"]
+    return "", ""
 
 
 def gbif_aliases(scientific_name: str) -> list[str]:
@@ -660,6 +713,7 @@ def main():
             for key in EXTERNAL_IDENTIFIER_FIELDS:
                 entry.pop(key, None)
             entry.pop("id_sources", None)
+            entry.pop("gbif_match_checked", None)
 
     for sci, ids in identifiers.items():
         entry = existing.setdefault(sci, {})
@@ -669,6 +723,39 @@ def main():
             else:
                 entry[key] = val
 
+    save_json(existing, OUTPUT_FILE)
+
+    # Phase 2d: GBIF backbone IDs for species Wikidata has none for
+    need_gbif = [sci for sci in target_names
+                 if not existing.get(sci, {}).get("gbif_id")
+                 and not existing.get(sci, {}).get("gbif_match_checked")]
+    print(f"\nPhase 2d: GBIF backbone match ({len(need_gbif)} species)...")
+    gbif_count = 0
+    for idx, sci in enumerate(need_gbif, start=1):
+        result = gbif_match_id(sci)
+        if result is None:
+            continue  # request failed: retried on the next run
+        gbif_id, via = result
+        entry = existing.setdefault(sci, {})
+        entry["gbif_match_checked"] = True
+        if gbif_id:
+            entry["gbif_id"] = gbif_id
+            entry.setdefault("id_sources", {})["gbif_id"] = via
+            gbif_count += 1
+        if idx % 200 == 0:
+            save_json(existing, OUTPUT_FILE)
+    print(f"  Found GBIF IDs for {gbif_count} species")
+    save_json(existing, OUTPUT_FILE)
+
+    # Phase 2c: Wikipedia sitelinks (articles iNat does not link)
+    wiki_locales = [str(loc) for loc in cfg.get("wikipedia", {}).get("locales", [])]
+    need_sitelinks = [sci for sci in target_names
+                      if "wikipedia_sitelinks" not in existing.get(sci, {})]
+    print(f"\nPhase 2c: Wikipedia sitelinks ({len(need_sitelinks)} species)...")
+    sitelinks = query_sitelinks(need_sitelinks, wiki_locales)
+    for sci in need_sitelinks:
+        existing.setdefault(sci, {})["wikipedia_sitelinks"] = sitelinks.get(sci, {})
+    print(f"  Found articles for {len(sitelinks)} species")
     save_json(existing, OUTPUT_FILE)
 
     if args.ids_only:

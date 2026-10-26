@@ -64,8 +64,15 @@ def _acquire_request_slot() -> None:
         _next_request_time = now + _request_delay
 
 
+# Set when the provider keeps answering 429 after retries (quota used up):
+# no further requests are sent; untranslated items are picked up next run.
+_quota_exhausted = threading.Event()
+
+
 def _llm(system: str, user: str, max_tokens: int) -> str | None:
     """Call the configured LLM with rate limiting. Returns text or None."""
+    if _quota_exhausted.is_set():
+        return None
     try:
         return call_llm(
             user=user,
@@ -77,7 +84,14 @@ def _llm(system: str, user: str, max_tokens: int) -> str | None:
         )
     except Exception as exc:
         tqdm.write(f"  LLM error: {exc}")
+        if "HTTP 429" in str(exc) and not _quota_exhausted.is_set():
+            _quota_exhausted.set()
+            tqdm.write("  LLM quota exhausted — stopping requests; rerun later to continue.")
         return None
+
+
+def _stop_requested() -> bool:
+    return is_shutting_down() or _quota_exhausted.is_set()
 
 
 # ---------------------------------------------------------------------------
@@ -344,11 +358,15 @@ def _mark_fallback_locales(target: dict, updates: dict[str, dict[str, str]]) -> 
         entry["fallback_locales"] = sorted(locs)
 
 
-def _append_journal(updates: dict[str, dict[str, str]], fallback: bool = False) -> None:
+def _append_journal(updates: dict[str, dict[str, str]], fallback: bool = False,
+                    translated_from: dict[str, dict[str, str]] | None = None) -> None:
     if not updates:
         return
+    entry = {"extracts": updates, "fallback": fallback}
+    if translated_from:
+        entry["translated_from"] = translated_from
     with JOURNAL_FILE.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"extracts": updates, "fallback": fallback}, ensure_ascii=False) + "\n")
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def _load_existing_outputs() -> dict:
@@ -368,7 +386,13 @@ def _load_existing_outputs() -> dict:
                 continue
             if isinstance(entry, dict):
                 extracts = entry.get("extracts") if "extracts" in entry else entry
-                _merge_updates(existing, extracts or {})
+                # Journal entries are newer than the saved file: they win,
+                # including retranslations of stale locales.
+                _merge_updates(existing, extracts or {}, replace={
+                    (sci, loc) for sci, locs in (extracts or {}).items() for loc in locs
+                })
+                for sci, sources in (entry.get("translated_from") or {}).items():
+                    existing.setdefault(sci, {}).setdefault("translated_from", {}).update(sources)
                 if entry.get("fallback"):
                     _mark_fallback_locales(existing, extracts or {})
                 replayed += 1
@@ -588,7 +612,7 @@ def main() -> None:
         pbar = tqdm(total=len(needs_shortening), desc="Shorten", unit="ext")
         pending = 0
         for batch in shorten_batches:
-            if is_shutting_down():
+            if _stop_requested():
                 break
             results = shorten_extracts(batch, target_words=target_words, max_tokens=max_tokens)
             updates: dict[str, dict[str, str]] = {}
@@ -605,7 +629,7 @@ def main() -> None:
     else:
         print("\nPhase 1: No extracts need shortening")
 
-    if is_shutting_down():
+    if _stop_requested():
         return
 
     # ── Phase 2: Translate ────────────────────────────────────────────
@@ -626,7 +650,8 @@ def main() -> None:
                 for missing, batch in translation_batches
             }
             for future in as_completed(futures):
-                if is_shutting_down():
+                if _stop_requested():
+                    pool.shutdown(wait=False, cancel_futures=True)
                     break
                 missing, batch = futures[future]
                 try:
@@ -644,11 +669,13 @@ def main() -> None:
                         if not wp_ext.get(loc) and (not cl_ext.get(loc) or (sci, loc) in replace):
                             updates.setdefault(sci, {})[loc] = text
                 _merge_updates(existing, updates, replace)
-                for sci, locs in updates.items():
-                    sources = existing.setdefault(sci, {}).setdefault("translated_from", {})
-                    for loc in locs:
-                        sources[loc] = _source_hash(en_sources.get(sci, ""))
-                _append_journal(updates)
+                hashes = {
+                    sci: {loc: _source_hash(en_sources.get(sci, "")) for loc in locs}
+                    for sci, locs in updates.items()
+                }
+                for sci, sources in hashes.items():
+                    existing.setdefault(sci, {}).setdefault("translated_from", {}).update(sources)
+                _append_journal(updates, translated_from=hashes)
                 pbar.update(len(batch))
                 pending = _save_if_needed(existing, pending + 1, save_every)
 
@@ -658,7 +685,7 @@ def main() -> None:
     else:
         print("\nPhase 2: No translations needed")
 
-    if is_shutting_down():
+    if _stop_requested():
         return
 
     # ── Phase 3: English fallback ─────────────────────────────────────
@@ -667,7 +694,7 @@ def main() -> None:
         pbar = tqdm(total=len(needs_fallback), desc="Fallback", unit="sp")
         pending = 0
         for batch in fallback_batches:
-            if is_shutting_down():
+            if _stop_requested():
                 break
             results = fallback_english_descriptions(
                 batch, target_words=target_words,
