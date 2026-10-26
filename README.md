@@ -175,51 +175,71 @@ bracketed notes, slash alternatives, and informal symbols are rejected in final
 metadata. Regular spaces, apostrophes, and dashes/hyphens are allowed when they
 are part of the accepted name.
 
-Bird taxonomy and English bird names come from AviList (currently v2026). Every
-iNaturalist bird resolves to its AviList species — by exact name, by English
-name within the same genus or epithet stem, by eBird code, or as an AviList
-subspecies — and the AviList scientific name becomes canonical. iNat taxa that
-AviList lumps or treats as subspecies (e.g. *Corvus cornix* → *Corvus corone*)
-are folded into that species as `scientific_name_aliases` instead of becoming
-separate records. Reviewed exceptions in `overrides/bird_splits.csv` stay
-separate species (e.g. Hooded Crow *Corvus cornix*, which AviList lumps into
-*Corvus corone*): they keep their own name, iNat data, and eBird code and
-English name (looked up by scientific name in the eBird taxonomy). Species AviList marks as extinct are excluded; possibly
-extinct and extinct-in-the-wild species are kept. Non-bird groups are
-included through configured iNaturalist coverage rules and reviewed priority
-species additions.
+### Birds
+
+- AviList (currently v2026) is the authority for bird taxonomy and English bird
+  names. Every iNaturalist bird resolves to its AviList species (by exact name,
+  English name within the same genus or epithet stem, eBird code, or as an
+  AviList subspecies) and the AviList scientific name becomes canonical.
+- iNat taxa that AviList lumps or treats as subspecies (e.g. *Corvus cornix* →
+  *Corvus corone*) are folded into that species as `scientific_name_aliases`.
+- Reviewed exceptions in `overrides/bird_splits.csv` stay separate species
+  (e.g. Hooded Crow *Corvus cornix*): they keep their own name, iNat data, eBird
+  code, and English name (looked up by scientific name in the eBird taxonomy).
+- Species AviList marks as extinct are excluded; possibly extinct and
+  extinct-in-the-wild species are kept.
+
+Non-bird groups are included through configured iNaturalist coverage rules and
+reviewed priority species additions.
+
+### iNaturalist taxa
 
 Taxa that iNaturalist has retired (taxon swaps and merges) are dropped; their
-names become aliases of the replacement taxon. Every external identifier
-(eBird, GBIF, NCBI, Avibase, BirdLife, Macaulay Library, Xeno-Canto,
-observation.org, iNat, Wikidata) points to exactly one record: an ID reached
-only through an alias loses to the species whose own name carries it, and IDs
-that stay ambiguous (typically after a recent split) are dropped. The build
-fails if a shared ID slips through. Localized names follow the same idea: when
-two species carry the same name in a locale, the more authoritative source
-(AviList > eBird > iNat > Wikidata) keeps it. A known scientific name, a
-Latin-only name in a locale written in another script (an untranslated English
-fallback, e.g. in `zh`), or a multi-word English name copied into another locale
-(eBird `pt_BR` lists untranslated species in lower-case English), is never used
-as a localized common name; the next source's name is used instead. When two non-bird species share
-an English display name on iNat, the more-observed one keeps it and the other
-takes its next English name on iNat that no other species uses.
+names become aliases of the replacement taxon.
 
-Descriptions are cleaned of citation marks, sentences with leftover wiki
-markup, and repeated sentences. English display names that iNat writes all
-lowercase get AviList-style capitalisation, localized names that are file names
-or catalogue numbers are dropped, a photo or English Wikipedia article claimed
-by several species stays with one of them (the species named in the file or
-first in the article), and identifiers must match their format (numeric GBIF,
-NCBI, BirdLife, observation.org IDs; 16-hex Avibase IDs; lowercase eBird codes).
+### Identifiers
 
-Wikipedia descriptions must be about the species: an English article that names
-neither the species nor an alias (iNat sometimes links a sister species, the
-genus, or a clade) is dropped together with its other-language versions and any
-LLM text made from it, unless it is the article of a monotypic genus. Any
-description (Wikipedia in any language, or LLM) whose opening names another
-species of the taxonomy and never this one is dropped as well; the LLM
-translator treats such locales as missing so a translation takes their place.
+- Every external identifier (eBird, GBIF, NCBI, Avibase, BirdLife, Macaulay
+  Library, Xeno-Canto, observation.org, iNat, Wikidata) points to exactly one
+  record. An ID reached only through an alias loses to the species whose own
+  name carries it; IDs that stay ambiguous (typically after a recent split) are
+  dropped. The build fails if a shared ID slips through.
+- Identifiers must match their format: numeric GBIF, NCBI, BirdLife, and
+  observation.org IDs; 16-hex Avibase IDs; lowercase eBird codes.
+
+### Names
+
+- When two species carry the same localized name, the more authoritative source
+  (AviList > eBird > iNat > Wikidata) keeps it.
+- Never used as a localized common name (the next source's name is used
+  instead): a known scientific name; a Latin-only name in a locale written in
+  another script (an untranslated English fallback, e.g. in `zh`); a multi-word
+  English name copied into another locale (eBird `pt_BR` lists untranslated
+  species in lower-case English); file names or catalogue numbers.
+- When two non-bird species share an English display name on iNat, the
+  more-observed one keeps it and the other takes its next English name on iNat
+  that no other species uses. All-lowercase iNat names get AviList-style
+  capitalisation.
+
+### Descriptions
+
+- Wikipedia descriptions must be about the species. An English article that
+  names neither the species nor an alias (iNat sometimes links a sister species,
+  the genus, or a clade) is dropped together with its other-language versions
+  and any LLM text made from it, unless it is the article of a monotypic genus.
+- Any description (Wikipedia in any language, or LLM) whose opening names
+  another species of the taxonomy and never this one is dropped as well; the
+  LLM translator treats such locales as missing so a translation takes their
+  place. Links to rejected articles are dropped with them.
+- An English article claimed by several species stays with the species it names
+  first.
+- Texts are cleaned of citation marks, sentences with leftover wiki markup,
+  section headings, and repeated sentences.
+
+### Images
+
+A photo claimed by several species stays with one of them (the species named in
+the file, else the most observed).
 
 Configured non-species sound classes live under `sound_classes` in
 `config.yml`. These records use their English display name as
