@@ -837,7 +837,8 @@ def _run_phase3(english_data: dict[str, dict],
             continue
         img = data.get("image_url", "")
         if img:
-            filename = unquote(img.split("/")[-1])
+            # Commons answers with normalized titles (spaces, not underscores)
+            filename = unquote(img.split("/")[-1]).replace("_", " ")
             if filename:
                 images[filename] = input_title
 

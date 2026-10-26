@@ -30,6 +30,7 @@ Usage:
 
 import argparse
 import csv
+import difflib
 import html
 import io
 import json
@@ -1558,8 +1559,9 @@ ID_FORMATS = {
     "avibase_id": re.compile(r"[0-9A-F]{16}"),
     "ebird_code": re.compile(r"[a-z0-9]+"),
 }
-# Localized "names" that are file names or catalogue numbers (Wikidata labels).
-_JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}", re.IGNORECASE)
+# Localized "names" that are file names, catalogue numbers, or carry a
+# disambiguation number ("कालो धनेश २") (Wikidata labels).
+_JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}|\s\d+$", re.IGNORECASE)
 _SMALL_WORDS = {"a", "an", "and", "of", "the", "de", "del", "du", "la", "le", "von", "van", "di", "da"}
 
 
@@ -1594,13 +1596,45 @@ def _dedupe_images(records: list[dict]) -> int:
     return removed
 
 
+# Phrases in a Wikipedia lead that introduce the species' English names.
+_LEAD_NAME_PATTERNS = (
+    r"^(?:The|An?) (?P<seg>[^().,;]{3,80}?) \(",
+    r"^{sci},? the (?P<seg>[^().,;]{3,60}?),? (?:is|are|was)\b",
+    r"\b(?:known|called) as (?:the |an? )?(?P<seg>[^.;()]{3,200}?)(?:,? (?:is|are|was)\b|[.;)])",
+    r"\bcommon names?(?::| is| are| include)? (?:the |an? )?(?P<seg>[^.;()]{3,200}?)[.;)]",
+    r"\bcalled (?:the |an? )?(?P<seg>[^.;()]{3,80}?) in English\b",
+    r"\bcommon name for [^.]{0,40}? is (?:the |an? )?(?P<seg>[^.;()]{3,80}?)\.",
+)
+_LEAD_NAME_STOPWORDS = {"is", "are", "include", "who", "which", "that", "simply", "its", "his",
+                        "her", "after", "named", "species", "genus", "family"}
+
+
+def _lead_english_names(text: str, sci: str) -> list[str]:
+    """English names a Wikipedia lead gives for the species ("The white-spotted
+    tree frog (Boana albopunctata) is ...", "... also known as X or Y")."""
+    lead = " ".join(re.split(r"(?<=[.!?])\s+", (text or "").strip().lstrip("\"' "))[:3])
+    names: list[str] = []
+    for pattern in _LEAD_NAME_PATTERNS:
+        for match in re.finditer(pattern.replace("{sci}", re.escape(sci)), lead):
+            for part in re.split(r",\s*(?:or\s+|and\s+)?|\s+or\s+|\s+and\s+", match.group("seg")):
+                part = re.sub(r"^(?:the|an?)\s+", "", part.strip(" \"'"), flags=re.IGNORECASE)
+                words = part.lower().split()
+                if (1 <= len(words) <= 6 and re.fullmatch(r"[A-Za-z][A-Za-z' -]*[a-z]", part)
+                        and not _LEAD_NAME_STOPWORDS & set(words)
+                        and part.lower() not in (n.lower() for n in names)):
+                    names.append(part)
+    return names
+
+
 def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int:
     """Give species that share an English display name distinct names.
 
     iNat sometimes gives two species the same preferred English name. Birds
-    (AviList names) keep theirs; otherwise the more-observed species keeps it
-    and the other takes its first English alternative on iNat that no other
-    species uses. Returns the number of renamed species.
+    (AviList names) keep theirs. Among the others, a species whose English
+    Wikipedia lead confirms the name keeps it, then one with no other English
+    name, then the more-observed one. The rest take an unused English name
+    from their Wikipedia lead or iNat, else fall back to the scientific name.
+    Returns the number of renamed species.
     """
     groups: dict[str, list[dict]] = {}
     for rec in records:
@@ -1609,21 +1643,43 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
         groups.setdefault(rec["common_name"].lower(), []).append(rec)
     used = {rec["common_name"].lower() for rec in records}
     renamed = 0
-    for group in groups.values():
+    for name, group in groups.items():
         if len(group) < 2:
             continue
-        group.sort(key=lambda r: (r.get("taxon_group") != "Aves", -(r.get("observations_count") or 0)))
+        candidates: dict[str, list[str]] = {}
+        attested: dict[str, list[str]] = {}
+        for rec in group:
+            sci = rec["scientific_name"]
+            lead = (_lead_english_names(rec["descriptions"].get("en", ""), sci)
+                    if rec.get("description_source") == "wikipedia" else [])
+            attested[sci] = [_title_case(n) for n in lead]
+            names = attested[sci] + taxonomy.get(sci, {}).get("english_names", [])
+            candidates[sci] = [n for n in names if is_clean_common_name(n)]
+        # Spelling variants ("Northern Freetail Bat") count as the shared name.
+        def variant(n: str) -> bool:
+            return difflib.SequenceMatcher(None, n.lower(), name).ratio() >= 0.9
+
+        def unused(sci: str) -> list[str]:
+            return [n for n in candidates[sci] if n.lower() not in used and not variant(n)]
+
+        group.sort(key=lambda r: (
+            r.get("taxon_group") != "Aves",
+            not any(variant(n) for n in attested[r["scientific_name"]]),
+            bool(unused(r["scientific_name"])),
+            -(r.get("observations_count") or 0),
+        ))
         for rec in group[1:]:
             if rec.get("taxon_group") == "Aves":
                 continue
-            alternatives = taxonomy.get(rec["scientific_name"], {}).get("english_names", [])
-            alt = next((a for a in alternatives
-                        if a.lower() not in used and is_clean_common_name(a)), None)
+            alt = next(iter(unused(rec["scientific_name"])), None)
             if alt:
                 used.add(alt.lower())
                 rec["common_name"] = alt
                 rec["common_names"]["en"] = alt
-                renamed += 1
+            else:
+                rec["common_name"] = rec["scientific_name"]
+                rec["common_names"].pop("en", None)
+            renamed += 1
     return renamed
 
 
@@ -1884,7 +1940,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     print(f"  Identifiers dropped for an invalid format: {invalid_ids}")
     print(f"  Images kept on one species only (shared photo): {_dedupe_images(records)} removed")
     renamed = _resolve_display_name_collisions(records, taxonomy)
-    print(f"  Display names: {renamed} species renamed to an iNat alternative (shared name)")
+    print(f"  Display names: {renamed} species renamed (name shared with another species)")
 
     # Assign BirdNET species IDs (persistent, append-only)
     if reassign_ids:

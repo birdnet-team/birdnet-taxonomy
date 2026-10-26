@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 
 from collectors._common import same_epithet_stem
@@ -73,7 +74,12 @@ _END_SECTIONS = re.compile(
     r"reference|externí odkazy|literatura|související články|"
     r"примечания|литература|ссылки|см\. также|"
     r"referenser|externa länkar|se även|"
-    r"referencer|eksterne henvisninger|referanser|eksterne lenker)\b",
+    r"referencer|eksterne henvisninger|referanser|eksterne lenker|"
+    r"original publication|publication originale|publicación original|"
+    r"pubblicazione originale|publicação original|originele publicatie|"
+    r"lähteet|kirjallisuutta|aiheesta muualla|kaynakça|kaynaklar|dış bağlantılar|"
+    r"ayrıca bakınız|مراجع|مصادر|وصلات خارجية|انظر أيضا|脚注|参考文献|関連項目|"
+    r"外部リンク|外部链接|参见|注释|각주|참고 문헌|외부 링크|marejeo|viungo vya nje)\b",
     re.IGNORECASE,
 )
 
@@ -131,19 +137,57 @@ def _cap_words(paragraphs: list[str], max_words: int) -> list[str]:
 
 _CITATION_RE = re.compile(r"\s*\[(?:\d+|[a-z]|citation needed|clarification needed|note \d+)\]", re.IGNORECASE)
 _MARKUP_RE = re.compile(r"\{\{|\}\}|\[\[|\]\]|<ref|</ref|<br|\|\s*\w+\s*=")
+# Inline archive-link notes in running text ("Archived 2006-01-10 at the
+# Wayback Machine."); in link lists (tr, da) they end the paragraph instead.
+_ARCHIVED_RE = re.compile(
+    r"\s*(?:Archived|Archivado el|Archivováno|Archiviato il)\b[^\n]{0,40}?"
+    r"(?:at the|en|na|in)\s+Wayback Machine\.?(?=\s+(\S)|$)")
+_ARCHIVED_INLINE_RE = re.compile(
+    r"\s*（(?:页面存档备份|原始内容存档)[^）]*）|"
+    r"\s*نسخة محفوظة \d{1,2} \S+ \d{4} على موقع واي باك مشين")
+_URL_PAREN_RE = re.compile(r"\s*[(（][^()（）]*(?:https?://|www\.)[^()（）]*[)）]")
+
+# Reference-list text that survives section selection ("Günther, 1863 :
+# On new species ... Annals and Magazine of Natural History, vol. 11").
+_BIB_MARKER_RE = re.compile(
+    r"\bISBN\b|\bdoi:|\bdoi\.org\b|Wayback Machine|\bViitattu \d|\bIn: [A-Z]|"
+    r"^\s*\([a-z]{2,3}(?: \+ [a-z]{2,3})*\) |"  # fr source-language tag: "(en) Gould, « ... »"
+    r"\bRetrieved (?:\d{1,2} )?[A-Z][a-z]+ \d|\b(?:[Cc]onsultado el|consulté le|abgerufen am) \d|"
+    r"tarihinde (?:alındı|erişildi)|kaynağından arşivlendi|Downloaded from|https?://|\bwww\.|"
+    r"\(englanniksi\)|\(Arkistoitu|\bLaji\.fi\b")
+_BIB_AUTHORS_RE = re.compile(
+    r"^(?:文献\s*)?(?:(?:[A-ZÀ-ÖØ-Þ][\w'’-]*\.?|&|and|et|y|e|und|de|da|van|von|der|den|du|le|la|al\.|Jr\.?)"
+    r"[\s,;]*){1,15}\(?(?:1[789]|20)\d{2}[a-z]?\)?(?:\s*\"\d{4}\")?\s*[:.)]")
+_BIB_VENUE_RE = re.compile(
+    r"\bvol\.|\bs?[ps]p?\.\s*\d|\bJournal\b|\bProceedings\b|\bBulletin\b|\bAnnal[se]s?\b|Zootaxa|"
+    r"Copeia|Novitates|Herpetologica|Zeitschrift|\bRevue\b|\bMus(?:eum|ée|eo)\b|University Press|"
+    r"Verlag|texte intégral|Full text|Handbook|\bSoc(?:iety|iété)?\b|\bActa\b|\bZool", re.IGNORECASE)
+
+
+def _starts_citation(sentence: str, rest: str) -> bool:
+    """True if a sentence begins reference-list text (rest: it and what follows)."""
+    return bool(_BIB_MARKER_RE.search(sentence)
+                or (_BIB_AUTHORS_RE.match(rest) and _BIB_VENUE_RE.search(rest)))
 
 
 def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
     """Drop citation marks, sentences with leftover wiki markup, and repeats."""
-    paragraph = _CITATION_RE.sub("", paragraph.replace("\u200b", ""))
+    paragraph = _CITATION_RE.sub("", html.unescape(paragraph.replace("\u200b", "")))
+    paragraph = re.sub(r"&[a-z]*dash;", "–", paragraph)
     # Headings flattened into running text ("... montaña. == Referencias ==")
     for match in list(re.finditer(r"\s*(={2,})\s*([^=\n]+?)\s*\1", paragraph)):
         if _END_SECTIONS.match(match.group(2).strip()):
             paragraph = paragraph[:match.start()]
             break
     paragraph = re.sub(r"\s*(={2,})\s*[^=\n]+?\s*\1\s*", " ", paragraph)
+    paragraph = _ARCHIVED_RE.sub(
+        lambda m: "" if m.group(1) and m.group(1).islower() else ".", paragraph)
+    paragraph = _URL_PAREN_RE.sub("", _ARCHIVED_INLINE_RE.sub("", paragraph))
     kept: list[str] = []
-    for sentence in re.split(r"(?<=[.!?。])\s+|\n", paragraph):
+    sentences = re.split(r"(?<=[.!?。])\s+|\n", paragraph)
+    for i, sentence in enumerate(sentences):
+        if _starts_citation(sentence, " ".join(sentences[i:])):
+            break
         key = sentence.strip().lower()
         if (not key or _MARKUP_RE.search(sentence) or re.match(r"[,;:)\]}|]", key)
                 or (len(key) > 30 and key in seen)):
@@ -155,8 +199,8 @@ def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
 
 def clean_description_text(text: str) -> str:
     """Clean stored descriptions: drop section headings, reference-type
-    tails, citation marks, sentences with leftover wiki markup, and repeated
-    sentences."""
+    tails and reference-list text, citation marks, sentences with leftover
+    wiki markup, and repeated sentences."""
     if not text:
         return text
     kept: list[str] = []
