@@ -46,6 +46,7 @@ from collectors._common import (
 )
 from utils.description_quality import (
     contains_species_identity,
+    is_disambiguation_text,
     select_description_text,
     word_count,
 )
@@ -57,6 +58,7 @@ TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 EN_API = "https://en.wikipedia.org/w/api.php"
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 BATCH_SIZE = 50  # max titles per MediaWiki query
+FULL_EXTRACT_WORKERS = 8  # whole-page extracts are one title per request
 
 setup_shutdown()
 
@@ -357,14 +359,34 @@ def _batch_fetch_locale_extracts(lang: str,
 
 
 def _batch_fetch_full_extracts(lang: str, titles: list[str]) -> dict[str, dict]:
-    """Fetch full plain-text extracts from one Wikipedia language edition."""
+    """Fetch full plain-text extracts from one Wikipedia language edition.
+
+    TextExtracts returns whole-page text for only one page per request
+    (exlimit is capped at 1 without exintro), so titles are fetched one per
+    request, in parallel under the shared rate limiter.
+    """
     api = EN_API if lang == "en" else f"https://{lang}.wikipedia.org/w/api.php"
-    return _batch_query(api, titles,
-        props="extracts",
-        extra_params={
-            "explaintext": "1",
-            "exlimit": str(BATCH_SIZE),
-        },
+
+    def fetch(title: str) -> dict[str, dict]:
+        return _batch_query(api, [title],
+            props="extracts|pageprops",
+            extra_params={
+                "explaintext": "1",
+                "exlimit": "1",
+                "ppprop": "disambiguation",
+            },
+        )
+
+    pages: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=FULL_EXTRACT_WORKERS) as pool:
+        for result in pool.map(fetch, titles):
+            pages.update(result)
+    return pages
+
+
+def _is_disambiguation_page(page: dict) -> bool:
+    return "disambiguation" in (page.get("pageprops") or {}) or is_disambiguation_text(
+        page.get("extract", "")
     )
 
 
@@ -508,6 +530,8 @@ def _quality_status(rec: dict, loc: str, min_words: int) -> str:
         text = rec.get("extract") or text
     if not text:
         return f"missing_{loc}"
+    if is_disambiguation_text(text):
+        return f"disambiguation_{loc}"
     if word_count(text) < min_words:
         return f"short_{loc}"
     return "ok"
@@ -568,6 +592,7 @@ def _run_quality_refetch(
     extra_sections: int,
     min_paragraphs: int,
     pbar: tqdm,
+    max_words: int = 0,
 ) -> Counter:
     """Fetch richer extracts for missing/short records across locales."""
     counts: Counter = Counter()
@@ -590,6 +615,19 @@ def _run_quality_refetch(
                 quality["previous_status"] = previous_status
 
                 page = _lookup_page(pages, title)
+                if page and _is_disambiguation_page(page):
+                    # The linked title is a disambiguation page; the species'
+                    # scientific name (or an alias) redirects to its article.
+                    page = None
+                    for name in _identity_names(sci, taxonomy):
+                        alt = _lookup_page(_batch_fetch_full_extracts(lang, [name]), name)
+                        if alt and alt.get("extract") and not _is_disambiguation_page(alt):
+                            page = alt
+                            break
+                    if not page:
+                        quality["last_status"] = "disambiguation"
+                        counts[f"{lang}:disambiguation"] += 1
+                        continue
                 if not page:
                     quality["last_status"] = "not_found"
                     counts[f"{lang}:not_found"] += 1
@@ -616,6 +654,7 @@ def _run_quality_refetch(
                     target_words=target_words,
                     extra_sections=extra_sections,
                     min_paragraphs=min_paragraphs,
+                    max_words=max_words,
                 )
                 if not selected:
                     quality["last_status"] = "empty"
@@ -917,6 +956,7 @@ def main():
     target_words = int(desc_cfg.get("target_words", 120))
     extra_sections = int(desc_cfg.get("wikipedia_extra_sections", 2))
     min_paragraphs = int(desc_cfg.get("wikipedia_min_paragraphs", 1))
+    max_words = int(desc_cfg.get("max_words", 0))
 
     print("Loading species with Wikipedia URLs...")
     species = load_species_with_wikipedia()
@@ -1041,6 +1081,7 @@ def main():
             extra_sections=extra_sections,
             min_paragraphs=min_paragraphs,
             pbar=pbarq,
+            max_words=max_words,
         )
         pbarq.close()
         save_json(existing, OUTPUT_FILE)

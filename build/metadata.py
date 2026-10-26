@@ -47,7 +47,9 @@ from collectors._common import (
     related_species_names, save_json, xc_record_method,
 )
 from utils.audit_metadata import audit_records, has_failures, print_report
-from utils.description_quality import word_count
+from utils.description_quality import (
+    clean_description_text, is_disambiguation_text, word_count,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -997,8 +999,16 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
         obs = _raw_lookup(obsorg_data, names)
         if obs.get("matched_name") in taxonomy and obs.get("matched_name") != sci:
             obs = {}
-        if ml.get("ml_taxon_code"):
-            entry["ml_taxon_code"] = ml["ml_taxon_code"]
+        ml_code = ml.get("ml_taxon_code") or ""
+        if entry["taxon_group"] == "Aves":
+            # Macaulay identifies birds by their eBird species code; cached ML
+            # codes can predate a split, so the validated eBird code wins. A
+            # cached code without one is kept only if AviList agrees.
+            avi_code = avi_by_sci.get(sci, {}).get("ebird_code", "")
+            ml_code = entry["ebird_code"] or (ml_code if ml_code == avi_code else "")
+            ml = {**ml, "matched_name": ""} if ml_code else {}
+        if ml_code:
+            entry["ml_taxon_code"] = ml_code
             id_sources.setdefault(sci, {})["ml_taxon_code"] = ml.get("matched_name") or sci
             ml_count += 1
         if obs.get("observationorg_id") is not None:
@@ -1548,15 +1558,18 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
 
         # Wikipedia: use English extract independently from locale extracts.
         # Locale-only Wikipedia data must not block English fallback sources.
-        wp_extracts = wp.get("extracts", {})
+        # Older collector runs stored section headings and reference tails.
+        wp_extracts = {loc: clean_description_text(t) for loc, t in wp.get("extracts", {}).items()}
         wp_extract_sources = wp.get("extract_sources", {}) or {}
-        wp_en = wp.get("extract") or wp_extracts.get("en", "")
-        if wp_en:
+        wp_en = clean_description_text(wp.get("extract") or "") or wp_extracts.get("en", "")
+        # A disambiguation page ("Ruff may refer to:") is a list, not a
+        # description; skip it here and in every source below.
+        if wp_en and not is_disambiguation_text(wp_en):
             descriptions["en"] = wp_en
             description_sources["en"] = wp_extract_sources.get("en") or "wikipedia"
 
         for loc, text in wp_extracts.items():
-            if loc != "en" and text:
+            if loc != "en" and text and not is_disambiguation_text(text):
                 descriptions[loc] = text
                 description_sources[loc] = wp_extract_sources.get(loc) or "wikipedia"
         for loc, url in wp.get("wikipedia_urls", {}).items():
@@ -1574,9 +1587,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         if cl.get("fallback"):
             fallback_locales.update(cl_extracts)
         for loc, text in cl_extracts.items():
+            text = clean_description_text(text)
             # Guard against malformed locale keys (e.g. an LLM echoing the
             # literal "locale" placeholder from a prompt example).
-            if text and loc in LOCALE_NAMES:
+            if text and loc in LOCALE_NAMES and not is_disambiguation_text(text):
                 descriptions[loc] = text
                 description_sources[loc] = (
                     "llm_fallback" if loc in fallback_locales else "llm"

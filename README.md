@@ -13,7 +13,7 @@
 
 Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, amphibians, and configured non-species sound classes. All configuration (locales, taxon groups, sound classes, API settings) lives in `config.yml`.
 
-Current working taxonomy version: `v0.3-Jul2026`.
+Current working taxonomy version: `v0.4-Oct2026`.
 
 **Important note: While still in development (i.e., all releases prior to 1.0), species IDs may change. We will freeze species IDs upon official release.**
 
@@ -157,7 +157,7 @@ Configured in `config.yml`. Birds include all species; other groups are limited 
 | Reptilia | 26036 | Sounds only | 1 |
 | Amphibia | 20978 | Sounds only | 1 |
 
-Mammals can define nested sub-taxa for focused coverage. The current v0.3
+Mammals can define nested sub-taxa for focused coverage. The current v0.4
 configuration includes `Chiroptera` (iNat taxon ID `40268`) under `Mammalia`
 to include bat species with at least one sound observation, plus species with
 at least 100 total iNaturalist observations.
@@ -306,7 +306,7 @@ Fetches multilingual Wikipedia data in four phases:
 - **Phase 1b — Extract backfill:** Scans existing data for species that have an English Wikipedia URL but are missing the English extract (can happen due to API glitches during bulk fetching). Re-fetches just the extracts for those species with redirect resolution.
 - **Phase 2 — Locale extracts:** For each target language (20 configured locales), batch-fetches intro extracts from the corresponding Wikipedia. Runs locales concurrently with a thread pool. Skips species that already have extracts for a given locale.
 - **Phase 3 — Image licenses:** Batch-fetches license metadata (artist, license, license URL) from Wikimedia Commons for all page images found in Phase 1.
-- **Quality refetch — description depth:** Optional `--quality-refetch` pass for missing or too-short extracts in all configured Wikipedia locales. It fetches richer plain-text article content from the matching language wiki, validates that the article title/text contains the canonical scientific name or a clean alias, stores per-locale retry/status metadata, and avoids retrying indefinitely. The selector can keep multiple early paragraphs through `descriptions.wikipedia_min_paragraphs`. Use `--quality-locales en` to restrict this to the English release gate.
+- **Quality refetch — description depth:** Optional `--quality-refetch` pass for missing or too-short extracts in all configured Wikipedia locales. It fetches richer plain-text article content from the matching language wiki (one title per request: whole-page extracts are limited to one page per API call), validates that the article title/text contains the canonical scientific name or a clean alias, stores per-locale retry/status metadata, and avoids retrying indefinitely. The text is the lead plus early sections about the animal (taxonomy/etymology sections are skipped, references end the selection, headings are never kept), capped at `descriptions.max_words`. Disambiguation pages ("Ruff may refer to:") are retried under the scientific name; the build drops any disambiguation text and stray section headings from stored descriptions. The selector can keep multiple early paragraphs through `descriptions.wikipedia_min_paragraphs`. Use `--quality-locales en` to restrict this to the English release gate.
 
 Rate-limited (default 25 rps), with exponential backoff on 429s and server errors. All phases save incrementally.
 Description quality thresholds such as minimum English word count, target
@@ -348,7 +348,7 @@ environment variable.
 Discovers Macaulay Library taxon codes for all species. Birds use their eBird species code (e.g. `eurblk1`); non-birds get a `t-`prefixed numeric ID (e.g. `t-11032766`) resolved via the ML taxonomy API.
 
 Resolution cascade:
-1. **eBird code** — reuses existing eBird species code for birds (instant, no API call)
+1. **eBird code** — reuses existing eBird species code for birds (instant, no API call). The build always sets a bird's ML code to its validated eBird code, since cached ML codes can predate a split
 2. **ML taxonomy API** — queries by scientific name for non-birds
 3. **Wikidata P10794** — bulk SPARQL lookup of Macaulay Library taxon IDs
 4. **Alias synonym fallback** — tries reviewed aliases from `overrides/species_aliases.csv`, then GBIF synonyms, and retries the ML API
@@ -462,6 +462,7 @@ This step is disabled by default (`llm.enabled: false`). Enable it in `config.ym
 | `--shorten-only` | Only shorten long extracts |
 | `--translate-only` | Only translate missing locales |
 | `--fallback-missing` | Generate English fallbacks from non-English Wikipedia source extracts |
+| `--retranslate-stale` | Also redo LLM translations made from an older English source (translations record a hash of their source; older ones count as stale when the English text is now at least twice as long) |
 | `--fallback-only` | Only generate English fallbacks |
 | `--dry-run` | Preview without API calls |
 

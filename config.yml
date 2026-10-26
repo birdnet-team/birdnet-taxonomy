@@ -4,7 +4,7 @@
 # locales, taxon groups, API settings, etc.
 
 taxonomy:
-  version: "v0.3-Jul2026"
+  version: "v0.4-Oct2026"
 
 # iNaturalist iconic taxon groups to fetch.
 # sounds_only: if true, only fetch species with sound observations on iNat.

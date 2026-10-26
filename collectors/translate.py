@@ -18,6 +18,7 @@ Provider is auto-detected from whichever key is present.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import threading
 import time
@@ -30,7 +31,7 @@ from collectors._common import (
     ROOT, RAW_DIR, setup_shutdown, is_shutting_down,
     load_json, save_json,
 )
-from utils.description_quality import word_count as _word_count
+from utils.description_quality import is_disambiguation_text, word_count as _word_count
 from utils.llm import call_llm, detect_provider, parse_json_response, PROVIDERS
 
 setup_shutdown()
@@ -298,12 +299,41 @@ def _build_translation_batches(
     return batches
 
 
-def _merge_updates(target: dict, updates: dict[str, dict[str, str]]) -> None:
+def _merge_updates(target: dict, updates: dict[str, dict[str, str]],
+                   replace: set[tuple[str, str]] | None = None) -> None:
     for sci, extracts in updates.items():
         existing_extracts = target.setdefault(sci, {}).setdefault("extracts", {})
         for loc, text in extracts.items():
-            if loc not in existing_extracts:
+            if loc not in existing_extracts or (sci, loc) in (replace or ()):
                 existing_extracts[loc] = text
+
+
+def _source_hash(text: str) -> str:
+    """Fingerprint of the English source a translation was made from."""
+    return hashlib.sha1(" ".join((text or "").split()).encode("utf-8")).hexdigest()[:12]
+
+
+def _stale_translation_locales(entry: dict, en_text: str, wiki_extracts: dict[str, str],
+                               target_locales: list[str]) -> tuple[str, ...]:
+    """LLM translations made from an older English source.
+
+    Translations record the source hash; older ones without it count as
+    stale when the English source is now at least twice as long.
+    """
+    current = _source_hash(en_text)
+    fallback = set(entry.get("fallback_locales", []))
+    sources = entry.get("translated_from", {})
+    stale = []
+    for loc in target_locales:
+        text = entry.get("extracts", {}).get(loc)
+        if not text or wiki_extracts.get(loc) or loc in fallback:
+            continue
+        if loc in sources:
+            if sources[loc] != current:
+                stale.append(loc)
+        elif _word_count(en_text) >= 2 * _word_count(text):
+            stale.append(loc)
+    return tuple(stale)
 
 
 def _mark_fallback_locales(target: dict, updates: dict[str, dict[str, str]]) -> None:
@@ -404,6 +434,8 @@ def main() -> None:
     parser.add_argument("--save-every", type=int, default=0)
     parser.add_argument("--char-budget", type=int, default=0)
     parser.add_argument("--max-source-chars", type=int, default=0)
+    parser.add_argument("--retranslate-stale", action="store_true",
+                        help="Also redo LLM translations made from an older English source")
     parser.add_argument(
         "--provider", default="",
         choices=provider_choices,
@@ -460,7 +492,7 @@ def main() -> None:
     if not args.translate_only and not args.fallback_only:
         for sci, rec in wiki.items():
             for loc, text in rec.get("extracts", {}).items():
-                if not text:
+                if not text or is_disambiguation_text(text):
                     continue
                 if existing.get(sci, {}).get("extracts", {}).get(loc):
                     continue
@@ -469,16 +501,24 @@ def main() -> None:
 
     # ── Phase 2: species needing translation ──────────────────────────
     needs_translation: list[tuple[str, str, tuple[str, ...]]] = []
+    replace: set[tuple[str, str]] = set()  # stale LLM translations to overwrite
+    en_sources: dict[str, str] = {}
     if not args.shorten_only and not args.fallback_only and target_non_en:
         for sci, rec in wiki.items():
             en_text = rec.get("extract") or rec.get("extracts", {}).get("en")
-            if not en_text:
+            if not en_text or is_disambiguation_text(en_text):
                 continue
             wp_ext = rec.get("extracts", {})
             cl_ext = existing.get(sci, {}).get("extracts", {})
             missing = _missing_translation_locales(wp_ext, cl_ext, target_non_en)
+            if args.retranslate_stale:
+                stale = _stale_translation_locales(
+                    existing.get(sci, {}), en_text, wp_ext, target_non_en)
+                replace.update((sci, loc) for loc in stale)
+                missing = tuple(dict.fromkeys([*missing, *stale]))
             if missing:
                 needs_translation.append((sci, en_text, missing))
+                en_sources[sci] = en_text
 
     # ── Phase 3: species needing English fallback ─────────────────────
     needs_fallback: list[tuple[str, dict[str, str]]] = []
@@ -488,7 +528,8 @@ def main() -> None:
             cl_ext = existing.get(sci, {}).get("extracts", {})
             if rec.get("extract") or wp_ext.get("en") or cl_ext.get("en"):
                 continue
-            sources = {loc: t for loc, t in wp_ext.items() if loc != "en" and t}
+            sources = {loc: t for loc, t in wp_ext.items()
+                       if loc != "en" and t and not is_disambiguation_text(t)}
             if sources:
                 needs_fallback.append((sci, sources))
 
@@ -600,9 +641,13 @@ def main() -> None:
                     wp_ext = wiki.get(sci, {}).get("extracts", {})
                     for loc, text in trans.items():
                         cl_ext = existing.get(sci, {}).get("extracts", {})
-                        if not wp_ext.get(loc) and not cl_ext.get(loc):
+                        if not wp_ext.get(loc) and (not cl_ext.get(loc) or (sci, loc) in replace):
                             updates.setdefault(sci, {})[loc] = text
-                _merge_updates(existing, updates)
+                _merge_updates(existing, updates, replace)
+                for sci, locs in updates.items():
+                    sources = existing.setdefault(sci, {}).setdefault("translated_from", {})
+                    for loc in locs:
+                        sources[loc] = _source_hash(en_sources.get(sci, ""))
                 _append_journal(updates)
                 pbar.update(len(batch))
                 pending = _save_if_needed(existing, pending + 1, save_every)
