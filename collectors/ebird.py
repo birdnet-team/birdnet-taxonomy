@@ -9,8 +9,12 @@ Phase 2 (names): Downloads the eBird taxonomy CSV for 62 locales to collect
   common names in all available languages. Outputs ebird_names.json.
 
 Output:
-  - raw_data/ebird_data.json   (Phase 1: descriptions + images, incremental)
-  - raw_data/ebird_names.json  (Phase 2: common names by eBird code)
+  - raw_data/ebird_data.json     (Phase 1: descriptions + images, incremental)
+  - raw_data/ebird_names.json    (Phase 2: common names by eBird code)
+  - raw_data/ebird_taxonomy.json (Phase 2: eBird code → scientific name)
+
+Phase 2 downloads are cached per eBird taxonomy version, so a new eBird
+release is picked up on the next run.
 
 Usage:
     python -m collectors.ebird [--limit N] [--dry-run]
@@ -43,8 +47,11 @@ from collectors._common import (
 INAT_DATA = RAW_DIR / "inat_data.json"
 OUTPUT_FILE = RAW_DIR / "ebird_data.json"
 NAMES_FILE = RAW_DIR / "ebird_names.json"
+TAXONOMY_FILE = RAW_DIR / "ebird_taxonomy.json"
+TAXONOMY_JSON = RAW_DIR / "taxonomy.json"
 
 EBIRD_TAXONOMY_URL = "https://api.ebird.org/v2/ref/taxonomy/ebird"
+EBIRD_VERSIONS_URL = "https://api.ebird.org/v2/ref/taxonomy/versions"
 
 # All known eBird locales with real translations.
 # (ebird_locale, canonical_locale) — canonical is stored in common_names.
@@ -90,11 +97,19 @@ _rate = RateLimiter(5)  # default; overwritten in main()
 def load_species_with_ebird_codes() -> dict[str, str]:
     """Load species that have an eBird code.
 
-    First tries inat_data.json (has ebird_code if species is a bird),
-    then falls back to reading the AviList CSV directly.
+    Prefers the built taxonomy.json, whose codes are validated against the
+    eBird taxonomy (AviList can carry codes eBird has not published yet).
+    Falls back to inat_data.json and the AviList CSV.
 
     Returns dict of scientific_name -> ebird_code.
     """
+    taxonomy = load_json(TAXONOMY_JSON)
+    if taxonomy:
+        return {
+            sci: rec["ebird_code"] for sci, rec in taxonomy.items()
+            if rec.get("taxon_group") == "Aves" and rec.get("ebird_code")
+        }
+
     species = {}
 
     # From inat_data.json
@@ -255,37 +270,85 @@ def fetch_ebird_page(ebird_code: str, base_url: str) -> dict:
 # Phase 2: eBird common names (all locales)
 # ---------------------------------------------------------------------------
 
-def _download_ebird_taxonomy(locale: str) -> dict[str, str]:
-    """Download eBird taxonomy CSV for a locale → {code: name}."""
-    key = cache_key("ebird_tax", locale)
-    cached = cache_get(key)
-    if cached is not None:
-        return cached
+def ebird_taxonomy_version() -> str:
+    """Return the latest eBird taxonomy version ("" if unavailable).
 
+    Download caches are keyed by this version, so a new eBird taxonomy
+    release is fetched instead of serving names cached from the old one.
+    """
+    req = urllib.request.Request(EBIRD_VERSIONS_URL, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            versions = json.loads(resp.read())
+    except Exception as e:
+        print(f"  WARNING: eBird taxonomy version lookup failed: {e}")
+        return ""
+    return next((str(v.get("authorityVer")) for v in versions if v.get("latest")), "")
+
+
+def _taxonomy_cache_key(prefix: str, locale: str, version: str):
+    return cache_key(prefix, f"{version}:{locale}" if version else locale)
+
+
+def _fetch_taxonomy_rows(locale: str) -> list[dict] | None:
+    """Download eBird taxonomy CSV rows for a locale (None on failure)."""
     url = f"{EBIRD_TAXONOMY_URL}?fmt=csv&locale={locale}&cat=species"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = resp.read().decode("utf-8")
-        result = {row["SPECIES_CODE"]: row["COMMON_NAME"]
-                  for row in csv.DictReader(io.StringIO(data))
-                  if row.get("SPECIES_CODE")}
     except Exception as e:
         print(f"  WARNING: eBird taxonomy download failed for {locale}: {e}")
-        return {}
+        return None
+    return [row for row in csv.DictReader(io.StringIO(data)) if row.get("SPECIES_CODE")]
 
+
+def _download_ebird_taxonomy(locale: str, version: str = "") -> dict[str, str]:
+    """Download eBird taxonomy CSV for a locale → {code: name}."""
+    key = _taxonomy_cache_key("ebird_tax", locale, version)
+    cached = cache_get(key)
+    if cached is not None:
+        return cached
+    rows = _fetch_taxonomy_rows(locale)
+    if rows is None:
+        return {}
+    result = {row["SPECIES_CODE"]: row["COMMON_NAME"] for row in rows}
     cache_put(key, result)
     return result
 
 
-def fetch_ebird_names() -> dict[str, dict[str, str]]:
+def fetch_ebird_taxonomy(version: str = "") -> dict[str, dict[str, str]]:
+    """Download the English eBird taxonomy → {code: {scientific_name, common_name}}.
+
+    The build uses it to check that a bird's eBird code exists and to fall
+    back to eBird's own scientific name when AviList has no 1:1 code.
+    """
+    key = _taxonomy_cache_key("ebird_tax_full", "en", version)
+    cached = cache_get(key)
+    if cached is not None:
+        return cached
+    rows = _fetch_taxonomy_rows("en")
+    if rows is None:
+        return {}
+    result = {
+        row["SPECIES_CODE"]: {
+            "scientific_name": (row.get("SCIENTIFIC_NAME") or "").strip(),
+            "common_name": (row.get("COMMON_NAME") or "").strip(),
+        }
+        for row in rows
+    }
+    cache_put(key, result)
+    return result
+
+
+def fetch_ebird_names(version: str = "") -> dict[str, dict[str, str]]:
     """Download eBird taxonomy for ALL available locales.
 
     Returns {species_code: {canonical_locale: common_name}}.
     Only includes actual translations (skips English fallbacks).
     """
     print("    Downloading English baseline...")
-    en_names = _download_ebird_taxonomy("en")
+    en_names = _download_ebird_taxonomy("en", version)
     if not en_names:
         print("  WARNING: Could not download eBird English taxonomy.")
         return {}
@@ -297,7 +360,7 @@ def fetch_ebird_names() -> dict[str, dict[str, str]]:
     for ebird_loc, canonical in EBIRD_LOCALES:
         print(f"    Downloading {canonical} (eBird: {ebird_loc})...",
               end=" ", flush=True)
-        names = _download_ebird_taxonomy(ebird_loc)
+        names = _download_ebird_taxonomy(ebird_loc, version)
         translated = 0
         for code, name in names.items():
             en_name = en_names.get(code, "")
@@ -348,7 +411,10 @@ def main():
         existing = load_json(OUTPUT_FILE)
         print(f"  Already have eBird data for {len(existing)} species")
 
-        to_fetch = [(sci, code) for sci, code in species.items() if sci not in existing]
+        # Pages are per code; a renamed species keeps the record fetched for its code.
+        fetched_codes = {rec.get("ebird_code") for rec in existing.values() if rec.get("ebird_code")}
+        to_fetch = [(sci, code) for sci, code in species.items()
+                    if sci not in existing and code not in fetched_codes]
         if args.limit:
             to_fetch = to_fetch[:args.limit]
 
@@ -429,8 +495,14 @@ def main():
 
     # Phase 2: eBird common names
     if not args.skip_names and not args.dry_run and not is_shutting_down():
-        print(f"\nPhase 2: eBird common names ({len(EBIRD_LOCALES)} locales)")
-        ebird_names = fetch_ebird_names()
+        version = ebird_taxonomy_version()
+        print(f"\nPhase 2: eBird common names ({len(EBIRD_LOCALES)} locales, "
+              f"taxonomy {version or 'unknown version'})")
+        taxonomy = fetch_ebird_taxonomy(version)
+        if taxonomy:
+            save_json({"version": version, "species": taxonomy}, TAXONOMY_FILE)
+            print(f"  Saved {len(taxonomy)} species to {TAXONOMY_FILE.name}")
+        ebird_names = fetch_ebird_names(version)
         if ebird_names:
             save_json(ebird_names, NAMES_FILE)
             total_codes = len(ebird_names)

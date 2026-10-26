@@ -15,6 +15,10 @@ via the taxa API in batches of 30 IDs.
 After group fetching, an AviList reconciliation phase looks up any species
 present in the AviList checklist but missing from iNat data, and adds them.
 
+A taxon status phase re-checks cached records against iNat (is_active, current
+name, replacement taxa) so swapped or merged taxa are dropped by the build
+instead of lingering next to their replacements.
+
 An observation photo fallback phase queries the iNat observations API for
 CC-licensed photos for species whose default taxon photo is missing or
 not permissively licensed.
@@ -49,6 +53,7 @@ SPECIES_COUNTS_URL = "https://api.inaturalist.org/v1/observations/species_counts
 TAXA_URL = "https://api.inaturalist.org/v1/taxa"
 COUNTS_PER_PAGE = 500  # max for species_counts endpoint
 TAXA_BATCH_SIZE = 30   # IDs per taxa batch request
+STATUS_KEY = "status_checked"  # date the iNat taxon status was last verified
 
 _shutdown = setup_shutdown()
 
@@ -308,6 +313,17 @@ def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
         "sound_observations_count": sound_count,
         "preferred_common_name": result.get("preferred_common_name", ""),
         "extinct": bool(result.get("extinct", False)),
+        **_status_fields(result),
+    }
+
+
+def _status_fields(result: dict) -> dict:
+    """Taxon status fields: lets the build drop taxa iNat has retired."""
+    return {
+        "inat_name": result.get("name", ""),
+        "is_active": bool(result.get("is_active", True)),
+        "current_synonymous_taxon_ids": result.get("current_synonymous_taxon_ids") or [],
+        STATUS_KEY: datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
 
 
@@ -858,6 +874,125 @@ def reconcile_avilist(existing: dict, cfg: dict, delay: float,
     return new_count
 
 
+# ── Taxon status refresh ──────────────────────────────────────────────
+
+def _fetch_taxa_status(taxon_ids: list[int], delay: float) -> list[dict] | None:
+    """Fetch taxa by ID. Returns None on request failure (unlike [] = none found)."""
+    ids_str = ",".join(str(i) for i in taxon_ids)
+    url = f"{TAXA_URL}/{ids_str}?all_names=false"
+    data = _api_get(url)
+    if not data:
+        time.sleep(delay * 3)
+        data = _api_get(url)
+    if not data:
+        return None
+    return data.get("results", [])
+
+
+def _fetch_sound_counts(taxon_ids: list[int], delay: float) -> dict[int, int]:
+    """Sound observation counts for specific species → {taxon_id: count}."""
+    ids_str = ",".join(str(i) for i in taxon_ids)
+    url = f"{SPECIES_COUNTS_URL}?taxon_id={ids_str}&sounds=true&per_page={COUNTS_PER_PAGE}"
+    data = _api_get(url)
+    time.sleep(delay)
+    if not data:
+        return {}
+    return {
+        r.get("taxon", {}).get("id"): r.get("count", 0)
+        for r in data.get("results", [])
+    }
+
+
+def refresh_taxon_status(existing: dict, delay: float, all_names: bool,
+                         limit: int = 0, save_every: int = 500,
+                         refresh: bool = False) -> int:
+    """Re-check cached taxa against iNat and fetch replacement taxa.
+
+    iNat retires a taxon on a swap or merge and creates a new one, so this
+    incremental cache would otherwise keep the old and new name side by side.
+    Records get is_active, the current iNat name, and replacement taxon IDs;
+    the build drops inactive taxa. Replacements we don't hold yet are fetched.
+    Returns the count of newly added replacement species.
+    """
+    print(f"\n{'='*60}")
+    print("Taxon status refresh")
+
+    todo = [
+        (sci, rec) for sci, rec in existing.items()
+        if rec.get("inat_id") is not None and (refresh or STATUS_KEY not in rec)
+    ]
+    if limit:
+        todo = todo[:limit]
+    print(f"  Need status check: {len(todo)} records")
+
+    checked = 0
+    batches = [todo[i:i + TAXA_BATCH_SIZE] for i in range(0, len(todo), TAXA_BATCH_SIZE)]
+    for batch_idx, batch in enumerate(batches):
+        if is_shutting_down():
+            break
+        results = _fetch_taxa_status([rec["inat_id"] for _, rec in batch], delay)
+        if results is None:
+            continue  # leave unchecked; retried on the next run
+        by_id = {r.get("id"): r for r in results}
+        for _, rec in batch:
+            result = by_id.get(rec["inat_id"])
+            if result is None:
+                # The ID no longer resolves on iNat: the taxon was deleted.
+                result = {"name": rec.get("inat_name", ""), "is_active": False}
+            rec.update(_status_fields(result))
+            checked += 1
+        if (batch_idx + 1) % 50 == 0 or batch_idx == len(batches) - 1:
+            print(f"  Checked {checked}/{len(todo)}", flush=True)
+            save_json(existing, OUTPUT_FILE)
+        time.sleep(delay)
+
+    inactive = [
+        rec for rec in existing.values()
+        if rec.get("inat_id") is not None and rec.get("is_active") is False
+    ]
+    held_ids = {rec.get("inat_id") for rec in existing.values()}
+    wanted: dict[int, tuple[str, bool]] = {}  # taxon ID → (group, from a split)
+    for rec in inactive:
+        targets = rec.get("current_synonymous_taxon_ids") or []
+        for tid in targets:
+            if tid not in held_ids:
+                wanted.setdefault(tid, (rec.get("taxon_group", ""), len(targets) > 1))
+    print(f"  Inactive taxa: {len(inactive)}; replacement taxa to fetch: {len(wanted)}")
+
+    new_count = 0
+    ids = list(wanted)
+    for i in range(0, len(ids), TAXA_BATCH_SIZE):
+        if is_shutting_down():
+            break
+        batch = ids[i:i + TAXA_BATCH_SIZE]
+        sounds = _fetch_sound_counts(batch, delay)
+        for result in fetch_taxa_batch(batch, all_names, delay):
+            name = result.get("name", "")
+            group, from_split = wanted[result["id"]]
+            sound_count = sounds.get(result["id"], 0)
+            if (
+                result.get("rank") != "species"
+                or not result.get("is_active", True)
+                or not is_full_species_name(name)
+                # an active record of that name exists (a retired one is replaced)
+                or existing.get(name, {}).get("is_active", False)
+            ):
+                continue
+            # A swap or merge carries the taxon over; split daughters must
+            # qualify like any group member (birds: every species qualifies).
+            if from_split and group != "Aves" and sound_count < 1:
+                continue
+            existing[name] = extract_record(result, group, sound_count=sound_count)
+            new_count += 1
+        if new_count and new_count % save_every < TAXA_BATCH_SIZE:
+            save_json(existing, OUTPUT_FILE)
+        time.sleep(delay)
+
+    save_json(existing, OUTPUT_FILE)
+    print(f"  Status refresh complete: {checked} checked, {new_count} replacements added")
+    return new_count
+
+
 # ── Priority species ──────────────────────────────────────────────────
 
 def load_priority_species() -> list[dict]:
@@ -1242,6 +1377,18 @@ def main():
         "--refresh-obs-photos", action="store_true",
         help="Ignore cached observation photo lookup results and recheck species"
     )
+    parser.add_argument(
+        "--skip-status", action="store_true",
+        help="Skip the taxon status refresh phase"
+    )
+    parser.add_argument(
+        "--status-only", action="store_true",
+        help="Only run the taxon status refresh phase"
+    )
+    parser.add_argument(
+        "--refresh-status", action="store_true",
+        help="Re-check the iNat status of all records, not just unchecked ones"
+    )
     args = parser.parse_args()
 
     # Filter groups
@@ -1268,14 +1415,21 @@ def main():
             or existing[r["scientific_name"]].get("inat_id") is None
         ]
         print(f"  Priority species: {len(priority)} reviewed, {len(priority_missing)} need fetch")
+        unchecked = sum(
+            1 for v in existing.values()
+            if v.get("inat_id") is not None and (args.refresh_status or STATUS_KEY not in v)
+        )
+        print(f"  Taxon status checks pending: {unchecked}")
         return
 
     inat_cfg = cfg.get("inat", {})
     if not args.save_every:
         args.save_every = inat_cfg.get("save_every", 500)
     total_new = 0
+    only_phase = (args.avilist_only or args.obs_photos_only
+                  or args.priority_only or args.status_only)
 
-    if not args.avilist_only and not args.obs_photos_only and not args.priority_only:
+    if not only_phase:
         for group in groups:
             if is_shutting_down():
                 break
@@ -1285,7 +1439,7 @@ def main():
             total_new += new
 
     # Priority species — reviewed exceptions / issue-driven additions
-    if (not args.skip_priority and not args.avilist_only
+    if (not args.skip_priority and not args.avilist_only and not args.status_only
             and not args.obs_photos_only and not is_shutting_down()):
         priority_new = fetch_priority_species(
             existing, cfg,
@@ -1299,7 +1453,7 @@ def main():
 
     # AviList reconciliation — find AviList species missing from iNat data
     if (not args.skip_avilist and not args.obs_photos_only and not args.priority_only
-            and not is_shutting_down()):
+            and not args.status_only and not is_shutting_down()):
         avilist_new = reconcile_avilist(
             existing, cfg,
             delay=inat_cfg.get("request_delay", 1.1),
@@ -1309,8 +1463,20 @@ def main():
         )
         total_new += avilist_new
 
+    # Taxon status — drop retired (swapped/merged) taxa, fetch their replacements
+    if (not args.skip_status and not args.avilist_only and not args.obs_photos_only
+            and not args.priority_only and not is_shutting_down()):
+        total_new += refresh_taxon_status(
+            existing,
+            delay=inat_cfg.get("request_delay", 1.1),
+            all_names=inat_cfg.get("all_names", True),
+            limit=args.limit,
+            save_every=args.save_every,
+            refresh=args.refresh_status,
+        )
+
     # Observation photo fallback — CC-licensed photos from observations
-    if (not args.skip_obs_photos and not args.new_only
+    if (not args.skip_obs_photos and not args.new_only and not args.status_only
             and not args.priority_only and not is_shutting_down()):
         obs_found = fetch_obs_photos(
             existing,

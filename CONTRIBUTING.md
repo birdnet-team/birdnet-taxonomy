@@ -51,6 +51,20 @@ Biological taxonomy records are species-level only. Do not add genera, higher
 ranks, subspecies, trinomials, hybrids, or informal taxa. Fold subspecies into
 their parent binomial species for now.
 
+AviList is the bird authority: bird records use the AviList scientific name,
+and iNat taxa AviList lumps or treats as subspecies are folded into the AviList
+species as aliases. When a bird is renamed by an AviList release, update
+references to it in `overrides/*.csv` to the new name (the build fails on
+unknown names), keeping the old name as an alias where it helps lookups.
+
+After collector changes or new source releases, check the build output for:
+`Identifiers shared by several records` (must be 0; the build fails otherwise),
+`Xeno-Canto names ... rejected`, and `Localized names re-assigned/dropped`.
+Stale shared IDs in cached raw data can be re-resolved with
+`python -m collectors.observationorg --recheck-shared`,
+`python -m collectors.macaulay --recheck-shared`, and
+`python -m collectors.xenocanto --revalidate`.
+
 Non-species sound classes are the only exception. Add them under
 `sound_classes` in `config.yml`, not in biological taxonomy or priority-species
 overrides. These records use the English display name as `scientific_name` and
@@ -100,6 +114,24 @@ Rules:
 - Use the accepted/current source name as the row's `scientific_name`.
 - Put old names or issue-specific context in `reason`.
 - Keep additions small and reviewed.
+
+## Bird Splits
+
+AviList is the bird authority, so iNat taxa it lumps are folded into the
+AviList species. `overrides/bird_splits.csv` lists reviewed exceptions that stay
+separate species, for example where users need to tell two widespread forms
+apart (Hooded Crow vs Carrion Crow).
+
+Required columns:
+
+- `scientific_name` — the species kept separate (must be an active iNat taxon)
+- `avilist_species` — the living AviList species that lumps it
+
+Optional columns: `source`, `reason`.
+
+The build fails if `scientific_name` is itself an AviList species or
+`avilist_species` is not a living AviList species. Keep this list short and
+justified: every row is a deliberate deviation from AviList.
 
 ## Scientific Aliases
 

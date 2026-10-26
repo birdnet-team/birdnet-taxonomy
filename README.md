@@ -127,6 +127,7 @@ collectors/
 dev/                       # Development metadata snapshots and local build artifacts
 dist/                      # Published metadata and generated site image assets
 overrides/
+    bird_splits.csv       # Git-tracked birds kept separate from an AviList lump
     priority_species.csv  # Git-tracked reviewed taxonomy additions
     species_aliases.csv   # Git-tracked manual scientific-name aliases
     species_overrides.csv  # Git-tracked manual image and crop overrides
@@ -174,9 +175,29 @@ bracketed notes, slash alternatives, and informal symbols are rejected in final
 metadata. Regular spaces, apostrophes, and dashes/hyphens are allowed when they
 are part of the accepted name.
 
-Bird taxonomy and English bird names come from AviList. Non-bird groups are
+Bird taxonomy and English bird names come from AviList (currently v2026). Every
+iNaturalist bird resolves to its AviList species — by exact name, by English
+name within the same genus or epithet stem, by eBird code, or as an AviList
+subspecies — and the AviList scientific name becomes canonical. iNat taxa that
+AviList lumps or treats as subspecies (e.g. *Corvus cornix* → *Corvus corone*)
+are folded into that species as `scientific_name_aliases` instead of becoming
+separate records. Reviewed exceptions in `overrides/bird_splits.csv` stay
+separate species (e.g. Hooded Crow *Corvus cornix*, which AviList lumps into
+*Corvus corone*): they keep their own name, iNat data, and eBird code and
+English name (looked up by scientific name in the eBird taxonomy). Species AviList marks as extinct are excluded; possibly
+extinct and extinct-in-the-wild species are kept. Non-bird groups are
 included through configured iNaturalist coverage rules and reviewed priority
 species additions.
+
+Taxa that iNaturalist has retired (taxon swaps and merges) are dropped; their
+names become aliases of the replacement taxon. Every external identifier
+(eBird, GBIF, NCBI, Avibase, BirdLife, Macaulay Library, Xeno-Canto,
+observation.org, iNat, Wikidata) points to exactly one record: an ID reached
+only through an alias loses to the species whose own name carries it, and IDs
+that stay ambiguous (typically after a recent split) are dropped. The build
+fails if a shared ID slips through. Localized names follow the same idea: when
+two species carry the same name in a locale, the more authoritative source
+(AviList > eBird > iNat > Wikidata) keeps it.
 
 Configured non-species sound classes live under `sound_classes` in
 `config.yml`. These records use their English display name as
@@ -191,7 +212,7 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 |------|---------|--------|
 | 1. AviList | `python -m collectors.avilist` | `raw_data/AviList-*.csv` |
 | 2. iNaturalist | `python -m collectors.inat` | `raw_data/inat_data.json` |
-| 3. eBird | `python -m collectors.ebird` | `raw_data/ebird_data.json`, `raw_data/ebird_names.json` |
+| 3. eBird | `python -m collectors.ebird` | `raw_data/ebird_data.json`, `raw_data/ebird_names.json`, `raw_data/ebird_taxonomy.json` |
 | 4. Wikidata | `python -m collectors.wikidata` | `raw_data/wikidata_data.json` |
 | 5. Wikipedia | `python -m collectors.wikipedia` | `raw_data/wikipedia_data.json` |
 | 6. Macaulay Library | `python -m collectors.macaulay` | `raw_data/macaulay_data.json` |
@@ -206,7 +227,7 @@ Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions
 
 ### Step 1 — AviList
 
-Downloads the AviList Global Avian Checklist (XLSX), converts to CSV. Provides authoritative bird taxonomy and AviList IDs.
+Downloads the AviList Global Avian Checklist (XLSX), converts to CSV. Provides authoritative bird taxonomy and AviList IDs. The checklist sheet is picked by its header, and v2026's upper-case headers (`SCIENTIFIC NAME`, `SPECIES CODE CORNELL LAB`, …) are normalized to the v2025 column names (`Scientific_name`, `Species_code_Cornell_Lab`, …) the pipeline reads. Set the release URL and CSV name under `avilist` in `config.yml`.
 
 | Flag | Description |
 |------|-------------|
@@ -218,7 +239,9 @@ Paginates the iNat taxa API to fetch all species for each taxon group. For birds
 
 Reviewed issue-specific additions can be listed in `overrides/priority_species.csv`. These species are fetched after configured groups, preferably by iNaturalist taxon ID, and keep the normal species-only validation rules.
 
-After group fetching, runs an **observation photo fallback** phase: for any species whose default taxon photo is missing or not CC-licensed, queries the iNat observations API for a CC-licensed photo from a research-grade observation (sorted by community votes). The result is stored in the `obs_photo` field, and unsuccessful lookups are cached in `inat_data.json` so later runs do not repeat the same slow checks.
+After group fetching, runs a **taxon status** phase: cached records are re-checked against the iNat taxa API (`is_active`, current name, `current_synonymous_taxon_ids`). The cache is incremental, so without this a taxon iNat retired in a swap or merge would linger next to its replacement as a duplicate species. Replacement taxa not yet cached are fetched. Records are checked once (`status_checked` date); `--refresh-status` re-checks all of them.
+
+Then runs an **observation photo fallback** phase: for any species whose default taxon photo is missing or not CC-licensed, queries the iNat observations API for a CC-licensed photo from a research-grade observation (sorted by community votes). The result is stored in the `obs_photo` field, and unsuccessful lookups are cached in `inat_data.json` so later runs do not repeat the same slow checks.
 
 | Flag | Description |
 |------|-------------|
@@ -234,14 +257,19 @@ After group fetching, runs an **observation photo fallback** phase: for any spec
 | `--skip-avilist` | Skip AviList reconciliation phase |
 | `--priority-only` | Only run reviewed priority species |
 | `--skip-priority` | Skip reviewed priority species |
+| `--status-only` | Only run the taxon status phase |
+| `--skip-status` | Skip the taxon status phase |
+| `--refresh-status` | Re-check the iNat status of all records, not just unchecked ones |
 | `--dry-run` | Preview without fetching |
 
 ### Step 3 — eBird
 
 Collects eBird species data in two phases:
 
-- **Phase 1 — Scraper:** Scrapes eBird species pages for English descriptions (`og:description`) and Macaulay Library images (`og:image`). Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps). Only for bird species with an eBird code.
-- **Phase 2 — Common names:** Downloads the eBird taxonomy CSV for 62 locales to collect common names in all available languages. Each locale download is cached to avoid re-fetching.
+- **Phase 1 — Scraper:** Scrapes eBird species pages for English descriptions (`og:description`) and Macaulay Library images (`og:image`). Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps). Only for bird species with an eBird code; codes come from the built `raw_data/taxonomy.json` when present (validated against eBird), and each code is scraped once.
+- **Phase 2 — Common names:** Downloads the eBird taxonomy CSV for 62 locales to collect common names in all available languages, and saves `raw_data/ebird_taxonomy.json` (eBird code → scientific name). Downloads are cached per eBird taxonomy version, so a new eBird release is fetched on the next run.
+
+The build only assigns eBird codes that exist in `ebird_taxonomy.json`. AviList can carry codes eBird has not published yet, and it leaves the code empty where its species concept has no 1:1 eBird match; the build then falls back to eBird's own scientific name (e.g. `Tyto furcata` → `brnowl`) and finally Wikidata, never giving one code to two species.
 
 | Flag | Description |
 |------|-------------|
@@ -257,7 +285,7 @@ Collects eBird species data in two phases:
 Fetches species identifiers, common name labels, and images from Wikidata and Wikimedia Commons via SPARQL queries.
 
 - **Phase 1 — eBird codes:** Resolves eBird species codes (P3444) for species not yet matched via AviList, using scientific name (P225) and iNat taxon ID (P3151) as lookup keys.
-- **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257). Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases.
+- **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257). Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases. A species' own name wins over an alias, aliases shared by several species are skipped, and `id_sources` records which Wikidata taxon name supplied each ID so the build can reject IDs reached through an untrusted alias.
 - **Phase 3 — Labels:** Fetches `rdfs:label` common names in all available languages.
 - **Phase 4 — Images:** Fetches Wikidata P18 images and checks Wikimedia Commons licenses (CC, PD, GFDL).
 
@@ -330,6 +358,7 @@ Resolution cascade:
 | `--limit N` | Cap new species to process (0 = all) |
 | `--group NAME` | Process only this taxon group |
 | `--new-only` | Only species not yet in macaulay_data.json |
+| `--recheck-shared` | Re-resolve species whose cached ML code is shared with another species |
 | `--dry-run` | Preview without API calls |
 
 ### Step 7 — Xeno-Canto
@@ -339,9 +368,11 @@ Maps each species to its Xeno-Canto scientific name. XC uses IOC taxonomy which 
 Resolution cascade:
 1. **Wikidata P2426** — bulk SPARQL fetch of XC species IDs (~31k species pre-mapped)
 2. **XC API direct** — queries by genus + epithet
-3. **XC API epithet search** — epithet-only search with group filter (catches genus transfers)
+3. **XC API epithet search** — epithet-only search within the species' XC group (catches genus transfers), accepted only when XC reports a single species with that epithet in the group; birds, mammals, and amphibians only (insect epithets collide across orders XC doesn't cover, and XC has no reptile group)
 4. **Alias synonym fallback** — tries reviewed aliases from `overrides/species_aliases.csv`, then GBIF synonyms, and retries the XC API
-5. **XC English name search** — last resort, matches by common name
+5. **XC English name search** — last resort, matches by common name within the species' XC groups
+
+Each entry records how it was matched (`method`). Failed requests are never cached as "no XC name" (the run stops after 20 consecutive failures, e.g. during an XC outage; rerun later to continue). Fuzzy matches (3, 5) that are another species' name or alias are rejected. The build validates cached names again: an XC name must be the species' own name or alias, or a genus transfer within the same taxon group that is not another species' name.
 
 | Flag | Description |
 |------|-------------|
@@ -349,6 +380,7 @@ Resolution cascade:
 | `--group NAME` | Process only this taxon group |
 | `--new-only` | Only species not yet in xc_data.json |
 | `--retry-unresolved` | Retry species cached with no XC mapping |
+| `--revalidate` | Drop cached XC names that belong to another species (or fuzzy matches for reptiles) and re-resolve them |
 | `--dry-run` | Preview without API calls |
 
 ### Step 8 — observation.org
@@ -367,6 +399,7 @@ Resolution cascade:
 | `--save-every N` | Save every N completed species (default: from config.yml) |
 | `--new-only` | Only species not yet in observationorg_data.json |
 | `--retry-unresolved` | Retry species cached with no observation.org ID |
+| `--recheck-shared` | Re-resolve species whose cached ID is shared with another species (e.g. after a split) |
 | `--dry-run` | Preview without API calls |
 
 ### Step 9 — Sound Classes
@@ -467,11 +500,12 @@ The collector also prunes obsolete cached `.webp` files and stale `.state` metad
 Merges all pre-collected data into the final metadata file. Runs purely offline — no API calls. Two phases:
 
 **Taxonomy phase:**
-1. Cross-references iNaturalist, AviList, Wikidata, and configured sound classes to build a canonical entry list
-2. Resolves eBird codes from AviList and pre-collected Wikidata data
-3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife)
-4. Collects common names from eBird (62 locales) and Wikidata labels
-5. Selects the best image for each species through a priority chain:
+1. Cross-references iNaturalist, AviList, Wikidata, and configured sound classes to build a canonical entry list (see [Taxonomy Rules](#taxonomy-rules): retired iNat taxa are dropped, birds take their AviList name, lumped/subspecies taxa are folded into aliases)
+2. Resolves eBird codes from AviList, eBird's own scientific names, and Wikidata, validated against `raw_data/ebird_taxonomy.json` and unique per species
+3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife), Macaulay Library, Xeno-Canto (validated against other species' names), and observation.org; an identifier claimed by several species stays only with the species whose own name carries it
+4. Collects common names from iNaturalist, eBird (62 locales), and Wikidata labels; names shared between species in a locale stay with the most authoritative source
+5. Raw data collected under an older name (e.g. Wikipedia text keyed by the iNat name of a bird AviList renamed) is found through the species' source names
+6. Selects the best image for each species through a priority chain:
    - **iNaturalist taxon photo** — default photo if CC-licensed
    - **Macaulay Library** — eBird image (source tagged as "Macaulay Library ML{asset_id}")
    - **Wikimedia Commons** — Wikidata P18 image if CC/PD/GFDL licensed
@@ -501,7 +535,7 @@ The build also computes `metadata_quality_score` and
 or matching the configured thin-record rule are dropped and listed in the
 configured report CSV, defaulting to `dev/metadata_quality_report.csv`.
 
-The JSON output contains full multilingual descriptions. The CSV output is a lighter export and does not include description excerpts; scientific aliases and metadata quality flags are exported as pipe-separated fields.
+The JSON output contains full multilingual descriptions and every collected common-name locale. The CSV output is a lighter export and does not include description excerpts; scientific aliases and metadata quality flags are exported as pipe-separated fields. It has one `common_name_<locale>` column per locale listed under `csv_export.locales` in `config.yml`, so the column set stays stable between builds.
 
 Image fields in the final metadata:
 
@@ -509,7 +543,9 @@ Image fields in the final metadata:
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 
 **BirdNET species IDs:**
-Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00498`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
+Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00724`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
+
+Downstream consumers should not use `birdnet_id` as a join key across pre-1.0 taxonomy versions; match on `scientific_name`, `scientific_name_aliases`, or an external identifier instead. IDs were last reassigned for the AviList v2026 / taxonomy-cleanup build (retired iNat taxa removed, AviList lumps folded, extinct birds excluded).
 
 | Flag | Description |
 |------|-------------|
@@ -629,7 +665,7 @@ curl '/api/species/eurblk1'
 - **[eBird](https://ebird.org)** — Species descriptions, images, and common names (62 locales) from the Cornell Lab of Ornithology. Species codes from the eBird/Clements taxonomy.
 - **[Wikidata](https://www.wikidata.org)** — External identifiers (GBIF, NCBI, Avibase, BirdLife), eBird codes, common name labels, and P18 images via SPARQL. Data available under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
 - **[Wikipedia](https://www.wikipedia.org)** — English summaries, localized article links, and optional public-service translations from English Wikipedia excerpts. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
-- **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2025). AviList Core Team, 2025. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2025](https://doi.org/10.2173/avilist.v2025).
+- **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2026). AviList Core Team, 2026. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2026](https://doi.org/10.2173/avilist.v2026).
 - **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.
 - **[Xeno-Canto](https://xeno-canto.org)** — Scientific name mappings for cross-referencing the world's largest shared bird and wildlife sound collection.
 - **[observation.org](https://observation.org)** — Species IDs for cross-referencing to one of Europe's largest biodiversity recording platforms. Uses AviList taxonomy for birds.

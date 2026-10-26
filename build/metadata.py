@@ -41,9 +41,10 @@ from pathlib import Path
 from urllib.parse import quote
 from config import load_config, image_url_prefix, LOCALE_NAMES
 from collectors._common import (
-    ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE,
+    ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE, TRUSTED_XC_METHODS,
     clean_aliases, is_clean_common_name, is_clean_scientific_name,
-    is_full_species_name, load_json, save_json,
+    is_full_species_name, load_json, load_manual_species_aliases,
+    related_species_names, save_json, xc_record_method,
 )
 from utils.audit_metadata import audit_records, has_failures, print_report
 from utils.description_quality import word_count
@@ -55,6 +56,7 @@ from utils.description_quality import word_count
 INAT_FILE = RAW_DIR / "inat_data.json"
 EBIRD_DATA_FILE = RAW_DIR / "ebird_data.json"
 EBIRD_NAMES_FILE = RAW_DIR / "ebird_names.json"
+EBIRD_TAXONOMY_FILE = RAW_DIR / "ebird_taxonomy.json"
 WIKIDATA_FILE = RAW_DIR / "wikidata_data.json"
 WIKI_DATA_FILE = RAW_DIR / "wikipedia_data.json"
 TRANSLATE_DATA_FILE = RAW_DIR / "translate_data.json"
@@ -65,6 +67,7 @@ SOUND_CLASSES_FILE = RAW_DIR / "sound_classes.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
+MANUAL_SPLITS_FILE = ROOT / "overrides" / "bird_splits.csv"
 BN_IDS_FILE = ROOT / "bn_ids.json"
 
 ID_FIELDS = (
@@ -75,6 +78,27 @@ EXTERNAL_ID_FIELDS = (
     "ebird_code", "gbif_id", "ncbi_id", "avibase_id", "birdlife_id",
     "ml_taxon_code", "xc_name", "observationorg_id",
 )
+WIKIDATA_ID_FIELDS = ("gbif_id", "ncbi_id", "avibase_id", "birdlife_id")
+
+# AviList extinction statuses that exclude a species. Possibly extinct and
+# extinct-in-the-wild species stay: they can still be recorded.
+AVILIST_EXTINCT = {"extinct", "(extinct)"}
+
+# How an iNat bird was resolved to its AviList species; lower wins when
+# several iNat taxa resolve to the same species.
+BIRD_MATCH_RANK = {"direct": 0, "common_name": 1, "wikidata": 2, "ebird": 3,
+                   "subspecies": 4}
+
+# Localized-name source priority for resolving names shared between species.
+NAME_SOURCE_RANK = {"avilist": 0, "ebird": 1, "inat": 2, "wikidata": 3}
+NAME_SOURCE_BY_RANK = {rank: src for src, rank in NAME_SOURCE_RANK.items()}
+
+# Taxon groups Xeno-Canto can filter by; other groups only accept exact or
+# reviewed-alias XC names.
+XC_FUZZY_GROUPS = {"Aves", "Mammalia", "Insecta", "Amphibia"}
+# Groups where an epithet-only XC match (unique within the XC group) is
+# credible; insect epithets collide across orders XC doesn't cover.
+XC_EPITHET_GROUPS = {"Aves", "Mammalia", "Amphibia"}
 
 
 
@@ -171,15 +195,17 @@ def load_inat() -> dict:
     return load_json(INAT_FILE)
 
 
-def load_avilist(cfg: dict) -> list[dict]:
+def load_avilist(cfg: dict) -> tuple[list[dict], dict[tuple[str, str], set[str]]]:
+    """Load AviList species rows and a (genus, subspecies epithet) → species index."""
     csv_name = cfg.get("avilist", {}).get("csv_file", "")
     csv_path = RAW_DIR / csv_name if csv_name else None
     if not csv_path or not csv_path.exists():
         print(f"WARNING: AviList CSV not found at {csv_path}. "
               "Birds will not have eBird codes. Run: python -m collectors.avilist")
-        return []
+        return [], {}
 
     rows = []
+    subspecies: dict[tuple[str, str], set[str]] = {}
     with open(csv_path, encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter=";")
         # AviList versions the Clements column name (e.g. _v2024, _v2025);
@@ -189,12 +215,21 @@ def load_avilist(cfg: dict) -> list[dict]:
             "English_name_Clements_v2025",
         )
         for row in reader:
-            if row.get("Taxon_rank") != "species":
-                continue
+            rank = row.get("Taxon_rank")
             sci = (row.get("Scientific_name") or "").strip()
+            if rank == "subspecies":
+                parts = sci.split()
+                if len(parts) == 3:
+                    subspecies.setdefault((parts[0], parts[2]), set()).add(
+                        f"{parts[0]} {parts[1]}"
+                    )
+                continue
+            if rank != "species":
+                continue
             code = (row.get("Species_code_Cornell_Lab") or "").strip()
             en_clements = (row.get(clements_col) or "").strip()
             en_avilist = (row.get("English_name_AviList") or "").strip()
+            status = (row.get("Extinct_or_possibly_extinct") or "").strip().lower()
             # Keep species even without an eBird code: AviList is the naming
             # authority for birds; a missing code just means no eBird linkage.
             if sci:
@@ -203,9 +238,10 @@ def load_avilist(cfg: dict) -> list[dict]:
                     "ebird_code": code,
                     "common_name_clements": en_clements,
                     "common_name_avilist": en_avilist,
+                    "extinct": status in AVILIST_EXTINCT,
                     "aliases": [],
                 })
-    return rows
+    return rows, subspecies
 
 
 def load_manual_overrides() -> dict[str, dict]:
@@ -301,6 +337,37 @@ def load_manual_aliases() -> dict[str, list[str]]:
             seen.add(key)
             aliases.setdefault(sci, []).append(alias)
     return aliases
+
+
+def load_bird_splits() -> dict[str, str]:
+    """Load reviewed bird splits kept separate from an AviList lump.
+
+    Returns {scientific_name: AviList species it is lumped into}.
+    """
+    if not MANUAL_SPLITS_FILE.exists():
+        return {}
+    splits: dict[str, str] = {}
+    with open(MANUAL_SPLITS_FILE, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        missing = {"scientific_name", "avilist_species"} - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(
+                f"{MANUAL_SPLITS_FILE}: missing required columns: {', '.join(sorted(missing))}"
+            )
+        for line_no, row in enumerate(reader, start=2):
+            sci = (row.get("scientific_name") or "").strip()
+            parent = (row.get("avilist_species") or "").strip()
+            for value in (sci, parent):
+                if not is_clean_scientific_name(value):
+                    raise ValueError(
+                        f"{MANUAL_SPLITS_FILE}: line {line_no}: invalid scientific name '{value}'"
+                    )
+            if sci == parent or sci in splits:
+                raise ValueError(
+                    f"{MANUAL_SPLITS_FILE}: line {line_no}: duplicate or self-referencing '{sci}'"
+                )
+            splits[sci] = parent
+    return splits
 
 
 def is_sound_class_record(record: dict) -> bool:
@@ -404,8 +471,279 @@ def print_manual_override_stats(overrides: dict[str, dict]):
 # Phase 1: Build taxonomy
 # ---------------------------------------------------------------------------
 
+def _entry_names(sci: str, entry: dict) -> list[str]:
+    """Names raw sources may key a species under: canonical first, then source names.
+
+    Collectors key data by the name they were run against (iNat names for
+    Wikipedia/translations, older AviList names for eBird pages), which can
+    differ from the canonical name after an AviList rename.
+    """
+    return [sci, *(n for n in entry.get("source_names", []) if n != sci)]
+
+
+def _raw_lookup(data: dict, names: list[str]) -> dict:
+    """Return the first non-empty raw record found under any of the names."""
+    for name in names:
+        rec = data.get(name)
+        if rec:
+            return rec
+    return {}
+
+
+def _own_aliases(sci: str, taxonomy: dict, names: list[str]) -> list[str]:
+    """Clean aliases, minus this species' own name and other species' names.
+
+    Synonym sources (GBIF, Wikidata) list names that are valid species in
+    our taxonomy, e.g. both halves of a split; those can't identify this one.
+    """
+    return [a for a in clean_aliases(names) if a != sci and a not in taxonomy]
+
+
+def _new_entry(**fields) -> dict:
+    entry = {
+        "inat_id": None,
+        "inat_key": "",
+        "taxon_group": "",
+        "iconic_taxon_name": "",
+        "preferred_common_name": "",
+        "common_name_alt": "",
+        "common_names": {},
+        "common_name_sources": {},
+        "observations_count": 0,
+        "ebird_code": "",
+        "gbif_id": "",
+        "ncbi_id": "",
+        "avibase_id": "",
+        "birdlife_id": "",
+        "ml_taxon_code": "",
+        "xc_name": "",
+        "observationorg_id": "",
+        "image_url": "",
+        "image_author": "",
+        "image_license": "",
+        "image_source": "",
+        "match_source": "",
+        "source_names": [],
+        "scientific_name_aliases": [],
+    }
+    entry.update(fields)
+    return entry
+
+
+def _inat_common_names(rec: dict) -> dict[str, str]:
+    return {
+        LOCALE_NORMALIZE.get(k, k): v
+        for k, v in (rec.get("common_names", {}) or {}).items()
+    }
+
+
+def _match_avilist_bird(key: str, name: str, rec: dict, avi_by_sci: dict,
+                        avi_by_en: dict, avi_by_code: dict,
+                        avilist_subspecies: dict, wikidata: dict,
+                        ebird_by_sci: dict) -> tuple[str, str]:
+    """Resolve an iNat bird to its AviList species. Returns (species, method)."""
+    for n in (name, key):
+        if n in avi_by_sci:
+            return n, "direct"
+    common = (rec.get("preferred_common_name") or "").lower()
+    rows = [r for r in avi_by_en.get(common, []) if related_species_names(name, r["scientific_name"])]
+    if len(rows) == 1:
+        return rows[0]["scientific_name"], "common_name"
+    for n in (name, key):
+        code = wikidata.get(n, {}).get("ebird_code", "")
+        if code in avi_by_code:
+            return avi_by_code[code]["scientific_name"], "wikidata"
+    for n in (name, key):
+        for code in ebird_by_sci.get(n, []):
+            if code in avi_by_code:
+                return avi_by_code[code]["scientific_name"], "ebird"
+    # AviList treats the taxon as a subspecies: fold it into the parent species.
+    genus, epithet = name.split()[:2]
+    parents = avilist_subspecies.get((genus, epithet), set())
+    if len(parents) == 1:
+        parent = next(iter(parents))
+        if parent in avi_by_sci:
+            return parent, "subspecies"
+    return "", ""
+
+
+def _assign_ebird_codes(taxonomy: dict, avi_by_sci: dict, ebird_tax: dict,
+                        ebird_by_sci: dict, wikidata: dict) -> dict[str, int]:
+    """Give each bird at most one eBird code, and each code at most one bird.
+
+    AviList codes are preferred, but only when eBird publishes them (AviList
+    can be ahead of eBird). Otherwise fall back to eBird's own scientific
+    name, then to Wikidata. AviList leaves the code empty where its species
+    concept has no 1:1 eBird match; eBird's same-named species is then the
+    closest linkage (names, images) available.
+    """
+    known = (lambda code: code in ebird_tax) if ebird_tax else (lambda code: bool(code))
+    birds = {sci: e for sci, e in taxonomy.items() if e.get("taxon_group") == "Aves"}
+
+    def avilist_code(sci, entry):
+        code = avi_by_sci.get(sci, {}).get("ebird_code", "")
+        return [code] if known(code) else []
+
+    def ebird_sci_code(sci, entry):
+        return ebird_by_sci.get(sci, [])
+
+    def ebird_source_code(sci, entry):
+        return [c for n in entry.get("source_names", []) for c in ebird_by_sci.get(n, [])]
+
+    def wikidata_code(sci, entry):
+        codes = [wikidata.get(n, {}).get("ebird_code", "") for n in _entry_names(sci, entry)]
+        return [c for c in codes if known(c)]
+
+    counts: dict[str, int] = {}
+    used: set[str] = set()
+    for method, candidates in (("avilist", avilist_code), ("ebird_name", ebird_sci_code),
+                               ("ebird_source_name", ebird_source_code),
+                               ("wikidata", wikidata_code)):
+        wants: dict[str, list[str]] = {}
+        for sci, entry in birds.items():
+            if entry["ebird_code"]:
+                continue
+            codes = [c for c in dict.fromkeys(candidates(sci, entry)) if c and c not in used]
+            if len(codes) == 1:
+                wants.setdefault(codes[0], []).append(sci)
+        for code, owners in wants.items():
+            if len(owners) == 1:  # a code wanted by several birds is ambiguous
+                birds[owners[0]]["ebird_code"] = code
+                used.add(code)
+                counts[method] = counts.get(method, 0) + 1
+    return counts
+
+
+def _validated_xc_name(sci: str, entry: dict, xc_name: str,
+                       name_owners: dict[str, set[str]],
+                       genus_groups: dict[str, set[str]], method: str = "",
+                       matched_name: str = "") -> str:
+    """Reject Xeno-Canto names that belong to a different species.
+
+    The XC collector falls back to epithet, synonym, and English-name
+    searches, which can land on an unrelated species sharing the epithet (a
+    gecko mapped to an owl, a dragonfly to a bush-cricket). Accept exact names
+    and reviewed aliases; otherwise the name must not be another species', its
+    genus must fit the taxon group, and the match method must hold up:
+    Wikidata's XC ID, an exact English name within the XC group, a synonym
+    that is still a trusted alias, or a unique epithet match (birds, mammals,
+    amphibians). Untagged legacy names need a related name in those groups
+    (or the same genus).
+    """
+    if not xc_name or not is_clean_scientific_name(xc_name):
+        return ""
+    trusted = name_owners.get(xc_name) == {sci}
+    if xc_name == sci or xc_name in entry.get("scientific_name_aliases", []) or trusted:
+        return xc_name
+    owners = name_owners.get(xc_name)
+    if owners and sci not in owners:
+        return ""
+    group = entry.get("taxon_group", "")
+    if group not in XC_FUZZY_GROUPS:
+        return ""
+    genus = xc_name.split()[0]
+    groups = genus_groups.get(genus)
+    if groups and group not in groups:
+        return ""
+    if method == "synonym" and sci not in name_owners.get(matched_name, set()):
+        method = ""  # matched through a name we no longer trust
+    if method in TRUSTED_XC_METHODS:
+        return xc_name
+    related = related_species_names(sci, xc_name)
+    if method == "epithet_unique":
+        return xc_name if related and group in XC_EPITHET_GROUPS else ""
+    if method:
+        return ""  # e.g. "epithet": recorded before uniqueness was checked
+    if related and (group in XC_EPITHET_GROUPS or genus == sci.split()[0]):
+        return xc_name
+    return ""
+
+
+def _resolve_shared_identifiers(taxonomy: dict, sources: dict[str, dict]) -> dict[str, int]:
+    """Keep each external identifier on one species only.
+
+    An identifier found via an alias (e.g. a GBIF synonym, or the parent name
+    of a recent split) loses to a species whose own name carries it; IDs still
+    shared after that are ambiguous and are dropped from all claimants.
+    sources maps species → field → the name the ID was matched under.
+    """
+    dropped: dict[str, int] = {}
+    for key in (*WIKIDATA_ID_FIELDS, "ml_taxon_code", "observationorg_id", "xc_name"):
+        owners: dict[str, list[str]] = {}
+        for sci, entry in taxonomy.items():
+            if entry.get(key):
+                owners.setdefault(str(entry[key]), []).append(sci)
+        for value, claimants in owners.items():
+            if len(claimants) < 2:
+                continue
+            exact = [s for s in claimants if sources.get(s, {}).get(key) in _entry_names(s, taxonomy[s])]
+            keep = exact if len(exact) == 1 else []
+            for sci in claimants:
+                if sci not in keep:
+                    taxonomy[sci][key] = ""
+                    dropped[key] = dropped.get(key, 0) + 1
+    return dropped
+
+
+def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = None) -> int:
+    """Drop localized names that a more authoritative source gives another species,
+    and names that are just the scientific name.
+
+    Secondary sources (iNat, Wikidata) occasionally carry a neighbouring
+    species' name — e.g. a German name that eBird assigns to a different bird.
+    For each locale, a name belongs to the species holding it from the best
+    source; others fall back to their next candidate or lose the locale.
+    """
+    # Sources fill untranslated locales with a scientific name (eBird for some
+    # es_ES names, Wikidata bot wikis with old combinations); a known
+    # scientific name of any species is never a common name.
+    scientific = {n.lower() for n in extra_scientific or ()}
+    for sci, entry in taxonomy.items():
+        scientific.add(sci.lower())
+        scientific.update(a.lower() for a in entry.get("scientific_name_aliases", []))
+        scientific.update(a.lower() for a in entry.get("xc_aliases", []))
+
+    def is_scientific(sci: str, entry: dict, name: str) -> bool:
+        return name.strip().lower() in scientific
+
+    best: dict[tuple[str, str], int] = {}
+    for sci, entry in taxonomy.items():
+        for loc, cands in entry.get("_name_candidates", {}).items():
+            for rank, name in cands:
+                if is_scientific(sci, entry, name):
+                    continue
+                k = (loc, name.strip().lower())
+                best[k] = min(best.get(k, rank), rank)
+
+    dropped = 0
+    for sci, entry in taxonomy.items():
+        cands_by_loc = entry.pop("_name_candidates", {})
+        for loc, cands in cands_by_loc.items():
+            chosen = None
+            for rank, name in sorted(cands, key=lambda c: c[0]):
+                if is_scientific(sci, entry, name):
+                    continue
+                if rank <= best[(loc, name.strip().lower())]:
+                    chosen = (rank, name)
+                    break
+            current = entry["common_names"].get(loc)
+            if chosen is None:
+                if current is not None:
+                    entry["common_names"].pop(loc)
+                    entry["common_name_sources"].pop(loc, None)
+                    dropped += 1
+            elif chosen[1] != current:
+                entry["common_names"][loc] = chosen[1]
+                entry["common_name_sources"][loc] = NAME_SOURCE_BY_RANK[chosen[0]]
+                dropped += 1
+    return dropped
+
+
 def build_taxonomy(inat: dict, avilist_rows: list[dict],
-                   allowed_groups: set[str] | None = None) -> tuple[dict, dict]:
+                   allowed_groups: set[str] | None = None,
+                   avilist_subspecies: dict[tuple[str, str], set[str]] | None = None,
+                   bird_splits: dict[str, str] | None = None,
+                   ) -> tuple[dict, dict]:
     """Cross-reference iNat, AviList, Wikidata, and eBird to build a taxonomy.
 
     All data is read from pre-collected JSON files — no API calls.
@@ -413,38 +751,74 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     included (plus AviList-only birds when "Aves" is allowed).
     Returns (taxonomy_dict, stats_dict).
     """
-    taxonomy = {}
+    taxonomy: dict[str, dict] = {}
+    avilist_subspecies = avilist_subspecies or {}
+    bird_splits = bird_splits or {}
 
-    avi_by_sci = {}
-    avi_by_en = {}
+    avi_by_sci = {row["scientific_name"]: row for row in avilist_rows}
+    for sci, parent in bird_splits.items():
+        if sci in avi_by_sci:
+            raise ValueError(f"{MANUAL_SPLITS_FILE}: '{sci}' is already an AviList species")
+        if parent not in avi_by_sci or avi_by_sci[parent].get("extinct"):
+            raise ValueError(f"{MANUAL_SPLITS_FILE}: '{parent}' is not a living AviList species")
+    avi_by_en: dict[str, list[dict]] = {}
     avi_by_code: dict[str, dict] = {}
     for row in avilist_rows:
-        avi_by_sci[row["scientific_name"]] = row
         if row["ebird_code"]:
             avi_by_code[row["ebird_code"]] = row
-        for name in (row["common_name_clements"], row["common_name_avilist"]):
+        for name in {row["common_name_clements"].lower(), row["common_name_avilist"].lower()}:
             if name:
-                avi_by_en[name.lower()] = row
+                avi_by_en.setdefault(name, []).append(row)
 
     # Load pre-collected Wikidata and eBird names
     wikidata = load_json(WIKIDATA_FILE)
     ebird_names = load_json(EBIRD_NAMES_FILE)
+    ebird_tax = load_json(EBIRD_TAXONOMY_FILE).get("species", {})
+    ebird_by_sci: dict[str, list[str]] = {}
+    for code, rec in ebird_tax.items():
+        ebird_by_sci.setdefault(rec.get("scientific_name", ""), []).append(code)
+    manual_aliases = load_manual_species_aliases()
     if wikidata:
         print(f"  Wikidata:    {len(wikidata)} species")
     if ebird_names:
         print(f"  eBird names: {len(ebird_names)} species codes")
+    if ebird_tax:
+        print(f"  eBird taxonomy: {len(ebird_tax)} species")
+    else:
+        print("  WARNING: ebird_taxonomy.json missing — eBird codes are not validated. "
+              "Run: python -m collectors.ebird --names-only")
 
-    matched_sci = set()
-    stats = {"direct": 0, "common_name": 0, "wikidata": 0,
+    stats = {"direct": 0, "common_name": 0, "wikidata": 0, "ebird": 0,
+             "subspecies": 0, "folded_birds": 0, "split_override": 0,
              "avilist_only": 0, "non_bird": 0, "excluded_non_species": 0,
              "excluded_extinct": 0, "excluded_bird_no_avilist": 0,
-             "excluded_group": 0, "sound_classes": 0}
+             "excluded_group": 0, "excluded_inactive": 0, "sound_classes": 0}
 
-    # Pass 1: Process all iNat species
-    for sci_name, rec in inat.items():
-        if rec.get("inat_id") is None:
+    # Pass 0: taxa iNat has retired (swaps/merges). Their names become
+    # aliases of the replacement taxon instead of duplicate species.
+    retired_names: dict[int, list[str]] = {}
+    for key, rec in inat.items():
+        if rec.get("inat_id") is None or rec.get("is_active", True):
             continue
-        if not is_full_species_name(sci_name):
+        stats["excluded_inactive"] += 1
+        for tid in rec.get("current_synonymous_taxon_ids") or []:
+            retired_names.setdefault(tid, []).extend(
+                n for n in (key, rec.get("inat_name")) if n
+            )
+
+    # Pass 1: resolve active iNat species to canonical names. Birds resolve to
+    # their AviList species (AviList is the bird authority); several iNat
+    # taxa can resolve to one AviList species (lumps, subspecies).
+    bird_claims: dict[str, list[tuple]] = {}
+    split_claims: dict[str, list[tuple]] = {}
+    other_claims: dict[str, list[tuple]] = {}
+    for key, rec in inat.items():
+        if rec.get("inat_id") is None or not rec.get("is_active", True):
+            continue
+        name = rec.get("inat_name") or key
+        if not is_full_species_name(name):
+            name = key
+        if not is_full_species_name(name):
             stats["excluded_non_species"] += 1
             continue
         if rec.get("extinct"):
@@ -453,201 +827,275 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
         if allowed_groups and rec.get("taxon_group") not in allowed_groups:
             stats["excluded_group"] += 1
             continue
+        claim = (-(rec.get("observations_count") or 0), rec["inat_id"], key)
+        if rec.get("taxon_group") != "Aves":
+            other_claims.setdefault(name, []).append(claim)
+            continue
+        split = next((n for n in (name, key) if n in bird_splits), "")
+        if split:
+            # Reviewed exception: kept apart from the AviList species lumping it.
+            split_claims.setdefault(split, []).append(claim)
+            continue
+        target, method = _match_avilist_bird(
+            key, name, rec, avi_by_sci, avi_by_en, avi_by_code,
+            avilist_subspecies, wikidata, ebird_by_sci,
+        )
+        if not target:
+            stats["excluded_bird_no_avilist"] += 1
+            continue
+        if avi_by_sci[target].get("extinct"):
+            stats["excluded_extinct"] += 1
+            continue
+        bird_claims.setdefault(target, []).append((BIRD_MATCH_RANK[method], *claim, method))
 
-        is_bird = rec.get("taxon_group") == "Aves"
-        ebird_code = ""
-        match_source = ""
+    def claim_names(key: str) -> list[str]:
+        rec = inat[key]
+        return list(dict.fromkeys(n for n in (key, rec.get("inat_name")) if n))
 
-        if is_bird:
-            avi_row = avi_by_sci.get(sci_name)
-            if avi_row:
-                # AviList lacks a code for a few species; fall back to Wikidata
-                # so we keep eBird linkage (locale names, descriptions).
-                ebird_code = (avi_row["ebird_code"]
-                              or wikidata.get(sci_name, {}).get("ebird_code", ""))
-                match_source = "direct"
-                matched_sci.add(avi_row["scientific_name"])
-                stats["direct"] += 1
-            else:
-                cn = (rec.get("preferred_common_name") or "").lower()
-                avi_row = avi_by_en.get(cn) if cn else None
-                if avi_row and avi_row["scientific_name"] not in matched_sci:
-                    ebird_code = avi_row["ebird_code"]
-                    match_source = "common_name"
-                    matched_sci.add(avi_row["scientific_name"])
-                    stats["common_name"] += 1
-                else:
-                    avi_row = None  # discard stale common-name hit before wikidata path
-                    # Try Wikidata for eBird code
-                    wd_code = wikidata.get(sci_name, {}).get("ebird_code", "")
-                    if wd_code:
-                        ebird_code = wd_code
-                        match_source = "wikidata"
-                        stats["wikidata"] += 1
-                        # Claim the AviList row for this eBird code so Pass 2
-                        # doesn't add it again as a phantom "avilist_only" entry.
-                        avi_wd_row = avi_by_code.get(wd_code)
-                        if avi_wd_row:
-                            matched_sci.add(avi_wd_row["scientific_name"])
-                    else:
-                        # Bird not on AviList — skip it
-                        stats["excluded_bird_no_avilist"] += 1
-                        continue
-        else:
-            match_source = "non_bird"
-            stats["non_bird"] += 1
-
-        # For birds matched to AviList, use AviList English name as authority;
-        # keep Clements/eBird name as alternative for American audience.
-        pref_name = rec.get("preferred_common_name", "")
-        alt_name = ""
-        if is_bird and avi_row:
-            avilist_en = (avi_row.get("common_name_avilist") or
-                          avi_row.get("common_name_clements") or "")
-            clements_en = avi_row.get("common_name_clements") or ""
-            if avilist_en:
-                pref_name = avilist_en
-            # Store Clements name as alt only if it differs from AviList
-            if clements_en and clements_en != pref_name:
-                alt_name = clements_en
-
-        taxonomy[sci_name] = {
-            "inat_id": rec["inat_id"],
-            "taxon_group": rec.get("taxon_group", ""),
-            "iconic_taxon_name": rec.get("iconic_taxon_name", ""),
-            "preferred_common_name": pref_name,
-            "common_name_alt": alt_name,
-            "common_names": {
-                LOCALE_NORMALIZE.get(k, k): v
-                for k, v in rec.get("common_names", {}).items()
+    for target, claims in bird_claims.items():
+        claims.sort()
+        _, _, _, key, method = claims[0]
+        rec = inat[key]
+        avi_row = avi_by_sci[target]
+        stats[method] += 1
+        stats["folded_birds"] += len(claims) - 1
+        # A subspecies-level iNat taxon is narrower than the AviList species:
+        # keep it as an alias, but don't borrow its names or descriptions.
+        narrower = method == "subspecies"
+        source_names = [] if narrower else [n for n in claim_names(key) if n != target]
+        aliases = [n for n in claim_names(key) if n != target]
+        for _, _, inat_id, other_key, _ in claims:
+            if other_key != key:
+                aliases.extend(claim_names(other_key))
+            aliases.extend(retired_names.get(inat_id, []))
+        avilist_en = avi_row["common_name_avilist"] or avi_row["common_name_clements"]
+        clements_en = avi_row["common_name_clements"]
+        pref_name = avilist_en or rec.get("preferred_common_name", "")
+        common_names = {} if narrower else _inat_common_names(rec)
+        if pref_name:
+            common_names["en"] = pref_name
+        taxonomy[target] = _new_entry(
+            inat_id=rec["inat_id"],
+            inat_key=key,
+            taxon_group="Aves",
+            iconic_taxon_name=rec.get("iconic_taxon_name", ""),
+            preferred_common_name=pref_name,
+            common_name_alt=clements_en if clements_en and clements_en != pref_name else "",
+            common_names=common_names,
+            common_name_sources={
+                loc: "avilist" if loc == "en" and avilist_en else "inat"
+                for loc in common_names
             },
-            "observations_count": rec.get("observations_count", 0),
-            "ebird_code": ebird_code,
-            "gbif_id": "",
-            "ncbi_id": "",
-            "avibase_id": "",
-            "birdlife_id": "",
-            "ml_taxon_code": "",
-            "xc_name": "",
-            "observationorg_id": "",
-            "image_url": "",
-            "image_author": "",
-            "image_license": "",
-            "image_source": "",
-            "match_source": match_source,
-            "scientific_name_aliases": clean_aliases(avi_row.get("aliases", [])) if is_bird and avi_row else [],
-        }
-        # Ensure AviList English name is also set as common_names.en
-        if is_bird and avi_row and pref_name:
-            taxonomy[sci_name]["common_names"]["en"] = pref_name
+            observations_count=rec.get("observations_count", 0),
+            match_source=method,
+            source_names=source_names,
+            scientific_name_aliases=clean_aliases([a for a in aliases if a != target]),
+        )
+
+    for sci, claims in split_claims.items():
+        claims.sort()
+        _, _, key = claims[0]
+        rec = inat[key]
+        stats["split_override"] += 1
+        source_names = [n for n in claim_names(key) if n != sci]
+        aliases = list(source_names)
+        for _, inat_id, other_key in claims:
+            if other_key != key:
+                aliases.extend(claim_names(other_key))
+            aliases.extend(retired_names.get(inat_id, []))
+        # No AviList English name exists for a lumped taxon: use eBird's
+        # (Clements) name for the same scientific name, else iNat's.
+        ebird_en = next((ebird_tax[c].get("common_name", "") for c in ebird_by_sci.get(sci, [])
+                         if ebird_tax[c].get("common_name")), "")
+        pref_name = ebird_en or rec.get("preferred_common_name", "")
+        common_names = _inat_common_names(rec)
+        if pref_name:
+            common_names["en"] = pref_name
+        taxonomy[sci] = _new_entry(
+            inat_id=rec["inat_id"],
+            inat_key=key,
+            taxon_group="Aves",
+            iconic_taxon_name=rec.get("iconic_taxon_name", ""),
+            preferred_common_name=pref_name,
+            common_names=common_names,
+            common_name_sources={
+                loc: "ebird" if loc == "en" and ebird_en else "inat" for loc in common_names
+            },
+            observations_count=rec.get("observations_count", 0),
+            match_source="split_override",
+            source_names=source_names,
+            scientific_name_aliases=clean_aliases([a for a in aliases if a != sci]),
+        )
+    missing_splits = sorted(set(bird_splits) - set(split_claims))
+    if missing_splits:
+        print(f"  WARNING: bird splits without an active iNat taxon (skipped): "
+              f"{', '.join(missing_splits)}")
+
+    for name, claims in other_claims.items():
+        claims.sort()
+        _, _, key = claims[0]
+        rec = inat[key]
+        stats["non_bird"] += 1
+        source_names = [n for n in claim_names(key) if n != name]
+        aliases = list(source_names)
+        for _, inat_id, other_key in claims:
+            if other_key != key:
+                aliases.extend(claim_names(other_key))
+            aliases.extend(retired_names.get(inat_id, []))
+        common_names = _inat_common_names(rec)
+        taxonomy[name] = _new_entry(
+            inat_id=rec["inat_id"],
+            inat_key=key,
+            taxon_group=rec.get("taxon_group", ""),
+            iconic_taxon_name=rec.get("iconic_taxon_name", ""),
+            preferred_common_name=rec.get("preferred_common_name", ""),
+            common_names=common_names,
+            common_name_sources={loc: "inat" for loc in common_names},
+            observations_count=rec.get("observations_count", 0),
+            match_source="non_bird",
+            source_names=source_names,
+            scientific_name_aliases=clean_aliases([a for a in aliases if a != name]),
+        )
 
     # Pass 2: Add AviList-only species
     for row in avilist_rows:
-        if row["scientific_name"] in matched_sci:
-            continue
-        if row["scientific_name"] in taxonomy:
-            continue
-
         sci = row["scientific_name"]
+        if sci in taxonomy or row.get("extinct"):
+            continue
         en = row["common_name_avilist"] or row["common_name_clements"] or ""
         clements_en = row["common_name_clements"] or ""
-        alt_en = clements_en if clements_en and clements_en != en else ""
-        ebird_code = (row["ebird_code"]
-                      or wikidata.get(sci, {}).get("ebird_code", ""))
-        taxonomy[sci] = {
-            "inat_id": None,
-            "taxon_group": "Aves",
-            "iconic_taxon_name": "Aves",
-            "preferred_common_name": en,
-            "common_name_alt": alt_en,
-            "common_names": {"en": en} if en else {},
-            "observations_count": 0,
-            "ebird_code": ebird_code,
-            "gbif_id": "",
-            "ncbi_id": "",
-            "avibase_id": "",
-            "birdlife_id": "",
-            "ml_taxon_code": "",
-            "xc_name": "",
-            "observationorg_id": "",
-            "image_url": "",
-            "image_author": "",
-            "image_license": "",
-            "image_source": "",
-            "match_source": "avilist_only",
-            "scientific_name_aliases": clean_aliases(row.get("aliases", [])),
-        }
+        taxonomy[sci] = _new_entry(
+            taxon_group="Aves",
+            iconic_taxon_name="Aves",
+            preferred_common_name=en,
+            common_name_alt=clements_en if clements_en and clements_en != en else "",
+            common_names={"en": en} if en else {},
+            common_name_sources={"en": "avilist"} if en else {},
+            match_source="avilist_only",
+        )
         stats["avilist_only"] += 1
 
-    # Pass 3: Wikidata identifiers (GBIF, NCBI, etc.)
-    id_keys = ("gbif_id", "ncbi_id", "avibase_id", "birdlife_id")
-    id_counts = {k: 0 for k in id_keys}
+    # eBird codes (unique, validated against the eBird taxonomy)
+    stats["ebird_codes"] = _assign_ebird_codes(
+        taxonomy, avi_by_sci, ebird_tax, ebird_by_sci, wikidata,
+    )
+
+    # Pass 3: Macaulay Library + observation.org codes (their aliases are
+    #         trusted when checking Wikidata IDs and Xeno-Canto names)
+    macaulay = load_json(MACAULAY_DATA_FILE)
+    obsorg_data = load_json(OBSERVATIONORG_DATA_FILE)
+    id_sources: dict[str, dict[str, str]] = {}
+    ml_count = 0
+    obsorg_count = 0
+    for sci, entry in taxonomy.items():
+        names = _entry_names(sci, entry)
+        # A match made through another species' name (the parent of a recent
+        # split, listed as a GBIF synonym) belongs to that species.
+        ml = _raw_lookup(macaulay, names)
+        if ml.get("matched_name") in taxonomy and ml.get("matched_name") != sci:
+            ml = {}
+        obs = _raw_lookup(obsorg_data, names)
+        if obs.get("matched_name") in taxonomy and obs.get("matched_name") != sci:
+            obs = {}
+        if ml.get("ml_taxon_code"):
+            entry["ml_taxon_code"] = ml["ml_taxon_code"]
+            id_sources.setdefault(sci, {})["ml_taxon_code"] = ml.get("matched_name") or sci
+            ml_count += 1
+        if obs.get("observationorg_id") is not None:
+            entry["observationorg_id"] = obs["observationorg_id"]
+            id_sources.setdefault(sci, {})["observationorg_id"] = obs.get("matched_name") or sci
+            obsorg_count += 1
+        entry["scientific_name_aliases"] = _own_aliases(sci, taxonomy, [
+            *entry["scientific_name_aliases"], *ml.get("aliases", []), *obs.get("aliases", []),
+        ])
+
+    # Pass 3b: Wikidata synonym aliases (GBIF synonyms collected per species)
+    for sci, entry in taxonomy.items():
+        for name in _entry_names(sci, entry):
+            wd = wikidata.get(name) or {}
+            entry["scientific_name_aliases"] = _own_aliases(
+                sci, taxonomy, [*entry["scientific_name_aliases"], *wd.get("aliases", [])]
+            )
+
+    # Pass 3c: Xeno-Canto names, validated against every other species' names
+    xc_data = load_json(XC_DATA_FILE)
+    name_owners: dict[str, set[str]] = {}
+    genus_groups: dict[str, set[str]] = {}
+    for sci, entry in taxonomy.items():
+        manual = [a for a in manual_aliases.get(sci, []) if a not in taxonomy]
+        for name in [sci, *entry["scientific_name_aliases"], *manual]:
+            name_owners.setdefault(name, set()).add(sci)
+            genus_groups.setdefault(name.split()[0], set()).add(entry["taxon_group"])
+    for genus, _ in avilist_subspecies:
+        genus_groups.setdefault(genus, set()).add("Aves")
+    xc_count = 0
+    xc_rejected = 0
+    for sci, entry in taxonomy.items():
+        xc = _raw_lookup(xc_data, _entry_names(sci, entry))
+        raw_xc = xc.get("xc_name") or ""
+        method = xc_record_method(xc)
+        matched = xc.get("matched_name") or ""
+        xc_name = _validated_xc_name(sci, entry, raw_xc, name_owners, genus_groups,
+                                     method, matched)
+        if raw_xc and not xc_name:
+            xc_rejected += 1
+        if xc_name:
+            entry["xc_name"] = xc_name
+            id_sources.setdefault(sci, {})["xc_name"] = xc_name
+            xc_count += 1
+        # XC names are cross-references, not reviewed synonyms: kept apart from
+        # scientific_name_aliases (which collectors read back as trusted
+        # synonyms) and only merged into the published aliases.
+        entry["xc_aliases"] = _own_aliases(sci, taxonomy, [
+            a for a in [xc_name, *xc.get("aliases", [])]
+            if a and _validated_xc_name(sci, entry, a, name_owners, genus_groups,
+                                        method, matched)
+        ])
+    stats["ml_taxon_codes"] = ml_count
+    stats["xc_names"] = xc_count
+    stats["xc_rejected"] = xc_rejected
+    stats["observationorg_ids"] = obsorg_count
+
+    # Pass 3d: Wikidata identifiers (GBIF, NCBI, etc.). An ID found through an
+    # alias counts only if that alias is trusted (reviewed, synonym source,
+    # or a validated Xeno-Canto name).
+    id_counts = {k: 0 for k in WIKIDATA_ID_FIELDS}
     wd_coverage = 0
-    for sci in taxonomy:
-        wd = wikidata.get(sci, {})
-        if not wd:
+    for sci, entry in taxonomy.items():
+        names = _entry_names(sci, entry)
+        wd_recs = [wikidata[n] for n in names if wikidata.get(n)]
+        if not wd_recs:
             continue
         wd_coverage += 1
-        for key in id_keys:
-            if (
-                key in ("avibase_id", "birdlife_id")
-                and taxonomy[sci].get("taxon_group") != "Aves"
-            ):
+        trusted = (set(names) | set(entry["scientific_name_aliases"])
+                   | set(entry.get("xc_aliases", []))
+                   | {a for a in manual_aliases.get(sci, []) if a not in taxonomy})
+        for key in WIKIDATA_ID_FIELDS:
+            if key in ("avibase_id", "birdlife_id") and entry["taxon_group"] != "Aves":
                 continue
-            val = wd.get(key, "")
-            if val:
-                taxonomy[sci][key] = val
+            for wd in wd_recs:
+                val = wd.get(key, "")
+                # Collector records which Wikidata name supplied each ID; an ID
+                # reached through a name we no longer trust is discarded.
+                via = (wd.get("id_sources") or {}).get(key)
+                if not val or (via and via not in trusted):
+                    continue
+                entry[key] = val
+                id_sources.setdefault(sci, {})[key] = via or sci
                 id_counts[key] += 1
-        aliases = wd.get("aliases", [])
-        if aliases:
-            taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
-                [*taxonomy[sci].get("scientific_name_aliases", []), *aliases]
-            )
+                break
     stats["wikidata_ids"] = id_counts
     stats["wikidata_coverage"] = wd_coverage
 
-    # Pass 3b: Macaulay Library + Xeno-Canto + observation.org codes
-    macaulay = load_json(MACAULAY_DATA_FILE)
-    xc_data = load_json(XC_DATA_FILE)
-    obsorg_data = load_json(OBSERVATIONORG_DATA_FILE)
-    ml_count = 0
-    xc_count = 0
-    obsorg_count = 0
-    for sci in taxonomy:
-        ml_code = macaulay.get(sci, {}).get("ml_taxon_code", "")
-        if ml_code:
-            taxonomy[sci]["ml_taxon_code"] = ml_code
-            ml_count += 1
-        ml_aliases = macaulay.get(sci, {}).get("aliases", [])
-        if ml_aliases:
-            taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
-                [*taxonomy[sci].get("scientific_name_aliases", []), *ml_aliases]
-            )
-        xc_name = xc_data.get(sci, {}).get("xc_name", "")
-        if xc_name:
-            taxonomy[sci]["xc_name"] = xc_name
-            xc_count += 1
-            if xc_name != sci:
-                taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
-                    [*taxonomy[sci].get("scientific_name_aliases", []), xc_name]
-                )
-        xc_aliases = xc_data.get(sci, {}).get("aliases", [])
-        if xc_aliases:
-            taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
-                [*taxonomy[sci].get("scientific_name_aliases", []), *xc_aliases]
-            )
-        obs_id = obsorg_data.get(sci, {}).get("observationorg_id")
-        if obs_id is not None:
-            taxonomy[sci]["observationorg_id"] = obs_id
-            obsorg_count += 1
-        obs_aliases = obsorg_data.get(sci, {}).get("aliases", [])
-        if obs_aliases:
-            taxonomy[sci]["scientific_name_aliases"] = clean_aliases(
-                [*taxonomy[sci].get("scientific_name_aliases", []), *obs_aliases]
-            )
-    stats["ml_taxon_codes"] = ml_count
-    stats["xc_names"] = xc_count
-    stats["observationorg_ids"] = obsorg_count
+    stats["shared_ids_dropped"] = _resolve_shared_identifiers(taxonomy, id_sources)
+
+    # Localized names: every source offers candidates per locale, ranked
+    # AviList > eBird > iNat > Wikidata; conflicts are resolved below.
+    for entry in taxonomy.values():
+        entry["_name_candidates"] = {
+            loc: [(NAME_SOURCE_RANK[entry["common_name_sources"].get(loc, "inat")], name)]
+            for loc, name in entry["common_names"].items()
+        }
 
     # Pass 4: eBird common names (non-English locales; AviList is authority
     #          for English bird names, set in Pass 1)
@@ -664,19 +1112,36 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
                 if loc == "en" and is_bird:
                     continue
                 entry["common_names"][loc] = name
+                entry["common_name_sources"][loc] = "ebird"
+                entry["_name_candidates"].setdefault(loc, []).append(
+                    (NAME_SOURCE_RANK["ebird"], name)
+                )
                 ebird_name_counts[loc] = ebird_name_counts.get(loc, 0) + 1
     stats["ebird_names"] = ebird_name_counts
 
     # Pass 5: Wikidata labels as fallback for all species
     wd_label_counts: dict[str, int] = {}
-    for sci in taxonomy:
-        wd = wikidata.get(sci, {})
-        labels = wd.get("labels", {})
-        for loc, label in labels.items():
-            if loc not in taxonomy[sci]["common_names"]:
-                taxonomy[sci]["common_names"][loc] = label
-                wd_label_counts[loc] = wd_label_counts.get(loc, 0) + 1
+    for sci, entry in taxonomy.items():
+        for name in _entry_names(sci, entry):
+            for loc, label in (wikidata.get(name, {}).get("labels", {}) or {}).items():
+                loc = LOCALE_NORMALIZE.get(loc, loc)
+                if label in (sci, name) or label in entry["scientific_name_aliases"]:
+                    continue
+                entry["_name_candidates"].setdefault(loc, []).append(
+                    (NAME_SOURCE_RANK["wikidata"], label)
+                )
+                if loc not in entry["common_names"]:
+                    entry["common_names"][loc] = label
+                    entry["common_name_sources"][loc] = "wikidata"
+                    wd_label_counts[loc] = wd_label_counts.get(loc, 0) + 1
     stats["wikidata_labels"] = wd_label_counts
+
+    # English stays authoritative per species (AviList / iNat display name).
+    for entry in taxonomy.values():
+        entry["_name_candidates"].pop("en", None)
+    stats["name_conflicts_resolved"] = _resolve_name_conflicts(
+        taxonomy, {a for names in manual_aliases.values() for a in names}
+    )
 
     # Pass 6: Default image selection
     # Priority: iNat taxon (licensed) → eBird → Wikimedia → iNat observation
@@ -687,7 +1152,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
 
     # 6a: iNat taxon photo — only if CC-licensed
     for sci, entry in taxonomy.items():
-        inat_rec = inat.get(sci, {})
+        inat_rec = inat.get(entry["inat_key"], {}) if entry["inat_key"] else {}
         url = inat_rec.get("image_url", "")
         lic = inat_rec.get("image_license", "")
         if url and lic in ACCEPTABLE_LICENSES:
@@ -720,9 +1185,12 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     for sci, entry in taxonomy.items():
         if entry["image_url"]:
             continue
-        wd = wikidata.get(sci, {})
-        wd_img = wd.get("image")
-        if wd_img and wd_img.get("url"):
+        wd_img = next(
+            (wikidata[n]["image"] for n in _entry_names(sci, entry)
+             if (wikidata.get(n, {}).get("image") or {}).get("url")),
+            None,
+        )
+        if wd_img:
             entry["image_url"] = wd_img["url"]
             entry["image_author"] = _parse_image_author(
                 wd_img.get("attribution", ""), "wikimedia")
@@ -734,7 +1202,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     for sci, entry in taxonomy.items():
         if entry["image_url"]:
             continue
-        inat_rec = inat.get(sci, {})
+        inat_rec = inat.get(entry["inat_key"], {}) if entry["inat_key"] else {}
         obs_photo = inat_rec.get("obs_photo")
         if obs_photo and obs_photo.get("url"):
             entry["image_url"] = obs_photo["url"]
@@ -767,22 +1235,28 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
 
 def print_taxonomy_stats(taxonomy: dict, stats: dict):
     """Print summary statistics for the taxonomy build."""
-    total_birds = (stats["direct"] + stats["common_name"] + stats["wikidata"]
-                   + stats["avilist_only"])
-    matched_birds = stats["direct"] + stats["common_name"] + stats["wikidata"]
+    matched_birds = sum(stats[k] for k in BIRD_MATCH_RANK)
+    total_birds = matched_birds + stats["avilist_only"] + stats["split_override"]
     total = len(taxonomy)
+    inat_birds = matched_birds + stats["folded_birds"] + stats.get("excluded_bird_no_avilist", 0)
 
     print(f"\n  Total entries: {total}")
     print(f"  Birds:         {total_birds}")
     print(f"    Direct match:     {stats['direct']}")
     print(f"    Common name:      {stats['common_name']}")
-    print(f"    Wikidata:         {stats['wikidata']}")
+    print(f"    Wikidata code:    {stats['wikidata']}")
+    print(f"    eBird name:       {stats['ebird']}")
+    print(f"    AviList subsp.:   {stats['subspecies']}")
     print(f"    AviList only:     {stats['avilist_only']} (no iNat ID)")
-    print(f"    Match rate:       {matched_birds}/{matched_birds + stats.get('excluded_bird_no_avilist', 0)} "
-          f"iNat birds ({100 * matched_birds / max(1, matched_birds + stats.get('excluded_bird_no_avilist', 0)):.1f}%)")
+    print(f"    Kept split:       {stats['split_override']} (overrides/bird_splits.csv)")
+    print(f"    Folded:           {stats['folded_birds']} iNat taxa merged into an AviList species")
+    print(f"    Match rate:       {matched_birds + stats['folded_birds']}/{inat_birds} "
+          f"iNat birds ({100 * (matched_birds + stats['folded_birds']) / max(1, inat_birds):.1f}%)")
     print(f"  Non-birds:     {stats['non_bird']}")
     if stats.get("sound_classes"):
         print(f"  Sound classes: {stats['sound_classes']}")
+    if stats.get("excluded_inactive"):
+        print(f"  Excluded:      {stats['excluded_inactive']} taxa retired on iNat (swapped/merged)")
     if stats.get("excluded_non_species"):
         print(f"  Excluded:      {stats['excluded_non_species']} non-species iNat taxa")
     if stats.get("excluded_extinct"):
@@ -792,12 +1266,24 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     if stats.get("excluded_group"):
         print(f"  Excluded:      {stats['excluded_group']} species from disabled taxon groups")
 
+    codes = stats.get("ebird_codes", {})
+    print(f"\n  eBird codes: {sum(codes.values())} "
+          f"({', '.join(f'{k}: {v}' for k, v in codes.items())})")
+
     # Wikidata identifiers
     wd_ids = stats.get("wikidata_ids", {})
     wd_cov = stats.get("wikidata_coverage", 0)
     print(f"\n  Wikidata identifiers ({wd_cov}/{total} entries found):")
     for key, count in wd_ids.items():
         print(f"    {key}: {count}")
+    dropped = stats.get("shared_ids_dropped", {})
+    if dropped:
+        print(f"    dropped as shared by several species: "
+              f"{', '.join(f'{k}: {v}' for k, v in dropped.items())}")
+    print(f"  Xeno-Canto names: {stats.get('xc_names', 0)} "
+          f"({stats.get('xc_rejected', 0)} rejected as another species' name)")
+    print(f"  Localized names re-assigned/dropped as conflicting: "
+          f"{stats.get('name_conflicts_resolved', 0)}")
 
     # Common name coverage
     coverage = stats.get("coverage", {})
@@ -1020,7 +1506,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     }
     source_alias_claims: Counter[str] = Counter()
     for sci_name, tax in taxonomy.items():
-        for alias in clean_aliases(tax.get("scientific_name_aliases", [])):
+        for alias in clean_aliases([*tax.get("scientific_name_aliases", []),
+                                    *tax.get("xc_aliases", [])]):
             if alias != sci_name and canonical_names.get(alias.lower(), sci_name) == sci_name:
                 source_alias_claims[alias.lower()] += 1
 
@@ -1032,6 +1519,13 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         manual_aliases = {}
 
     image_prefix = image_url_prefix()
+    # eBird pages are scraped per code; a code is the stable link even when
+    # the scientific name the page was fetched under has changed.
+    ebird_by_code: dict[str, dict] = {}
+    for rec in ebird.values():
+        code = rec.get("ebird_code")
+        if code and (rec.get("description") or code not in ebird_by_code):
+            ebird_by_code[code] = rec
 
     for sci_name, tax in taxonomy.items():
         if is_sound_class_record(tax):
@@ -1039,9 +1533,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                 continue
         elif not is_clean_scientific_name(sci_name):
             continue
-        wp = wiki.get(sci_name, {})
-        eb = ebird.get(sci_name, {})
-        cl = translate.get(sci_name, {})
+        names = _entry_names(sci_name, tax)
+        wp = _raw_lookup(wiki, names)
+        eb = ebird_by_code.get(tax.get("ebird_code", ""), {})
+        cl = _raw_lookup(translate, names)
 
         # Descriptions: locale → text.
         # Base layer: Wikipedia (multi-locale) or eBird (English-only).
@@ -1122,7 +1617,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         if is_sound_class_record(tax):
             aliases = clean_common_aliases(tax.get("scientific_name_aliases", []))
         else:
-            source_aliases = clean_aliases(tax.get("scientific_name_aliases", []))
+            source_aliases = clean_aliases([*tax.get("scientific_name_aliases", []),
+                                            *tax.get("xc_aliases", [])])
             source_aliases = [
                 alias for alias in source_aliases
                 if alias != sci_name
@@ -1240,12 +1736,18 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     return records
 
 
-def records_to_csv(records: list[dict]) -> str:
-    """Convert records to CSV without description excerpts."""
-    locale_counts: Counter[str] = Counter()
-    for r in records:
-        locale_counts.update(r.get("common_names", {}).keys())
-    top_locales = [loc for loc, _ in locale_counts.most_common(30)]
+def records_to_csv(records: list[dict], locales: list[str] | None = None) -> str:
+    """Convert records to CSV without description excerpts.
+
+    One common_name_<locale> column per configured locale (csv_export.locales).
+    """
+    if locales:
+        top_locales = [str(loc) for loc in locales]
+    else:
+        locale_counts: Counter[str] = Counter()
+        for r in records:
+            locale_counts.update(r.get("common_names", {}).keys())
+        top_locales = [loc for loc, _ in locale_counts.most_common(30)]
 
     base_cols = [
         "birdnet_id",
@@ -1317,13 +1819,14 @@ def main():
     else:
         print("Loading sources...")
         inat = load_inat()
-        avilist_rows = load_avilist(cfg)
+        avilist_rows, avilist_subspecies = load_avilist(cfg)
         print(f"  iNaturalist: {len(inat)} species")
         print(f"  AviList:     {len(avilist_rows)} bird species")
 
         print("\nBuilding taxonomy...")
         allowed_groups = {g["name"] for g in cfg.get("taxon_groups", [])}
-        taxonomy, stats = build_taxonomy(inat, avilist_rows, allowed_groups)
+        taxonomy, stats = build_taxonomy(inat, avilist_rows, allowed_groups,
+                                         avilist_subspecies, load_bird_splits())
         print_taxonomy_stats(taxonomy, stats)
 
         if not args.dry_run:
@@ -1398,7 +1901,7 @@ def main():
         min_english_words=desc_cfg.get("min_english_words", 40),
     )
     print_report(audit, sample_limit=5)
-    if audit["alias_conflicts"]:
+    if audit["alias_conflicts"] or audit["duplicate_ids"]:
         raise SystemExit(1)
     if args.strict_validation and has_failures(audit):
         raise SystemExit(1)
@@ -1416,7 +1919,7 @@ def main():
 
     # Write CSV (atomic)
     csv_path = out_dir / "species_metadata.csv"
-    csv_text = records_to_csv(records)
+    csv_text = records_to_csv(records, cfg.get("csv_export", {}).get("locales"))
     tmp = csv_path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(csv_text)

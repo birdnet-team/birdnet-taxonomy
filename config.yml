@@ -328,10 +328,52 @@ metadata_quality:
   drop_if_missing_image_and_description: true
   max_external_ids_for_thin_records: 1
 
+# Release CSV export (dist/species_metadata.csv). The JSON carries every
+# locale; the CSV gets one common_name_<locale> column per locale listed here,
+# so the column set stays stable when locale coverage shifts between builds.
+csv_export:
+  locales:
+    - en
+    - ar
+    - bg
+    - ca
+    - cs
+    - cy
+    - da
+    - de
+    - es
+    - es_EC
+    - es_ES
+    - es_MX
+    - et
+    - fa
+    - fi
+    - fr
+    - he
+    - hr
+    - hu
+    - it
+    - ja
+    - ko
+    - lt
+    - nl
+    - "no"
+    - pl
+    - pt
+    - pt_PT
+    - ru
+    - sk
+    - sr
+    - sv
+    - tr
+    - uk
+    - zh
+    - zh-CN
+
 # AviList checklist download
 avilist:
-  url: "https://www.avilist.org/wp-content/uploads/2026/06/AviList-v2025b-10Jun2026-extended.xlsx" 
-  csv_file: "AviList-v2025b-10Jun2026-extended.csv"   # converted from xlsx
+  url: "https://www.avilist.org/wp-content/uploads/2026/10/AviList-v2026-20Oct2026-extended-version.xlsx"
+  csv_file: "AviList-v2026-20Oct2026-extended.csv"   # converted from xlsx
 
 # LLM translation settings (API key is in .env, not here)
 # Supports Gemini, OpenAI, and Anthropic — provider auto-detected from .env.
@@ -388,7 +430,7 @@ macaulay:
 
 # Xeno-Canto settings (API key is in .env: XC_API_KEY=...)
 xenocanto:
-  rps: 5                 # max requests per second
+  rps: 2                 # max requests per second (XC returns 502s under ~5 rps)
 
 # observation.org settings
 observationorg:

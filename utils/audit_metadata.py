@@ -33,6 +33,8 @@ OPTIONAL_ID_FIELDS = (
     "xc_name",
     "observationorg_id",
 )
+# Identifiers that must point at exactly one record.
+UNIQUE_ID_FIELDS = (*OPTIONAL_ID_FIELDS, "wikidata_qid")
 
 
 def _is_sound_class(record: dict[str, Any]) -> bool:
@@ -65,6 +67,8 @@ def audit_records(records: list[dict[str, Any]],
 
     alias_to_species: dict[str, set[str]] = defaultdict(set)
     canonical_names: dict[str, str] = {}
+    id_owners: dict[tuple[str, str], list[str]] = defaultdict(list)
+    common_name_owners: dict[str, list[str]] = defaultdict(list)
 
     for record in records:
         sci = str(record.get("scientific_name") or "")
@@ -130,6 +134,13 @@ def audit_records(records: list[dict[str, Any]],
         for field in OPTIONAL_ID_FIELDS:
             if not record.get(field):
                 optional_missing[field] += 1
+        for field in UNIQUE_ID_FIELDS:
+            value = record.get(field)
+            if value not in (None, ""):
+                id_owners[(field, str(value))].append(rec_id)
+        common = str(record.get("common_name") or "").strip().lower()
+        if common and common != sci.lower():
+            common_name_owners[common].append(rec_id)
 
         image = record.get("image")
         if not (isinstance(image, dict) and (image.get("src") or image.get("medium"))):
@@ -145,6 +156,13 @@ def audit_records(records: list[dict[str, Any]],
     missing_required = {
         field: values for field, values in missing_required.items() if values
     }
+    duplicate_ids = {
+        f"{field}={value}": owners
+        for (field, value), owners in id_owners.items() if len(owners) > 1
+    }
+    duplicate_common_names = {
+        name: owners for name, owners in common_name_owners.items() if len(owners) > 1
+    }
 
     return {
         "total": len(records),
@@ -155,6 +173,8 @@ def audit_records(records: list[dict[str, Any]],
         "bad_scientific": bad_scientific,
         "bad_common": bad_common,
         "alias_conflicts": alias_conflicts,
+        "duplicate_ids": duplicate_ids,
+        "duplicate_common_names": duplicate_common_names,
         "optional_missing": optional_missing,
         "image_missing": image_missing,
     }
@@ -206,6 +226,20 @@ def print_report(report: dict[str, Any], sample_limit: int) -> None:
     if len(conflicts) > sample_limit:
         print(f"  ... {len(conflicts) - sample_limit} more")
 
+    duplicates = report["duplicate_ids"]
+    print(f"\nIdentifiers shared by several records: {len(duplicates)}")
+    for key, owners in list(duplicates.items())[:sample_limit]:
+        print(f"  {key}: {', '.join(owners)}")
+    if len(duplicates) > sample_limit:
+        print(f"  ... {len(duplicates) - sample_limit} more")
+
+    shared_names = report["duplicate_common_names"]
+    print(f"\nCommon names shared by several records (review): {len(shared_names)}")
+    for name, owners in list(shared_names.items())[:sample_limit]:
+        print(f"  {name}: {', '.join(owners)}")
+    if len(shared_names) > sample_limit:
+        print(f"  ... {len(shared_names) - sample_limit} more")
+
     print("\nOptional ID gaps:")
     for field, count in report["optional_missing"].items():
         print(f"  {field}: {count}")
@@ -219,6 +253,7 @@ def has_failures(report: dict[str, Any]) -> bool:
         or report["bad_scientific"]
         or report["bad_common"]
         or report["alias_conflicts"]
+        or report["duplicate_ids"]
     )
 
 
@@ -252,7 +287,12 @@ def run_self_test() -> None:
         "descriptions": {"en": "Too short."},
         "scientific_name_aliases": ["Anas / bad"],
     }
-    report = audit_records([good, sound_class, bad], min_english_words=40)
+    twin = dict(good, birdnet_id="BN00003", scientific_name="Anas boschas",
+                ebird_code="mallar3", scientific_name_aliases=[])
+    good["ebird_code"] = "mallar3"
+    report = audit_records([good, sound_class, bad, twin], min_english_words=40)
+    assert "ebird_code=mallar3" in report["duplicate_ids"]
+    assert "mallard" in report["duplicate_common_names"]
     assert "birdnet_id" in report["missing_required"]
     assert "taxon_group" in report["missing_required"]
     assert "description_source" in report["missing_required"]

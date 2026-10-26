@@ -186,36 +186,50 @@ def query_identifiers(
         for name in names:
             search_items.append((sci, name))
 
+    # Build name→sci mapping over all species, dropping aliases claimed by
+    # several species to avoid attributing Wikidata IDs to the wrong taxon.
+    name_to_sci: dict[str, str] = {}
+    for sci, name in search_items:
+        if name == sci:
+            name_to_sci[name] = sci  # a species' own name is never ambiguous
+        elif name in name_to_sci:
+            if name_to_sci[name] not in (sci, name):
+                name_to_sci[name] = ""  # alias of several species — skip
+        else:
+            name_to_sci[name] = sci
+    name_to_sci = {k: v for k, v in name_to_sci.items() if v}
+    search_items = [(sci, name) for sci, name in search_items if name_to_sci.get(name) == sci]
+
+    rows: list[dict] = []
     for i in range(0, len(search_items), _SPARQL_BATCH):
         batch = search_items[i:i + _SPARQL_BATCH]
         values = " ".join(f'"{name}"' for _, name in batch)
-        # Build name→sci mapping, dropping names claimed by more than one species
-        # in this batch to avoid attributing Wikidata IDs to the wrong taxon.
-        name_to_sci: dict[str, str] = {}
-        for sci, name in batch:
-            if name in name_to_sci:
-                if name_to_sci[name] != sci:
-                    name_to_sci[name] = ""  # ambiguous — mark and skip
-            else:
-                name_to_sci[name] = sci
-        name_to_sci = {k: v for k, v in name_to_sci.items() if v}
         query = (
             f"SELECT {select_str} WHERE {{\n"
             f"  VALUES ?taxonName {{ {values} }}\n"
             f"  ?item wdt:P225 ?taxonName .\n"
             f"{optionals}}}"
         )
-        rows = _sparql_query(query)
-        for r in rows:
-            taxon_name = r["taxonName"]["value"]
-            sci = name_to_sci.get(taxon_name, taxon_name)
-            ids = results.setdefault(sci, {})
-            for key in WD_IDENTIFIERS:
-                if key == "ebird_code":
-                    continue
-                val = r.get(key, {}).get("value", "")
-                if val and not ids.get(key):
-                    ids[key] = val
+        rows.extend(_sparql_query(query))
+
+    # The species' own name beats an alias: an alias (e.g. a GBIF synonym)
+    # can point at a different, broader taxon after a split.
+    rows.sort(key=lambda r: name_to_sci.get(r["taxonName"]["value"]) != r["taxonName"]["value"])
+    for r in rows:
+        taxon_name = r["taxonName"]["value"]
+        sci = name_to_sci.get(taxon_name)
+        if not sci:
+            continue
+        ids = results.setdefault(sci, {})
+        for key in WD_IDENTIFIERS:
+            if key == "ebird_code":
+                continue
+            val = r.get(key, {}).get("value", "")
+            if val and not ids.get(key):
+                ids[key] = val
+                # Record which Wikidata taxon name supplied the ID so the
+                # build can reject IDs reached through an untrusted alias.
+                ids.setdefault("id_sources", {})[key] = taxon_name
 
     results = {sci: ids for sci, ids in results.items() if ids}
     remaining = [(sci, iid) for sci, iid in species
@@ -244,6 +258,8 @@ def query_identifiers(
                     val = r.get(key, {}).get("value", "")
                     if val and not ids.get(key):
                         ids[key] = val
+                        # Matched by iNat taxon ID: same taxon as the species.
+                        ids.setdefault("id_sources", {})[key] = sci
 
     return {sci: ids for sci, ids in results.items() if ids}
 
@@ -496,6 +512,8 @@ def _load_species_list(cfg: dict) -> dict[str, int | None]:
         inat = load_json(INAT_FILE)
         for sci, rec in inat.items():
             inat_id = rec.get("inat_id")
+            if not rec.get("is_active", True):
+                continue  # taxon retired on iNat; the build drops it
             if inat_id is not None and is_full_species_name(sci):
                 species[sci] = inat_id
 
@@ -641,11 +659,15 @@ def main():
             entry = existing.setdefault(sci, {})
             for key in EXTERNAL_IDENTIFIER_FIELDS:
                 entry.pop(key, None)
+            entry.pop("id_sources", None)
 
     for sci, ids in identifiers.items():
         entry = existing.setdefault(sci, {})
         for key, val in ids.items():
-            entry[key] = val
+            if key == "id_sources":
+                entry.setdefault("id_sources", {}).update(val)
+            else:
+                entry[key] = val
 
     save_json(existing, OUTPUT_FILE)
 

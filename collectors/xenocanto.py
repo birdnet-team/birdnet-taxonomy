@@ -8,19 +8,25 @@ This collector finds the XC-equivalent name for each species.
 Resolution cascade:
   1. Wikidata P2426 (XC species ID) via bulk SPARQL — covers ~31k species
   2. XC API v3 direct lookup by genus + epithet
-  3. XC API epithet-only search with group filter (catches genus transfers)
+  3. XC API epithet-only search within the species' XC groups (catches genus
+     transfers; skipped for groups XC can't filter, e.g. reptiles)
   4. GBIF synonym lookup → retry XC API with alternate names
-  5. XC API English name search (final fallback)
+  5. XC API English name search within the species' XC groups (final fallback)
 
-Input:  raw_data/inat_data.json
+Fuzzy matches (3, 5) that equal another species' name or alias are rejected;
+--revalidate drops such names cached by earlier runs and re-resolves them.
+
+Input:  raw_data/taxonomy.json (or inat_data.json)
 Output: raw_data/xc_data.json
 
 Usage:
     python -m collectors.xenocanto [--limit N] [--group NAME] [--dry-run] [--new-only]
+    python -m collectors.xenocanto --revalidate --retry-unresolved
 """
 
 import argparse
 import json
+import time
 import urllib.parse
 import urllib.request
 
@@ -31,7 +37,7 @@ from collectors._common import (
     RAW_DIR, USER_AGENT,
     is_full_species_name, load_canonical_species, load_json, save_json,
     setup_shutdown, is_shutting_down,
-    RateLimiter,
+    RateLimiter, TRUSTED_XC_METHODS, related_species_names, xc_record_method,
 )
 
 INAT_FILE = RAW_DIR / "inat_data.json"
@@ -44,14 +50,21 @@ GBIF_SYNONYMS_URL = "https://api.gbif.org/v1/species/{key}/synonyms"
 
 _SPARQL_BATCH = 200
 
-# Map iNat iconic taxon names to XC group tags
+# Map taxon groups to the XC group tags their recordings are filed under.
+# Fuzzy lookups (epithet, English name) are only accepted within these
+# groups; a group without tags (reptiles) gets exact-name lookups only.
 _INAT_TO_XC_GROUP = {
-    "Aves": "birds",
-    "Mammalia": "land mammals",
-    "Insecta": "grasshoppers",
-    "Amphibia": "frogs",
-    "Reptilia": "",  # XC has no reptile group tag
+    "Aves": ("birds",),
+    "Mammalia": ("bats", "land mammals"),
+    "Insecta": ("grasshoppers",),
+    "Amphibia": ("frogs",),
+    "Reptilia": (),  # XC has no reptile group tag
 }
+
+# Groups where an epithet-only search is meaningful. XC files all insects
+# under Orthoptera-centric groups, so a bee or beetle epithet would land on an
+# unrelated grasshopper; reptiles have no XC group at all.
+EPITHET_SEARCH_GROUPS = {"Aves", "Mammalia", "Amphibia"}
 
 _rate = RateLimiter(5)  # XC API
 
@@ -70,9 +83,23 @@ def _get_xc_key() -> str:
 # XC API helpers
 # ---------------------------------------------------------------------------
 
+# Failed requests (as opposed to "no recordings") must never be cached as
+# "species not on XC"; an outage would otherwise mark thousands unresolved.
+_xc_failures = 0          # total failed requests this run
+_xc_consecutive_fail = 0  # consecutive failed requests
+_XC_MAX_CONSECUTIVE_FAIL = 20
+
+
+def _xc_unavailable() -> bool:
+    return _xc_consecutive_fail >= _XC_MAX_CONSECUTIVE_FAIL
+
+
 def _xc_search(query: str, api_key: str) -> dict | None:
     """Query XC API v3. Returns response dict or None on error."""
-    _rate.acquire()
+    global _xc_failures, _xc_consecutive_fail
+    if _xc_unavailable():
+        _xc_failures += 1
+        return None
     params = urllib.parse.urlencode({
         "query": query,
         "key": api_key,
@@ -83,11 +110,23 @@ def _xc_search(query: str, api_key: str) -> dict | None:
         "User-Agent": USER_AGENT,
         "Accept": "application/json",
     })
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return json.loads(resp.read())
-    except Exception:
-        return None
+    for attempt in range(2):
+        _rate.acquire()
+        try:
+            # Broad epithet queries can take close to a minute on XC
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                data = json.loads(resp.read())
+            _xc_consecutive_fail = 0
+            return data
+        except Exception:
+            if attempt == 0:
+                time.sleep(2)
+    _xc_failures += 1
+    _xc_consecutive_fail += 1
+    if _xc_unavailable():
+        print(f"\n  XC API unavailable ({_XC_MAX_CONSECUTIVE_FAIL} failed requests in a row) — "
+              "stopping lookups; rerun later to continue.")
+    return None
 
 
 def _xc_name_from_response(data: dict) -> str | None:
@@ -107,48 +146,84 @@ def _xc_name_from_response(data: dict) -> str | None:
 
 
 def _xc_lookup_direct(scientific_name: str, api_key: str) -> str | None:
-    """Search XC by gen:X+sp:Y."""
+    """Search XC by gen:X sp:Y."""
     parts = scientific_name.split()
     if len(parts) != 2:
         return None
     gen, sp = parts
-    data = _xc_search(f"gen:{gen}+sp:{sp}", api_key)
+    data = _xc_search(f"gen:{gen} sp:{sp}", api_key)  # XC v3 separates tags with spaces
     if data:
         return _xc_name_from_response(data)
     return None
 
 
-def _xc_lookup_epithet(scientific_name: str, xc_group: str,
+def _xc_lookup_epithet(scientific_name: str, xc_groups: tuple[str, ...],
                        api_key: str) -> str | None:
-    """Search XC by epithet + group (catches genus transfers)."""
+    """Search XC by epithet within the species' groups (catches genus transfers).
+
+    Only accepted when exactly one XC species in the group carries the
+    epithet; otherwise the first recording's genus would be arbitrary
+    (e.g. five bird species are called "atricapillus").
+    """
     parts = scientific_name.split()
-    if len(parts) != 2:
+    if len(parts) != 2 or not xc_groups:
         return None
     epithet = parts[1]
-    query = f"sp:{epithet}"
-    if xc_group:
-        query += f'+grp:"{xc_group}"'
-    data = _xc_search(query, api_key)
-    if not data:
-        return None
-    # May return multiple species — find the one with matching epithet
-    for r in data.get("recordings", []):
-        r_sp = (r.get("sp") or "").strip()
-        if r_sp == epithet:
+    found: set[str] = set()
+    for xc_group in xc_groups:
+        data = _xc_search(f'sp:{epithet} grp:"{xc_group}"', api_key)
+        if not data or int(data.get("numRecordings") or 0) == 0:
+            continue
+        if str(data.get("numSpecies")) != "1":
+            return None
+        for r in data.get("recordings", []):
             gen = (r.get("gen") or "").strip()
-            if gen:
-                return f"{gen} {epithet}"
-    return None
+            if (r.get("sp") or "").strip() == epithet and gen:
+                found.add(f"{gen} {epithet}")
+    return found.pop() if len(found) == 1 else None
 
 
-def _xc_lookup_english(common_name: str, api_key: str) -> str | None:
-    """Search XC by English name (exact match)."""
-    if not common_name:
+def _xc_lookup_english(common_name: str, xc_groups: tuple[str, ...],
+                       api_key: str) -> str | None:
+    """Search XC by English name (exact match) within the species' groups."""
+    if not common_name or not xc_groups:
         return None
     data = _xc_search(f'en:"={common_name}"', api_key)
-    if data:
-        return _xc_name_from_response(data)
+    if not data:
+        return None
+    for r in data.get("recordings", []):
+        gen = (r.get("gen") or "").strip()
+        sp = (r.get("sp") or "").strip()
+        if gen and sp and r.get("grp") in xc_groups:
+            return f"{gen} {sp}"
     return None
+
+
+def _name_owners(species: dict[str, dict]) -> dict[str, set[str]]:
+    """Map every canonical name and alias to the species carrying it."""
+    owners: dict[str, set[str]] = {}
+    for sci, rec in species.items():
+        for name in [sci, *rec.get("scientific_name_aliases", [])]:
+            owners.setdefault(name, set()).add(sci)
+    return owners
+
+
+def _is_foreign_name(sci: str, xc_name: str, rec: dict,
+                     owners: dict[str, set[str]], method: str = "") -> bool:
+    """True if an XC name can't be this species: it is another species' name,
+    a fuzzy match in a group XC can't filter by, or an unrelated name (new
+    genus and epithet) without a trustworthy match method."""
+    if xc_name == sci or xc_name in rec.get("scientific_name_aliases", []):
+        return False
+    if sci not in owners.get(xc_name, {sci}):
+        return True
+    if not _INAT_TO_XC_GROUP.get(rec.get("taxon_group", ""), ()):
+        return True
+    if method == "epithet":
+        return True  # epithet match from before uniqueness was checked
+    if method == "epithet_unique" and rec.get("taxon_group") not in EPITHET_SEARCH_GROUPS:
+        return True
+    return not related_species_names(sci, xc_name) and method not in TRUSTED_XC_METHODS
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +329,9 @@ def main():
                         help="Only species not yet in xc_data.json")
     parser.add_argument("--retry-unresolved", action="store_true",
                         help="Retry species cached with no XC mapping")
+    parser.add_argument("--revalidate", action="store_true",
+                        help="Drop cached XC names that belong to another species "
+                             "(or fuzzy matches in groups XC can't filter) and re-resolve them")
     args = parser.parse_args()
 
     setup_shutdown()
@@ -279,6 +357,19 @@ def main():
     if args.new_only:
         species = {s: r for s, r in species.items() if s not in existing}
         print(f"  {len(species)} without XC mapping")
+
+    owners = _name_owners(species)
+
+    if args.revalidate:
+        foreign = [
+            sci for sci in species
+            if (existing.get(sci) or {}).get("xc_name")
+            and _is_foreign_name(sci, existing[sci]["xc_name"], species[sci], owners,
+                                 xc_record_method(existing[sci]))
+        ]
+        for sci in foreign:
+            existing.pop(sci, None)
+        print(f"  Revalidating: dropped {len(foreign)} XC names that match another species")
 
     if args.retry_unresolved:
         retry_names = {
@@ -310,14 +401,14 @@ def main():
         wd_names = _wikidata_xc_names(need_wd)
         phase1_count = 0
         for sci, xc_name in wd_names.items():
-            if sci not in existing:
-                existing[sci] = {"xc_name": xc_name}
+            if sci not in existing and not _is_foreign_name(sci, xc_name, species[sci], owners, "wikidata"):
+                existing[sci] = {"xc_name": xc_name, "method": "wikidata"}
                 phase1_count += 1
         print(f"  Resolved {phase1_count} via Wikidata")
         if phase1_count:
             save_json(existing, OUTPUT_FILE)
 
-    if is_shutting_down():
+    if is_shutting_down() or _xc_unavailable():
         _print_stats(existing, species)
         return
 
@@ -330,11 +421,11 @@ def main():
         phase2_count = 0
         progress = tqdm(remaining, desc="  XC lookup", unit="sp")
         for sci in progress:
-            if is_shutting_down():
+            if is_shutting_down() or _xc_unavailable():
                 break
             xc_name = _xc_lookup_direct(sci, api_key)
             if xc_name:
-                existing[sci] = {"xc_name": xc_name}
+                existing[sci] = {"xc_name": xc_name, "method": "direct"}
                 phase2_count += 1
             if phase2_count % 200 == 0 and phase2_count:
                 save_json(existing, OUTPUT_FILE)
@@ -342,7 +433,7 @@ def main():
         print(f"  Resolved {phase2_count} via XC direct")
         save_json(existing, OUTPUT_FILE)
 
-    if is_shutting_down():
+    if is_shutting_down() or _xc_unavailable():
         _print_stats(existing, species)
         return
 
@@ -355,21 +446,22 @@ def main():
         phase3_count = 0
         progress = tqdm(remaining, desc="  XC epithet", unit="sp")
         for sci in progress:
-            if is_shutting_down():
+            if is_shutting_down() or _xc_unavailable():
                 break
             rec = species[sci]
-            group = rec.get("taxon_group", "")
-            xc_grp = _INAT_TO_XC_GROUP.get(group, "")
-            xc_name = _xc_lookup_epithet(sci, xc_grp, api_key)
-            if xc_name:
-                existing[sci] = {"xc_name": xc_name}
+            if rec.get("taxon_group") not in EPITHET_SEARCH_GROUPS:
+                continue
+            xc_groups = _INAT_TO_XC_GROUP.get(rec.get("taxon_group", ""), ())
+            xc_name = _xc_lookup_epithet(sci, xc_groups, api_key)
+            if xc_name and not _is_foreign_name(sci, xc_name, rec, owners, "epithet_unique"):
+                existing[sci] = {"xc_name": xc_name, "method": "epithet_unique"}
                 phase3_count += 1
         progress.close()
         print(f"  Resolved {phase3_count} via epithet search")
         if phase3_count:
             save_json(existing, OUTPUT_FILE)
 
-    if is_shutting_down():
+    if is_shutting_down() or _xc_unavailable():
         _print_stats(existing, species)
         return
 
@@ -382,19 +474,23 @@ def main():
         phase4_count = 0
         progress = tqdm(remaining, desc="  GBIF→XC", unit="sp")
         for sci in progress:
-            if is_shutting_down():
+            if is_shutting_down() or _xc_unavailable():
                 break
             rec = species[sci]
+            failures_before = _xc_failures
             synonyms = [
                 *rec.get("scientific_name_aliases", []),
                 *_gbif_synonyms(sci),
             ]
             resolved = False
             for syn in synonyms:
+                if sci not in owners.get(syn, {sci}):
+                    continue  # another species' name, not a synonym of this one
                 xc_name = _xc_lookup_direct(syn, api_key)
                 if xc_name:
                     existing[sci] = {
                         "xc_name": xc_name,
+                        "method": "synonym",
                         "matched_name": syn,
                         "aliases": [syn, xc_name],
                     }
@@ -404,11 +500,13 @@ def main():
             if not resolved:
                 # Phase 5 inline: try English name as last resort
                 en_name = rec.get("preferred_common_name", "")
-                xc_name = _xc_lookup_english(en_name, api_key)
-                if xc_name:
-                    existing[sci] = {"xc_name": xc_name}
+                xc_groups = _INAT_TO_XC_GROUP.get(rec.get("taxon_group", ""), ())
+                xc_name = _xc_lookup_english(en_name, xc_groups, api_key)
+                if xc_name and not _is_foreign_name(sci, xc_name, rec, owners, "english"):
+                    existing[sci] = {"xc_name": xc_name, "method": "english"}
                     phase4_count += 1
-                else:
+                elif _xc_failures == failures_before:
+                    # Only a clean "no match" is cached; failed lookups are retried next run
                     existing[sci] = {"xc_name": None}
         progress.close()
         print(f"  Resolved {phase4_count} via GBIF/English fallback")

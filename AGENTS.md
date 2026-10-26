@@ -56,7 +56,9 @@ description gaps via LLM (Gemini/OpenAI/Anthropic); 10 generates images; 11 merg
 - Disabled groups are kept as comments in `config.yml`; their cached data is retained
   but excluded from builds via the `allowed_groups` filter in `build_taxonomy()`.
 - **AviList is the authority** for bird taxonomy and English common names. The
-  Clements/eBird name is kept as `common_name_alt`.
+  Clements/eBird name is kept as `common_name_alt`. iNat taxa AviList lumps are
+  folded into the AviList species as aliases, except reviewed exceptions in the
+  git-tracked `overrides/bird_splits.csv` (e.g. Hooded Crow), which stay separate.
 - When a species has no common name, fall back to the scientific name.
 
 ## Identifiers and stability

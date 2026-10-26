@@ -49,7 +49,7 @@ _taxonomy_version = get_taxonomy_version()
 
 _SPECIES_EXAMPLE: dict[str, Any] = {
     "taxonomy_version": _taxonomy_version,
-    "birdnet_id": "BN00498",
+    "birdnet_id": "BN00724",
     "scientific_name": "Anas platyrhynchos",
     "common_name": "Mallard",
     "taxon_group": "Aves",
@@ -97,7 +97,7 @@ _SPECIES_LIST_EXAMPLE: dict[str, Any] = {
 class SpeciesRecord(BaseModel):
     """Full species metadata record."""
     taxonomy_version: Optional[str] = Field(None, examples=[_taxonomy_version])
-    birdnet_id: Optional[str] = Field(None, examples=["BN00498"])
+    birdnet_id: Optional[str] = Field(None, examples=["BN00724"])
     scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
     scientific_name_aliases: Optional[list[str]] = Field(
         None,

@@ -146,7 +146,7 @@ def load_species_with_wikipedia() -> dict[str, str]:
 
     species = {}
     for sci_name, record in inat_data.items():
-        if record.get("inat_id") is None:
+        if record.get("inat_id") is None or not record.get("is_active", True):
             continue
         if not is_full_species_name(sci_name):
             continue
