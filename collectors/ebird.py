@@ -371,7 +371,9 @@ def fetch_ebird_names(version: str = "") -> dict[str, dict[str, str]]:
         translated = 0
         for code, name in names.items():
             en_name = en_names.get(code, "")
-            if name and name != en_name:
+            # Untranslated species come back as the English name, sometimes
+            # lower-cased (pt_BR), so compare case-insensitively.
+            if name and name.lower() != en_name.lower():
                 result.setdefault(code, {})[canonical] = name
                 translated += 1
         print(f"{translated}/{len(names)} translated")

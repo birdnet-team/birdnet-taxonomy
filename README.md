@@ -197,9 +197,11 @@ only through an alias loses to the species whose own name carries it, and IDs
 that stay ambiguous (typically after a recent split) are dropped. The build
 fails if a shared ID slips through. Localized names follow the same idea: when
 two species carry the same name in a locale, the more authoritative source
-(AviList > eBird > iNat > Wikidata) keeps it. A known scientific name, or a
+(AviList > eBird > iNat > Wikidata) keeps it. A known scientific name, a
 Latin-only name in a locale written in another script (an untranslated English
-fallback, e.g. in `zh`), is never used as a localized common name. When two non-bird species share
+fallback, e.g. in `zh`), or a multi-word English name copied into another locale
+(eBird `pt_BR` lists untranslated species in lower-case English), is never used
+as a localized common name; the next source's name is used instead. When two non-bird species share
 an English display name on iNat, the more-observed one keeps it and the other
 takes its next English name on iNat that no other species uses.
 

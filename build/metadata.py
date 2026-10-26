@@ -737,6 +737,13 @@ def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = 
     def is_scientific(sci: str, entry: dict, name: str) -> bool:
         return " ".join(name.replace("\xa0", " ").split()).lower() in scientific
 
+    def english_copy(entry: dict, loc: str, name: str) -> bool:
+        # An untranslated English name in another locale (eBird pt_BR lists
+        # them lower-cased); single words ("Kea") are often genuinely shared.
+        if loc == "en" or loc.startswith("en-") or len(name.split()) < 2:
+            return False
+        return name.strip().lower() in entry.get("_english_forms", set())
+
     def wrong_script(loc: str, name: str) -> bool:
         # A Latin-only name in a locale written in another script is an
         # untranslated English fallback (eBird zh lists many), not a name.
@@ -747,7 +754,7 @@ def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = 
     for sci, entry in taxonomy.items():
         for loc, cands in entry.get("_name_candidates", {}).items():
             for rank, name in cands:
-                if is_scientific(sci, entry, name) or wrong_script(loc, name):
+                if is_scientific(sci, entry, name) or wrong_script(loc, name) or english_copy(entry, loc, name):
                     continue
                 k = (loc, name.strip().lower())
                 best[k] = min(best.get(k, rank), rank)
@@ -758,7 +765,7 @@ def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = 
         for loc, cands in cands_by_loc.items():
             chosen = None
             for rank, name in sorted(cands, key=lambda c: c[0]):
-                if is_scientific(sci, entry, name) or wrong_script(loc, name):
+                if is_scientific(sci, entry, name) or wrong_script(loc, name) or english_copy(entry, loc, name):
                     continue
                 if rank <= best[(loc, name.strip().lower())]:
                     chosen = (rank, name)
@@ -1185,9 +1192,19 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     # English stays authoritative per species (AviList / iNat display name).
     for entry in taxonomy.values():
         entry["_name_candidates"].pop("en", None)
+        entry["_english_forms"] = {
+            n.strip().lower() for n in [
+                entry.get("preferred_common_name", ""), entry.get("common_name_alt", ""),
+                entry.get("common_names", {}).get("en", ""),
+                (ebird_names.get(entry.get("ebird_code", "")) or {}).get("en", ""),
+                *entry.get("english_names", []),
+            ] if n
+        }
     stats["name_conflicts_resolved"] = _resolve_name_conflicts(
         taxonomy, {a for names in manual_aliases.values() for a in names}
     )
+    for entry in taxonomy.values():
+        entry.pop("_english_forms", None)
 
     # Pass 6: Default image selection
     # Priority: iNat taxon (licensed) → eBird → Wikimedia → iNat observation
