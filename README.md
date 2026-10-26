@@ -197,9 +197,19 @@ only through an alias loses to the species whose own name carries it, and IDs
 that stay ambiguous (typically after a recent split) are dropped. The build
 fails if a shared ID slips through. Localized names follow the same idea: when
 two species carry the same name in a locale, the more authoritative source
-(AviList > eBird > iNat > Wikidata) keeps it. When two non-bird species share
+(AviList > eBird > iNat > Wikidata) keeps it. A known scientific name, or a
+Latin-only name in a locale written in another script (an untranslated English
+fallback, e.g. in `zh`), is never used as a localized common name. When two non-bird species share
 an English display name on iNat, the more-observed one keeps it and the other
 takes its next English name on iNat that no other species uses.
+
+Descriptions are cleaned of citation marks, sentences with leftover wiki
+markup, and repeated sentences. English display names that iNat writes all
+lowercase get AviList-style capitalisation, localized names that are file names
+or catalogue numbers are dropped, a photo or English Wikipedia article claimed
+by several species stays with one of them (the species named in the file or
+first in the article), and identifiers must match their format (numeric GBIF,
+NCBI, BirdLife, observation.org IDs; 16-hex Avibase IDs; lowercase eBird codes).
 
 Wikipedia descriptions must be about the species: an English article that names
 neither the species nor an alias (iNat sometimes links a sister species, the
@@ -436,7 +446,7 @@ wind. `Human` includes common-name aliases for `human vocal` and
 Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia extracts — no content is generated from scratch:
 
 - **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks the LLM to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
-- **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for the configured target locales. Sends the English text for translation into all missing locales at once.
+- **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for the configured target locales — a native Wikipedia stub under 25 words counts as missing when the English text has at least 40 words. Sends the English text for translation into all missing locales at once.
 - **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English descriptions only from traceable Wikipedia extracts: for species without English text, from their non-English extracts; for English stubs (under `descriptions.min_english_words`) whose non-English article is at least twice as long, from the stub plus those extracts. Fallback locales are marked as `llm_fallback` in build output.
 
 Translations record a hash of their English source, so `--retranslate-stale` can redo them when the English text changes; the build prefers native Wikipedia text added later over an older machine translation for the same locale. When the provider keeps answering HTTP 429 after retries (quota exhausted), the run stops sending requests and saves; rerun later to continue.

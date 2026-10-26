@@ -99,6 +99,15 @@ BIRD_MATCH_RANK = {"direct": 0, "common_name": 1, "wikidata": 2, "ebird": 3,
 NAME_SOURCE_RANK = {"avilist": 0, "ebird": 1, "inat": 2, "wikidata": 3}
 NAME_SOURCE_BY_RANK = {rank: src for src, rank in NAME_SOURCE_RANK.items()}
 
+# Locales written in a non-Latin script (Serbian is excluded: it uses both).
+NON_LATIN_LOCALES = {
+    "am", "ar", "arz", "as", "be", "bg", "bn", "bo", "ckb", "dv", "el", "fa", "gu",
+    "he", "hi", "hy", "ja", "ka", "kk", "km", "kn", "ko", "lo", "mk", "ml", "mn",
+    "mr", "my", "ne", "or", "pa", "ps", "ru", "sd", "si", "ta", "te", "th", "ti",
+    "uk", "ur", "yi", "zh",
+}
+_LATIN_ONLY_RE = re.compile(r"[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F '’.\-]*")
+
 # Taxon groups Xeno-Canto can filter by; other groups only accept exact or
 # reviewed-alias XC names.
 XC_FUZZY_GROUPS = {"Aves", "Mammalia", "Insecta", "Amphibia"}
@@ -726,13 +735,19 @@ def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = 
         scientific.update(a.lower() for a in entry.get("xc_aliases", []))
 
     def is_scientific(sci: str, entry: dict, name: str) -> bool:
-        return name.strip().lower() in scientific
+        return " ".join(name.replace("\xa0", " ").split()).lower() in scientific
+
+    def wrong_script(loc: str, name: str) -> bool:
+        # A Latin-only name in a locale written in another script is an
+        # untranslated English fallback (eBird zh lists many), not a name.
+        primary = re.split(r"[-_]", loc)[0]
+        return primary in NON_LATIN_LOCALES and bool(_LATIN_ONLY_RE.fullmatch(name.strip()))
 
     best: dict[tuple[str, str], int] = {}
     for sci, entry in taxonomy.items():
         for loc, cands in entry.get("_name_candidates", {}).items():
             for rank, name in cands:
-                if is_scientific(sci, entry, name):
+                if is_scientific(sci, entry, name) or wrong_script(loc, name):
                     continue
                 k = (loc, name.strip().lower())
                 best[k] = min(best.get(k, rank), rank)
@@ -743,7 +758,7 @@ def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = 
         for loc, cands in cands_by_loc.items():
             chosen = None
             for rank, name in sorted(cands, key=lambda c: c[0]):
-                if is_scientific(sci, entry, name):
+                if is_scientific(sci, entry, name) or wrong_script(loc, name):
                     continue
                 if rank <= best[(loc, name.strip().lower())]:
                     chosen = (rank, name)
@@ -1515,6 +1530,52 @@ def _apply_metadata_quality_filter(
     return kept
 
 
+# Identifier formats; values that don't match (a COL key in gbif_id, a
+# BirdLife page slug, a truncated Avibase ID) are dropped.
+ID_FORMATS = {
+    "gbif_id": re.compile(r"\d+"),
+    "ncbi_id": re.compile(r"\d+"),
+    "birdlife_id": re.compile(r"\d+"),
+    "observationorg_id": re.compile(r"\d+"),
+    "avibase_id": re.compile(r"[0-9A-F]{16}"),
+    "ebird_code": re.compile(r"[a-z0-9]+"),
+}
+# Localized "names" that are file names or catalogue numbers (Wikidata labels).
+_JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}", re.IGNORECASE)
+_SMALL_WORDS = {"a", "an", "and", "of", "the", "de", "del", "du", "la", "le", "von", "van", "di", "da"}
+
+
+def _title_case(name: str) -> str:
+    """AviList-style capitalisation for all-lowercase English names
+    ("chestnut short-tailed bat" → "Chestnut Short-tailed Bat")."""
+    words = name.split(" ")
+    return " ".join(
+        w if (i and w in _SMALL_WORDS) else w[:1].upper() + w[1:]
+        for i, w in enumerate(words)
+    )
+
+
+def _dedupe_images(records: list[dict]) -> int:
+    """Keep a photo on one species only (split species can inherit the
+    parent's photo): the species named in the file, else the most observed."""
+    owners: dict[str, list[dict]] = {}
+    for rec in records:
+        if rec.get("image"):
+            owners.setdefault(rec["image"]["src"], []).append(rec)
+    removed = 0
+    for src, recs in owners.items():
+        if len(recs) < 2:
+            continue
+        fname = src.rsplit("/", 1)[-1].lower().replace("%20", "_").replace(" ", "_")
+        recs.sort(key=lambda r: (r["scientific_name"].lower().replace(" ", "_") not in fname,
+                                 -(r.get("observations_count") or 0)))
+        for rec in recs[1:]:
+            rec.update(image=None, image_author="", image_license="", image_source="",
+                       image_crop_anchor=None)
+            removed += 1
+    return removed
+
+
 def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int:
     """Give species that share an English display name distinct names.
 
@@ -1622,7 +1683,20 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
 
     image_prefix = image_url_prefix()
     wrong_article = 0
+    invalid_ids = 0
     canonical_set = set(taxonomy)
+    # An English article linked from several species stays with the species
+    # it names first (the others are usually splits linking the parent).
+    article_claims: dict[str, list[tuple[int, str]]] = {}
+    for sci, tax in taxonomy.items():
+        wp = _raw_lookup(wiki, _entry_names(sci, tax))
+        url = (wp.get("wikipedia_urls") or {}).get("en")
+        text = (wp.get("extract") or "").lower()
+        if url and text:
+            positions = [text.find(n.lower()) for n in [sci, *tax.get("scientific_name_aliases", [])]]
+            positions = [p for p in positions if p >= 0]
+            article_claims.setdefault(url, []).append((min(positions) if positions else 10**9, sci))
+    article_owner = {url: min(claims)[1] for url, claims in article_claims.items() if len(claims) > 1}
     # eBird pages are scraped per code; a code is the stable link even when
     # the scientific name the page was fetched under has changed.
     ebird_by_code: dict[str, dict] = {}
@@ -1645,6 +1719,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             *names, *tax.get("scientific_name_aliases", []), *tax.get("xc_aliases", []),
             *manual_aliases.get(sci_name, []),
         ])
+        url = (wp.get("wikipedia_urls") or {}).get("en")
+        if url in article_owner and article_owner[url] != sci_name:
+            wp, cl = {}, {}
+            wrong_article += 1
         wp_english = wp.get("extract") or wp.get("extracts", {}).get("en", "")
         if wp_english and not _describes_species(
                 wp_english, wp.get("title", ""), identity_names,
@@ -1697,7 +1775,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         for loc, text in cl_extracts.items():
             # A machine translation made while Wikipedia lacked this locale
             # yields to native Wikipedia text added since.
-            if loc in translated and descriptions.get(loc):
+            native = descriptions.get(loc, "")
+            if loc in translated and word_count(native) >= max(25, word_count(text) // 2):
                 continue
             text = clean_description_text(text)
             # Guard against malformed locale keys (e.g. an LLM echoing the
@@ -1729,7 +1808,9 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                 "medium": f"{image_prefix}/api/image/{encoded_sci}?size=medium",
             }
 
-        raw_common_name = tax.get("preferred_common_name", "")
+        raw_common_name = " ".join(tax.get("preferred_common_name", "").replace("\xa0", " ").split())
+        if raw_common_name and raw_common_name == raw_common_name.lower() and tax.get("record_type") != "sound_class":
+            raw_common_name = _title_case(raw_common_name)
         common_name = raw_common_name if is_clean_common_name(raw_common_name) else sci_name
         raw_common_name_alt = tax.get("common_name_alt", "")
         common_name_alt = (
@@ -1737,9 +1818,14 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         )
         common_names = {
             loc: name
-            for loc, name in (tax.get("common_names", {}) or {}).items()
-            if is_clean_common_name(str(name))
+            for loc, name in (
+                (loc, " ".join(str(name).replace("\xa0", " ").split()))
+                for loc, name in (tax.get("common_names", {}) or {}).items()
+            )
+            if is_clean_common_name(name) and not _JUNK_NAME_RE.search(name)
         }
+        if common_names.get("en", "").lower() == common_name.lower():
+            common_names["en"] = common_name
         if is_sound_class_record(tax):
             aliases = clean_common_aliases(tax.get("scientific_name_aliases", []))
         else:
@@ -1794,9 +1880,15 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "wikidata_qid": tax.get("wikidata_qid", ""),
             "observations_count": tax.get("observations_count", 0),
         }
+        for field, pattern in ID_FORMATS.items():
+            if record.get(field) not in (None, "") and not pattern.fullmatch(str(record[field])):
+                record[field] = ""
+                invalid_ids += 1
         records.append(record)
 
     records = _apply_metadata_quality_filter(records, quality_cfg)
+    print(f"  Identifiers dropped for an invalid format: {invalid_ids}")
+    print(f"  Images kept on one species only (shared photo): {_dedupe_images(records)} removed")
     renamed = _resolve_display_name_collisions(records, taxonomy)
     print(f"  Display names: {renamed} species renamed to an iNat alternative (shared name)")
 

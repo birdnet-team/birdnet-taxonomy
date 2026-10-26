@@ -127,15 +127,39 @@ def _cap_words(paragraphs: list[str], max_words: int) -> list[str]:
     return out
 
 
+_CITATION_RE = re.compile(r"\s*\[(?:\d+|[a-z]|citation needed|clarification needed|note \d+)\]", re.IGNORECASE)
+_MARKUP_RE = re.compile(r"\{\{|\}\}|\[\[|\]\]|<ref|</ref|<br|\|\s*\w+\s*=")
+
+
+def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
+    """Drop citation marks, sentences with leftover wiki markup, and repeats."""
+    paragraph = _CITATION_RE.sub("", paragraph.replace("\u200b", ""))
+    kept: list[str] = []
+    for sentence in re.split(r"(?<=[.!?。])\s+|\n", paragraph):
+        key = sentence.strip().lower()
+        if (not key or _MARKUP_RE.search(sentence) or re.match(r"[,;:)\]}|]", key)
+                or (len(key) > 30 and key in seen)):
+            continue
+        seen.add(key)
+        kept.append(sentence.strip())
+    return normalize_space(" ".join(kept))
+
+
 def clean_description_text(text: str) -> str:
-    """Drop section headings and reference-type tails from stored descriptions."""
-    if not text or "==" not in text:
+    """Clean stored descriptions: drop section headings, reference-type
+    tails, citation marks, sentences with leftover wiki markup, and repeated
+    sentences."""
+    if not text:
         return text
     kept: list[str] = []
+    seen: set[str] = set()
     for heading, body in _split_sections(text.replace("\r\n", "\n")):
         if heading and _END_SECTIONS.match(heading):
             break
-        kept.extend(_paragraphs(body))
+        for paragraph in re.split(r"\n{2,}", body):
+            cleaned = _clean_paragraph(paragraph, seen)
+            if cleaned:
+                kept.append(cleaned)
     return "\n\n".join(kept).strip()
 
 

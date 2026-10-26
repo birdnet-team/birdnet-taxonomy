@@ -279,14 +279,23 @@ def _batch_by_char_budget(
     return batches
 
 
+# A native Wikipedia text this short is a stub; when the English source is
+# substantial, a translation of it is the better description.
+STUB_WORDS = 25
+
+
 def _missing_translation_locales(
     wiki_extracts: dict[str, str],
     llm_extracts: dict[str, str],
     target_locales: list[str],
+    en_text: str = "",
 ) -> tuple[str, ...]:
+    rich_english = _word_count(en_text) >= 40
     return tuple(
         loc for loc in target_locales
-        if not wiki_extracts.get(loc) and not llm_extracts.get(loc)
+        if not llm_extracts.get(loc)
+        and (not wiki_extracts.get(loc)
+             or (rich_english and _word_count(wiki_extracts[loc]) < STUB_WORDS))
     )
 
 
@@ -534,7 +543,7 @@ def main() -> None:
                 continue
             wp_ext = rec.get("extracts", {})
             cl_ext = existing.get(sci, {}).get("extracts", {})
-            missing = _missing_translation_locales(wp_ext, cl_ext, target_non_en)
+            missing = _missing_translation_locales(wp_ext, cl_ext, target_non_en, en_text)
             if args.retranslate_stale:
                 stale = _stale_translation_locales(
                     existing.get(sci, {}), en_text, wp_ext, target_non_en)
@@ -677,7 +686,8 @@ def main() -> None:
                     wp_ext = wiki.get(sci, {}).get("extracts", {})
                     for loc, text in trans.items():
                         cl_ext = existing.get(sci, {}).get("extracts", {})
-                        if not wp_ext.get(loc) and (not cl_ext.get(loc) or (sci, loc) in replace):
+                        native_ok = wp_ext.get(loc) and _word_count(wp_ext[loc]) >= STUB_WORDS
+                        if not native_ok and (not cl_ext.get(loc) or (sci, loc) in replace):
                             updates.setdefault(sci, {})[loc] = text
                 _merge_updates(existing, updates, replace)
                 hashes = {
