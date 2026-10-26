@@ -49,7 +49,8 @@ from collectors._common import (
 )
 from utils.audit_metadata import audit_records, has_failures, print_report
 from utils.description_quality import (
-    clean_description_text, contains_species_identity, is_disambiguation_text, word_count,
+    clean_description_text, describes_species, is_disambiguation_text, names_other_species,
+    word_count,
 )
 
 # ---------------------------------------------------------------------------
@@ -1626,42 +1627,6 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
     return renamed
 
 
-_TEXT_BINOMIAL_RE = re.compile(
-    r'"?\b([A-Z][a-z]+)"?\s+(?:kl\.\s+|\([A-Z][a-z]+\)\s+)?([a-z][a-z-]{2,})\b')
-
-
-def _describes_species(text: str, title: str, names: list[str],
-                       common_name: str = "", other_species: set[str] | None = None) -> bool:
-    """True if a Wikipedia text is about this species rather than a sister
-    species, genus, or clade (iNat sometimes links those articles).
-
-    The text must name the species: its scientific name or an alias (also as
-    a trinomial or with a subgenus), or a binomial that differs only by genus
-    or epithet ending (unrecorded genus transfer) and is not another species
-    in the taxonomy. Articles titled with the species' English name and the
-    articles of monotypic genera pass too.
-    """
-    if contains_species_identity(f"{title}\n{text}", names):
-        return True
-    if common_name and title.strip().lower() == common_name.strip().lower():
-        return True
-    for name in names:
-        genus, epithet = name.split()[:2]
-        if re.search(rf"\b{re.escape(genus)}\s+(?:\(?[A-Za-z]+\)?\s+)?{re.escape(epithet)}\b",
-                     text, re.IGNORECASE):
-            return True
-    epithets = [n.split()[1] for n in names]
-    for genus, epithet in _TEXT_BINOMIAL_RE.findall(text[:600]):
-        binomial = f"{genus} {epithet}"
-        if binomial in (other_species or set()):
-            continue
-        if any(same_epithet_stem(epithet, e) for e in epithets):
-            return True
-    genera = {n.split()[0] for n in names}
-    return title in genera and bool(re.search(
-        r"\bmonotypic\b|\b(?:only|sole|single|one)\b[^.]{0,40}\bspecies\b", text, re.IGNORECASE))
-
-
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    translate: dict = None,
                    manual_overrides: dict | None = None,
@@ -1741,9 +1706,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             wp, cl = {}, {}
             wrong_article += 1
         wp_english = wp.get("extract") or wp.get("extracts", {}).get("en", "")
-        if wp_english and not _describes_species(
+        if wp_english and (not describes_species(
                 wp_english, wp.get("title", ""), identity_names,
-                tax.get("preferred_common_name", ""), canonical_set - {sci_name}):
+                tax.get("preferred_common_name", ""), canonical_set)
+                or names_other_species(wp_english, identity_names, canonical_set)):
             # The linked article is about another taxon: drop it, its other
             # locales (langlinks of the same article) and LLM text made from it.
             wp, cl = {}, {}
@@ -1770,7 +1736,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             description_sources["en"] = wp_extract_sources.get("en") or "wikipedia"
 
         for loc, text in wp_extracts.items():
-            if loc != "en" and text and not is_disambiguation_text(text):
+            # A locale article about a sister species (wrong langlink or an
+            # older lumped concept) is dropped; LLM translation fills the gap.
+            if (loc != "en" and text and not is_disambiguation_text(text)
+                    and not names_other_species(text, identity_names, canonical_set)):
                 descriptions[loc] = text
                 description_sources[loc] = wp_extract_sources.get(loc) or "wikipedia"
         for loc, url in wp.get("wikipedia_urls", {}).items():
@@ -1798,7 +1767,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             text = clean_description_text(text)
             # Guard against malformed locale keys (e.g. an LLM echoing the
             # literal "locale" placeholder from a prompt example).
-            if text and loc in LOCALE_NAMES and not is_disambiguation_text(text):
+            if (text and loc in LOCALE_NAMES and not is_disambiguation_text(text)
+                    and not names_other_species(text, identity_names, canonical_set)):
                 descriptions[loc] = text
                 description_sources[loc] = (
                     "llm_fallback" if loc in fallback_locales else "llm"

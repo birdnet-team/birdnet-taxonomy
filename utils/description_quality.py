@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from collectors._common import same_epithet_stem
+
 
 def word_count(text: str) -> int:
     """Count prose units for quality checks, including CJK text without spaces."""
@@ -134,6 +136,12 @@ _MARKUP_RE = re.compile(r"\{\{|\}\}|\[\[|\]\]|<ref|</ref|<br|\|\s*\w+\s*=")
 def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
     """Drop citation marks, sentences with leftover wiki markup, and repeats."""
     paragraph = _CITATION_RE.sub("", paragraph.replace("\u200b", ""))
+    # Headings flattened into running text ("... montaña. == Referencias ==")
+    for match in list(re.finditer(r"\s*(={2,})\s*([^=\n]+?)\s*\1", paragraph)):
+        if _END_SECTIONS.match(match.group(2).strip()):
+            paragraph = paragraph[:match.start()]
+            break
+    paragraph = re.sub(r"\s*(={2,})\s*[^=\n]+?\s*\1\s*", " ", paragraph)
     kept: list[str] = []
     for sentence in re.split(r"(?<=[.!?。])\s+|\n", paragraph):
         key = sentence.strip().lower()
@@ -198,3 +206,53 @@ def select_description_text(full_text: str, min_words: int, target_words: int,
             break
     selected = _cap_words(selected, int(max_words or 0) or target_words * 2)
     return "\n\n".join(selected).strip()
+
+
+_TEXT_BINOMIAL_RE = re.compile(
+    r'"?\b([A-Z][a-z]+)"?\s+(?:kl\.\s+|\([A-Z][a-z]+\)\s+)?([a-z][a-z-]{2,})\b')
+
+
+def describes_species(text: str, title: str, names: list[str],
+                       common_name: str = "", other_species: set[str] | None = None) -> bool:
+    """True if a Wikipedia text is about this species rather than a sister
+    species, genus, or clade (iNat sometimes links those articles).
+
+    The text must name the species: its scientific name or an alias (also as
+    a trinomial or with a subgenus), or a binomial that differs only by genus
+    or epithet ending (unrecorded genus transfer) and is not another species
+    in the taxonomy. Articles titled with the species' English name and the
+    articles of monotypic genera pass too.
+    """
+    if contains_species_identity(f"{title}\n{text}", names):
+        return True
+    if common_name and title.strip().lower() == common_name.strip().lower():
+        return True
+    for name in names:
+        genus, epithet = name.split()[:2]
+        if re.search(rf"\b{re.escape(genus)}\s+(?:\(?[A-Za-z]+\)?\s+)?{re.escape(epithet)}\b",
+                     text, re.IGNORECASE):
+            return True
+    epithets = [n.split()[1] for n in names]
+    for genus, epithet in _TEXT_BINOMIAL_RE.findall(text[:600]):
+        binomial = f"{genus} {epithet}"
+        if binomial in (other_species or set()):
+            continue
+        if any(same_epithet_stem(epithet, e) for e in epithets):
+            return True
+    genera = {n.split()[0] for n in names}
+    return title in genera and bool(re.search(
+        r"\bmonotypic\b|\b(?:only|sole|single|one)\b[^.]{0,40}\bspecies\b", text, re.IGNORECASE))
+
+
+
+def names_other_species(text: str, names: list[str], other_species: set[str]) -> bool:
+    """True if a text's opening names another species (in parentheses, as
+    Wikipedia leads do) and never this one — a sister-species article.
+
+    Texts without a binomial are not judged (many non-English articles don't
+    repeat the scientific name).
+    """
+    match = re.search(r"\(([A-Z][a-z]+ [a-z][a-z-]+)[,)]", (text or "")[:300])
+    if not match or match.group(1) not in other_species or match.group(1) in names:
+        return False
+    return not describes_species(text, "", names, other_species=other_species)

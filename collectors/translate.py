@@ -31,7 +31,9 @@ from collectors._common import (
     ROOT, RAW_DIR, setup_shutdown, is_shutting_down,
     load_json, save_json,
 )
-from utils.description_quality import is_disambiguation_text, word_count as _word_count
+from utils.description_quality import (
+    is_disambiguation_text, names_other_species, word_count as _word_count,
+)
 from utils.llm import call_llm, detect_provider, parse_json_response, PROVIDERS
 
 setup_shutdown()
@@ -536,12 +538,27 @@ def main() -> None:
     needs_translation: list[tuple[str, str, tuple[str, ...]]] = []
     replace: set[tuple[str, str]] = set()  # stale LLM translations to overwrite
     en_sources: dict[str, str] = {}
+    # Locale articles about a sister species are dropped by the build; treat
+    # them as missing so a translation takes their place.
+    taxonomy = load_json(RAW_DIR / "taxonomy.json")
+    canonical = set(taxonomy)
+    names_for: dict[str, list[str]] = {}
+    for tax_sci, entry in taxonomy.items():
+        own = [tax_sci, *entry.get("source_names", []), *entry.get("scientific_name_aliases", []),
+               *entry.get("xc_aliases", [])]
+        for name in [tax_sci, *entry.get("source_names", [])]:
+            names_for[name] = own
+
+    def usable_wiki_extracts(sci: str, rec: dict) -> dict[str, str]:
+        return {loc: t for loc, t in rec.get("extracts", {}).items()
+                if not names_other_species(t, names_for.get(sci, [sci]), canonical)}
+
     if not args.shorten_only and not args.fallback_only and target_non_en:
         for sci, rec in wiki.items():
             en_text = rec.get("extract") or rec.get("extracts", {}).get("en")
             if not en_text or is_disambiguation_text(en_text):
                 continue
-            wp_ext = rec.get("extracts", {})
+            wp_ext = usable_wiki_extracts(sci, rec)
             cl_ext = existing.get(sci, {}).get("extracts", {})
             missing = _missing_translation_locales(wp_ext, cl_ext, target_non_en, en_text)
             if args.retranslate_stale:
@@ -683,7 +700,7 @@ def main() -> None:
 
                 updates: dict[str, dict[str, str]] = {}
                 for sci, trans in results.items():
-                    wp_ext = wiki.get(sci, {}).get("extracts", {})
+                    wp_ext = usable_wiki_extracts(sci, wiki.get(sci, {}))
                     for loc, text in trans.items():
                         cl_ext = existing.get(sci, {}).get("extracts", {})
                         native_ok = wp_ext.get(loc) and _word_count(wp_ext[loc]) >= STUB_WORDS

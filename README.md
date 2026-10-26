@@ -216,7 +216,10 @@ NCBI, BirdLife, observation.org IDs; 16-hex Avibase IDs; lowercase eBird codes).
 Wikipedia descriptions must be about the species: an English article that names
 neither the species nor an alias (iNat sometimes links a sister species, the
 genus, or a clade) is dropped together with its other-language versions and any
-LLM text made from it, unless it is the article of a monotypic genus.
+LLM text made from it, unless it is the article of a monotypic genus. Any
+description (Wikipedia in any language, or LLM) whose opening names another
+species of the taxonomy and never this one is dropped as well; the LLM
+translator treats such locales as missing so a translation takes their place.
 
 Configured non-species sound classes live under `sound_classes` in
 `config.yml`. These records use their English display name as
