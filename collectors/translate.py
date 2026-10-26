@@ -291,8 +291,9 @@ def _missing_translation_locales(
     llm_extracts: dict[str, str],
     target_locales: list[str],
     en_text: str = "",
+    replace_stubs: bool = True,
 ) -> tuple[str, ...]:
-    rich_english = _word_count(en_text) >= 40
+    rich_english = replace_stubs and _word_count(en_text) >= 40
     return tuple(
         loc for loc in target_locales
         if not llm_extracts.get(loc)
@@ -469,6 +470,8 @@ def main() -> None:
     parser.add_argument("--save-every", type=int, default=0)
     parser.add_argument("--char-budget", type=int, default=0)
     parser.add_argument("--max-source-chars", type=int, default=0)
+    parser.add_argument("--skip-stubs", action="store_true",
+                        help="Only translate locales without any text (leave native stubs)")
     parser.add_argument("--retranslate-stale", action="store_true",
                         help="Also redo LLM translations made from an older English source")
     parser.add_argument(
@@ -560,7 +563,8 @@ def main() -> None:
                 continue
             wp_ext = usable_wiki_extracts(sci, rec)
             cl_ext = existing.get(sci, {}).get("extracts", {})
-            missing = _missing_translation_locales(wp_ext, cl_ext, target_non_en, en_text)
+            missing = _missing_translation_locales(wp_ext, cl_ext, target_non_en, en_text,
+                                                   replace_stubs=not args.skip_stubs)
             if args.retranslate_stale:
                 stale = _stale_translation_locales(
                     existing.get(sci, {}), en_text, wp_ext, target_non_en)

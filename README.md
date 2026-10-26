@@ -510,6 +510,7 @@ This step is disabled by default (`llm.enabled: false`). Enable it in `config.ym
 | `--shorten-only` | Only shorten long extracts |
 | `--translate-only` | Only translate missing locales |
 | `--fallback-missing` | Generate English fallbacks from non-English Wikipedia source extracts |
+| `--skip-stubs` | Only translate locales without any text; leave native Wikipedia stubs in place |
 | `--retranslate-stale` | Also redo LLM translations made from an older English source (translations record a hash of their source; older ones count as stale when the English text is now at least twice as long) |
 | `--fallback-only` | Only generate English fallbacks |
 | `--dry-run` | Preview without API calls |
