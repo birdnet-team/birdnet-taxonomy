@@ -197,7 +197,14 @@ only through an alias loses to the species whose own name carries it, and IDs
 that stay ambiguous (typically after a recent split) are dropped. The build
 fails if a shared ID slips through. Localized names follow the same idea: when
 two species carry the same name in a locale, the more authoritative source
-(AviList > eBird > iNat > Wikidata) keeps it.
+(AviList > eBird > iNat > Wikidata) keeps it. When two non-bird species share
+an English display name on iNat, the more-observed one keeps it and the other
+takes its next English name on iNat that no other species uses.
+
+Wikipedia descriptions must be about the species: an English article that names
+neither the species nor an alias (iNat sometimes links a sister species, the
+genus, or a clade) is dropped together with its other-language versions and any
+LLM text made from it, unless it is the article of a monotypic genus.
 
 Configured non-species sound classes live under `sound_classes` in
 `config.yml`. These records use their English display name as
@@ -260,6 +267,7 @@ Then runs an **observation photo fallback** phase: for any species whose default
 | `--status-only` | Only run the taxon status phase |
 | `--skip-status` | Skip the taxon status phase |
 | `--refresh-status` | Re-check the iNat status of all records, not just unchecked ones |
+| `--refresh-names` | With the status phase, also refresh common names (all locales, plus every English alternative in `english_names`) for records fetched before alternatives were kept; reviewed names from `priority_species.csv` are re-applied |
 | `--dry-run` | Preview without fetching |
 
 ### Step 3 — eBird
@@ -429,7 +437,9 @@ Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia
 
 - **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks the LLM to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
 - **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for the configured target locales. Sends the English text for translation into all missing locales at once.
-- **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English fallback descriptions only from traceable non-English Wikipedia extracts. Fallback locales are marked as `llm_fallback` in build output and never replace existing Wikipedia/eBird English text.
+- **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English descriptions only from traceable Wikipedia extracts: for species without English text, from their non-English extracts; for English stubs (under `descriptions.min_english_words`) whose non-English article is at least twice as long, from the stub plus those extracts. Fallback locales are marked as `llm_fallback` in build output.
+
+Translations record a hash of their English source, so `--retranslate-stale` can redo them when the English text changes; the build prefers native Wikipedia text added later over an older machine translation for the same locale. When the provider keeps answering HTTP 429 after retries (quota exhausted), the run stops sending requests and saves; rerun later to continue.
 
 LLM output is stored in `translate_data.json` and overlaid on Wikipedia extracts during the build step. The LLM only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
 
@@ -514,6 +524,8 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
    - **Macaulay Library** — eBird image (source tagged as "Macaulay Library ML{asset_id}")
    - **Wikimedia Commons** — Wikidata P18 image if CC/PD/GFDL licensed
    - **iNaturalist observation photo** — CC-licensed photo from research-grade observations (last resort)
+
+   eBird placeholder images (no asset ID) and generic eBird page text are ignored, Wikimedia SVG files (drawings, maps) are skipped, and Wikimedia license names are written in the iNat style (`CC BY-SA 4.0` → `cc-by-sa-4.0`, `Public domain` → `pd`).
 
 **Merge phase:**
 Assembles per-species descriptions from multiple sources with the following priority:

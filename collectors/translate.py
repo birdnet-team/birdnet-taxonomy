@@ -547,15 +547,26 @@ def main() -> None:
     # ── Phase 3: species needing English fallback ─────────────────────
     needs_fallback: list[tuple[str, dict[str, str]]] = []
     if args.fallback_missing:
+        min_english = int(cfg.get("descriptions", {}).get("min_english_words", 40))
         for sci, rec in wiki.items():
             wp_ext = rec.get("extracts", {})
             cl_ext = existing.get(sci, {}).get("extracts", {})
-            if rec.get("extract") or wp_ext.get("en") or cl_ext.get("en"):
+            if cl_ext.get("en"):
                 continue
             sources = {loc: t for loc, t in wp_ext.items()
                        if loc != "en" and t and not is_disambiguation_text(t)}
-            if sources:
+            if not sources:
+                continue
+            en_text = rec.get("extract") or wp_ext.get("en") or ""
+            if is_disambiguation_text(en_text):
+                en_text = ""
+            if not en_text:
                 needs_fallback.append((sci, sources))
+            elif (_word_count(en_text) < min_english
+                    and max(map(_word_count, sources.values())) >= max(min_english, 2 * _word_count(en_text))):
+                # English stub, but a much richer article in another language:
+                # write English from both (sourced facts only).
+                needs_fallback.append((sci, {"en": en_text, **sources}))
 
     if args.limit:
         needs_shortening = needs_shortening[: args.limit]

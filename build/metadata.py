@@ -30,6 +30,7 @@ Usage:
 
 import argparse
 import csv
+import html
 import io
 import json
 import os
@@ -44,11 +45,11 @@ from collectors._common import (
     ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE, TRUSTED_XC_METHODS,
     clean_aliases, is_clean_common_name, is_clean_scientific_name,
     is_full_species_name, load_json, load_manual_species_aliases,
-    related_species_names, save_json, xc_record_method,
+    related_species_names, same_epithet_stem, save_json, xc_record_method,
 )
 from utils.audit_metadata import audit_records, has_failures, print_report
 from utils.description_quality import (
-    clean_description_text, is_disambiguation_text, word_count,
+    clean_description_text, contains_species_identity, is_disambiguation_text, word_count,
 )
 
 # ---------------------------------------------------------------------------
@@ -82,6 +83,9 @@ EXTERNAL_ID_FIELDS = (
 )
 WIKIDATA_ID_FIELDS = ("gbif_id", "ncbi_id", "avibase_id", "birdlife_id")
 
+# og:description of eBird pages without a species account (generic site text).
+EBIRD_BOILERPLATE = re.compile(r"^\s*(Learn about\b|eBird transforms\b)")
+
 # AviList extinction statuses that exclude a species. Possibly extinct and
 # extinct-in-the-wild species stay: they can still be recorded.
 AVILIST_EXTINCT = {"extinct", "(extinct)"}
@@ -113,7 +117,7 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
     """Extract author name from attribution strings."""
     if not attribution:
         return ""
-    text = attribution.strip()
+    text = html.unescape(attribution).strip()
 
     if source == "ebird" or (" - " in text and not text.startswith("(")):
         text = text.split(" - ", 1)[-1].strip()
@@ -148,8 +152,12 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
             r"|нет\s+известных\s+ограничений\s+авторского\s+права.*"
             r"|nėra\s+žinomų\s+autorinių\s+teisių\s+apribojimų.*"
             r"|保留部分权利.*"
+            r"|لا توجد قيود معروفة لحقوق الطبع والنشر.*"
             r"|no\s+known\s+copyright\s+restrictions.*"
             r").*", "", text, flags=re.IGNORECASE)
+
+    # Rights boilerplate that also appears in Commons artist fields
+    text = re.sub(r"[،,]?\s*لا توجد قيود معروفة لحقوق الطبع والنشر.*", "", text)
 
     # Sanitise: strip bracketed content, emoji, and non-name characters
     text = re.sub(r"\s*[\(\[][^)\]]*[\)\]]", "", text)   # (...) and [...]
@@ -162,8 +170,19 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
     text = re.sub(r"[<>{}|\\^~`/]", "", text)             # stray markup/path chars
     text = re.sub(r"\s+", " ", text)                       # collapse whitespace
 
-    return text.strip(" ,.\u3001\uff0c") if text.strip(" ,.\u3001\uff0c") else ""
+    return text.strip(" ,.\u3001\uff0c\u060c") if text.strip(" ,.\u3001\uff0c\u060c") else ""
 
+
+
+def _normalize_license(value: str) -> str:
+    """Write Wikimedia license names in the iNat style ("CC BY-SA 4.0" → "cc-by-sa-4.0")."""
+    text = (value or "").strip()
+    low = text.lower()
+    if low in ("public domain", "pd", "no restrictions"):
+        return "pd"
+    if low.startswith("cc") or low.startswith("gfdl"):
+        return re.sub(r"[\s_]+", "-", low)
+    return text
 
 
 def load_ebird_images() -> dict[str, dict]:
@@ -181,7 +200,8 @@ def load_ebird_images() -> dict[str, dict]:
         code = rec.get("ebird_code", "")
         url = rec.get("image_url", "")
         attr = rec.get("image_attribution", "")
-        if code and url:
+        # Pages without a photo carry a placeholder URL with no asset ID.
+        if code and url and re.search(r"/asset/\d+", url):
             result[code] = {"url": url, "attribution": attr}
     return result
 
@@ -425,7 +445,7 @@ def load_sound_classes() -> dict[str, dict]:
             "observationorg_id": "",
             "image_url": rec.get("image_url", ""),
             "image_author": rec.get("image_author", ""),
-            "image_license": rec.get("image_license", ""),
+            "image_license": _normalize_license(rec.get("image_license", "")),
             "image_source": rec.get("image_source", ""),
             "match_source": "sound_class",
             "scientific_name_aliases": clean_common_aliases(
@@ -955,6 +975,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             common_name_sources={loc: "inat" for loc in common_names},
             observations_count=rec.get("observations_count", 0),
             match_source="non_bird",
+            english_names=rec.get("english_names", []),
             source_names=source_names,
             scientific_name_aliases=clean_aliases([a for a in aliases if a != name]),
         )
@@ -1195,16 +1216,18 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     for sci, entry in taxonomy.items():
         if entry["image_url"]:
             continue
+        # Vector files are drawings or maps, not photos.
         wd_img = next(
             (wikidata[n]["image"] for n in _entry_names(sci, entry)
-             if (wikidata.get(n, {}).get("image") or {}).get("url")),
+             if (wikidata.get(n, {}).get("image") or {}).get("url")
+             and not wikidata[n]["image"]["url"].lower().endswith(".svg")),
             None,
         )
         if wd_img:
             entry["image_url"] = wd_img["url"]
             entry["image_author"] = _parse_image_author(
                 wd_img.get("attribution", ""), "wikimedia")
-            entry["image_license"] = wd_img.get("license", "")
+            entry["image_license"] = _normalize_license(wd_img.get("license", ""))
             entry["image_source"] = "Wikimedia"
             img_stats["wikimedia"] += 1
 
@@ -1492,6 +1515,75 @@ def _apply_metadata_quality_filter(
     return kept
 
 
+def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int:
+    """Give species that share an English display name distinct names.
+
+    iNat sometimes gives two species the same preferred English name. Birds
+    (AviList names) keep theirs; otherwise the more-observed species keeps it
+    and the other takes its first English alternative on iNat that no other
+    species uses. Returns the number of renamed species.
+    """
+    groups: dict[str, list[dict]] = {}
+    for rec in records:
+        if rec.get("record_type") == "sound_class" or rec["common_name"] == rec["scientific_name"]:
+            continue
+        groups.setdefault(rec["common_name"].lower(), []).append(rec)
+    used = {rec["common_name"].lower() for rec in records}
+    renamed = 0
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda r: (r.get("taxon_group") != "Aves", -(r.get("observations_count") or 0)))
+        for rec in group[1:]:
+            if rec.get("taxon_group") == "Aves":
+                continue
+            alternatives = taxonomy.get(rec["scientific_name"], {}).get("english_names", [])
+            alt = next((a for a in alternatives
+                        if a.lower() not in used and is_clean_common_name(a)), None)
+            if alt:
+                used.add(alt.lower())
+                rec["common_name"] = alt
+                rec["common_names"]["en"] = alt
+                renamed += 1
+    return renamed
+
+
+_TEXT_BINOMIAL_RE = re.compile(
+    r'"?\b([A-Z][a-z]+)"?\s+(?:kl\.\s+|\([A-Z][a-z]+\)\s+)?([a-z][a-z-]{2,})\b')
+
+
+def _describes_species(text: str, title: str, names: list[str],
+                       common_name: str = "", other_species: set[str] | None = None) -> bool:
+    """True if a Wikipedia text is about this species rather than a sister
+    species, genus, or clade (iNat sometimes links those articles).
+
+    The text must name the species: its scientific name or an alias (also as
+    a trinomial or with a subgenus), or a binomial that differs only by genus
+    or epithet ending (unrecorded genus transfer) and is not another species
+    in the taxonomy. Articles titled with the species' English name and the
+    articles of monotypic genera pass too.
+    """
+    if contains_species_identity(f"{title}\n{text}", names):
+        return True
+    if common_name and title.strip().lower() == common_name.strip().lower():
+        return True
+    for name in names:
+        genus, epithet = name.split()[:2]
+        if re.search(rf"\b{re.escape(genus)}\s+(?:\(?[A-Za-z]+\)?\s+)?{re.escape(epithet)}\b",
+                     text, re.IGNORECASE):
+            return True
+    epithets = [n.split()[1] for n in names]
+    for genus, epithet in _TEXT_BINOMIAL_RE.findall(text[:600]):
+        binomial = f"{genus} {epithet}"
+        if binomial in (other_species or set()):
+            continue
+        if any(same_epithet_stem(epithet, e) for e in epithets):
+            return True
+    genera = {n.split()[0] for n in names}
+    return title in genera and bool(re.search(
+        r"\bmonotypic\b|\b(?:only|sole|single|one)\b[^.]{0,40}\bspecies\b", text, re.IGNORECASE))
+
+
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    translate: dict = None,
                    manual_overrides: dict | None = None,
@@ -1529,6 +1621,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         manual_aliases = {}
 
     image_prefix = image_url_prefix()
+    wrong_article = 0
+    canonical_set = set(taxonomy)
     # eBird pages are scraped per code; a code is the stable link even when
     # the scientific name the page was fetched under has changed.
     ebird_by_code: dict[str, dict] = {}
@@ -1547,6 +1641,18 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         wp = _raw_lookup(wiki, names)
         eb = ebird_by_code.get(tax.get("ebird_code", ""), {})
         cl = _raw_lookup(translate, names)
+        identity_names = clean_aliases([
+            *names, *tax.get("scientific_name_aliases", []), *tax.get("xc_aliases", []),
+            *manual_aliases.get(sci_name, []),
+        ])
+        wp_english = wp.get("extract") or wp.get("extracts", {}).get("en", "")
+        if wp_english and not _describes_species(
+                wp_english, wp.get("title", ""), identity_names,
+                tax.get("preferred_common_name", ""), canonical_set - {sci_name}):
+            # The linked article is about another taxon: drop it, its other
+            # locales (langlinks of the same article) and LLM text made from it.
+            wp, cl = {}, {}
+            wrong_article += 1
 
         # Descriptions: locale → text.
         # Base layer: Wikipedia (multi-locale) or eBird (English-only).
@@ -1576,7 +1682,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             if url:
                 wikipedia_urls[loc] = url
 
-        if not descriptions.get("en") and eb.get("description"):
+        if (not descriptions.get("en") and eb.get("description")
+                and not EBIRD_BOILERPLATE.match(eb["description"])):
             descriptions["en"] = eb["description"]
             description_sources["en"] = "ebird"
 
@@ -1586,7 +1693,12 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         fallback_locales = set(cl.get("fallback_locales", []))
         if cl.get("fallback"):
             fallback_locales.update(cl_extracts)
+        translated = cl.get("translated_from", {}) or {}
         for loc, text in cl_extracts.items():
+            # A machine translation made while Wikipedia lacked this locale
+            # yields to native Wikipedia text added since.
+            if loc in translated and descriptions.get(loc):
+                continue
             text = clean_description_text(text)
             # Guard against malformed locale keys (e.g. an LLM echoing the
             # literal "locale" placeholder from a prompt example).
@@ -1685,6 +1797,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         records.append(record)
 
     records = _apply_metadata_quality_filter(records, quality_cfg)
+    renamed = _resolve_display_name_collisions(records, taxonomy)
+    print(f"  Display names: {renamed} species renamed to an iNat alternative (shared name)")
 
     # Assign BirdNET species IDs (persistent, append-only)
     if reassign_ids:
@@ -1732,6 +1846,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     print(f"\n  Common names: {n_locales} locales")
 
     print(f"\n  Descriptions:")
+    print(f"    dropped Wikipedia articles about another taxon: {wrong_article}")
     for src, cnt in desc_sources.most_common():
         print(f"    {src}: {cnt}")
 

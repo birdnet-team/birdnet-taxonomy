@@ -274,10 +274,10 @@ def fetch_taxa_batch(taxon_ids: list[int], all_names: bool,
     return data.get("results", [])
 
 
-def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
-    """Extract relevant fields from an iNat taxa API result."""
-    # Common names by locale
-    common_names = {}
+def _name_fields(result: dict) -> dict:
+    """Common names from an iNat taxa API result (needs all_names=true)."""
+    common_names: dict[str, str] = {}
+    english_names: list[str] = []
     for name_entry in result.get("names", []):
         if not name_entry.get("is_valid", False):
             continue
@@ -290,6 +290,20 @@ def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
         if locale and locale != "und":
             if locale not in common_names:
                 common_names[locale] = name_entry.get("name", "")
+            if locale == "en" and name_entry.get("name"):
+                english_names.append(name_entry["name"])
+    return {
+        "common_names": common_names,
+        # All English names in iNat's order: alternatives when two species
+        # share a preferred name.
+        "english_names": english_names,
+        "preferred_common_name": result.get("preferred_common_name", ""),
+    }
+
+
+def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
+    """Extract relevant fields from an iNat taxa API result."""
+    names = _name_fields(result)
 
     # Photo URL — use large version
     photo = result.get("default_photo") or {}
@@ -304,14 +318,15 @@ def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
         "inat_id": result.get("id"),
         "taxon_group": group_name,
         "iconic_taxon_name": result.get("iconic_taxon_name", ""),
-        "common_names": common_names,
+        "common_names": names["common_names"],
+        "english_names": names["english_names"],
         "wikipedia_url": result.get("wikipedia_url", ""),
         "image_url": photo_url,
         "image_attribution": photo.get("attribution", ""),
         "image_license": photo.get("license_code", ""),
         "observations_count": result.get("observations_count", 0),
         "sound_observations_count": sound_count,
-        "preferred_common_name": result.get("preferred_common_name", ""),
+        "preferred_common_name": names["preferred_common_name"],
         "extinct": bool(result.get("extinct", False)),
         **_status_fields(result),
     }
@@ -876,10 +891,11 @@ def reconcile_avilist(existing: dict, cfg: dict, delay: float,
 
 # ── Taxon status refresh ──────────────────────────────────────────────
 
-def _fetch_taxa_status(taxon_ids: list[int], delay: float) -> list[dict] | None:
+def _fetch_taxa_status(taxon_ids: list[int], delay: float,
+                       all_names: bool = False) -> list[dict] | None:
     """Fetch taxa by ID. Returns None on request failure (unlike [] = none found)."""
     ids_str = ",".join(str(i) for i in taxon_ids)
-    url = f"{TAXA_URL}/{ids_str}?all_names=false"
+    url = f"{TAXA_URL}/{ids_str}?all_names={'true' if all_names else 'false'}"
     data = _api_get(url)
     if not data:
         time.sleep(delay * 3)
@@ -905,7 +921,7 @@ def _fetch_sound_counts(taxon_ids: list[int], delay: float) -> dict[int, int]:
 
 def refresh_taxon_status(existing: dict, delay: float, all_names: bool,
                          limit: int = 0, save_every: int = 500,
-                         refresh: bool = False) -> int:
+                         refresh: bool = False, refresh_names: bool = False) -> int:
     """Re-check cached taxa against iNat and fetch replacement taxa.
 
     iNat retires a taxon on a swap or merge and creates a new one, so this
@@ -919,7 +935,8 @@ def refresh_taxon_status(existing: dict, delay: float, all_names: bool,
 
     todo = [
         (sci, rec) for sci, rec in existing.items()
-        if rec.get("inat_id") is not None and (refresh or STATUS_KEY not in rec)
+        if rec.get("inat_id") is not None
+        and (refresh or STATUS_KEY not in rec or (refresh_names and "english_names" not in rec))
     ]
     if limit:
         todo = todo[:limit]
@@ -930,7 +947,8 @@ def refresh_taxon_status(existing: dict, delay: float, all_names: bool,
     for batch_idx, batch in enumerate(batches):
         if is_shutting_down():
             break
-        results = _fetch_taxa_status([rec["inat_id"] for _, rec in batch], delay)
+        results = _fetch_taxa_status([rec["inat_id"] for _, rec in batch], delay,
+                                     all_names=refresh_names)
         if results is None:
             continue  # leave unchecked; retried on the next run
         by_id = {r.get("id"): r for r in results}
@@ -939,12 +957,22 @@ def refresh_taxon_status(existing: dict, delay: float, all_names: bool,
             if result is None:
                 # The ID no longer resolves on iNat: the taxon was deleted.
                 result = {"name": rec.get("inat_name", ""), "is_active": False}
+            elif refresh_names:
+                rec.update(_name_fields(result))
             rec.update(_status_fields(result))
             checked += 1
         if (batch_idx + 1) % 50 == 0 or batch_idx == len(batches) - 1:
             print(f"  Checked {checked}/{len(todo)}", flush=True)
             save_json(existing, OUTPUT_FILE)
         time.sleep(delay)
+
+    if refresh_names:
+        # Reviewed common names from priority_species.csv outrank iNat's.
+        for row in load_priority_species():
+            rec = existing.get(row["scientific_name"])
+            if rec and row.get("common_name"):
+                rec["preferred_common_name"] = row["common_name"]
+                rec.setdefault("common_names", {})["en"] = row["common_name"]
 
     inactive = [
         rec for rec in existing.values()
@@ -1389,6 +1417,11 @@ def main():
         "--refresh-status", action="store_true",
         help="Re-check the iNat status of all records, not just unchecked ones"
     )
+    parser.add_argument(
+        "--refresh-names", action="store_true",
+        help="With the status phase, also refresh common names (all locales, "
+             "all English alternatives) of records fetched before names were kept"
+    )
     args = parser.parse_args()
 
     # Filter groups
@@ -1473,6 +1506,7 @@ def main():
             limit=args.limit,
             save_every=args.save_every,
             refresh=args.refresh_status,
+            refresh_names=args.refresh_names,
         )
 
     # Observation photo fallback — CC-licensed photos from observations

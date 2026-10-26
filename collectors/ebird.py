@@ -53,6 +53,9 @@ TAXONOMY_JSON = RAW_DIR / "taxonomy.json"
 EBIRD_TAXONOMY_URL = "https://api.ebird.org/v2/ref/taxonomy/ebird"
 EBIRD_VERSIONS_URL = "https://api.ebird.org/v2/ref/taxonomy/versions"
 
+# og:description of pages without a species account (generic site text).
+EBIRD_BOILERPLATE = re.compile(r"^\s*(Learn about\b|eBird transforms\b)")
+
 # All known eBird locales with real translations.
 # (ebird_locale, canonical_locale) — canonical is stored in common_names.
 EBIRD_LOCALES: list[tuple[str, str]] = [
@@ -253,8 +256,12 @@ def fetch_ebird_page(ebird_code: str, base_url: str) -> dict:
             return {"error": "rate_limited_after_retries"}
 
         description = _extract_og_tag(html, "description")
+        if description and EBIRD_BOILERPLATE.match(description):
+            description = None  # page has no species account, only site text
         image_url = _extract_og_tag(html, "image")
         image_alt = _extract_og_tag(html, "image:alt")
+        if not _extract_asset_id(image_url or ""):
+            image_url = ""  # placeholder without an asset ID (".../asset//900")
 
         return {
             "description": description,
