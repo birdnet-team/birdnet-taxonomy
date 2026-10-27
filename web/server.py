@@ -230,7 +230,7 @@ class StatsResponse(BaseModel):
     """Dataset statistics."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
     total_species: int = Field(..., examples=[16536])
-    groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2195, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 6, "Geophony": 3}])
+    groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2196, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 5, "Geophony": 3}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
 
 
