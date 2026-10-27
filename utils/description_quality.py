@@ -176,6 +176,9 @@ _LATIN_END = r"(?:us|a|um|i|ae|is|ii|ensis|oides|or|er|ix|ax|ex|os|es|on)"
 _TRINOMIAL_AUTHOR_RE = re.compile(
     rf"\b[A-Z][a-z]*\.? (?:[a-z]\.|[a-z]+{_LATIN_END}) [a-z]{{2,}}{_LATIN_END},? "
     r"\(?(?:[A-ZÀ-Þ][\w'’.-]+(?: (?:&|and|et|y|und) |, ?| )?)+,? ?(?:1[789]|20)\d{2}\)?")
+# An abbreviated subspecies introducing its range or traits ("N. l.
+# yucatanicus - Central America", "T. a. distans: males are darker").
+_TRINOMIAL_ITEM_RE = re.compile(r"\b[A-Z]\. [a-z]+\.? [a-z]{3,}\b\s*(?:[–—:-]|\()")
 # A sentence of bare scientific names (a synonym list).
 _NAME_LIST_RE = re.compile(r"(?:[A-Z][a-z]+ [a-z]{3,}[,;]?\s*){2,}")
 _CATEGORY_RE = re.compile(r"\b(?:[KkL]ategori[ae]?|Category|Catégorie|Categoría|Categoria):\S")
@@ -238,8 +241,9 @@ def clean_description_text(text: str) -> str:
             break
         for paragraph in re.split(r"\n{2,}", body):
             subspecies = [m.group(0) for m in _TRINOMIAL_AUTHOR_RE.finditer(paragraph)]
-            if (kept and len(subspecies) >= 2
-                    and sum(map(len, subspecies)) >= 0.12 * len(paragraph)):
+            if kept and ((len(subspecies) >= 2
+                          and sum(map(len, subspecies)) >= 0.12 * len(paragraph))
+                         or len(_TRINOMIAL_ITEM_RE.findall(paragraph)) >= 2):
                 kept[-1] = _drop_list_intro(kept[-1])
                 continue
             cleaned = _clean_paragraph(paragraph, seen)
