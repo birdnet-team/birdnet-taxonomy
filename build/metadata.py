@@ -742,6 +742,35 @@ def _resolve_shared_identifiers(taxonomy: dict, sources: dict[str, dict]) -> dic
     return dropped
 
 
+def _accept_gbif_keys(taxonomy: dict, wikidata: dict) -> int:
+    """Replace GBIF synonym keys with the accepted key of the same taxon.
+
+    Wikidata often carries the key of a GBIF synonym usage (GBIF still lists
+    the species under an older genus, or as a subspecies), which returns few
+    occurrences. The accepted key is used when its name keeps the species'
+    epithet (same taxon) and neither that key nor that species name belongs
+    to another species here (a GBIF lump). Returns the number replaced.
+    """
+    held = Counter(e.get("gbif_id") for e in taxonomy.values() if e.get("gbif_id"))
+    replaced = 0
+    for sci, entry in taxonomy.items():
+        key = entry.get("gbif_id")
+        status = next((wikidata[n]["gbif_status"] for n in _entry_names(sci, entry)
+                       if (wikidata.get(n, {}).get("gbif_status") or {}).get("key") == key), None)
+        if not key or not status or "SYNONYM" not in status.get("status", ""):
+            continue
+        accepted_key, accepted = status.get("accepted_key", ""), status.get("accepted_name", "")
+        words = accepted.split()
+        if (not accepted_key or len(words) < 2 or accepted_key in held
+                or not same_epithet_stem(words[-1], sci.split()[-1])
+                or (len(words) == 2 and accepted != sci and accepted in taxonomy)):
+            continue
+        entry["gbif_id"] = accepted_key
+        held[accepted_key] += 1
+        replaced += 1
+    return replaced
+
+
 def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = None) -> int:
     """Drop localized names that a more authoritative source gives another species,
     and names that are just the scientific name.
@@ -1192,6 +1221,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
                 break
     stats["wikidata_ids"] = id_counts
     stats["wikidata_coverage"] = wd_coverage
+    stats["gbif_accepted"] = _accept_gbif_keys(taxonomy, wikidata)
 
     stats["shared_ids_dropped"] = _resolve_shared_identifiers(taxonomy, id_sources)
 
@@ -1394,6 +1424,7 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     print(f"\n  Wikidata identifiers ({wd_cov}/{total} entries found):")
     for key, count in wd_ids.items():
         print(f"    {key}: {count}")
+    print(f"    GBIF synonym keys replaced by the accepted key: {stats.get('gbif_accepted', 0)}")
     dropped = stats.get("shared_ids_dropped", {})
     if dropped:
         print(f"    dropped as shared by several species: "

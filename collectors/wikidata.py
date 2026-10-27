@@ -25,8 +25,10 @@ import csv
 import hashlib
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from config import load_config
 from collectors._common import (
@@ -42,6 +44,7 @@ OUTPUT_FILE = RAW_DIR / "wikidata_data.json"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 _COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 GBIF_MATCH_URL = "https://api.gbif.org/v1/species/match"
+GBIF_SPECIES_URL = "https://api.gbif.org/v1/species"
 GBIF_SYNONYMS_URL = "https://api.gbif.org/v1/species/{key}/synonyms"
 
 _SPARQL_BATCH = 150
@@ -458,6 +461,29 @@ def gbif_match_id(scientific_name: str) -> tuple[str, str] | None:
     return "", ""
 
 
+def gbif_key_status(key: str) -> dict | None:
+    """GBIF backbone status of a taxon key: {key, status, accepted_key,
+    accepted_name}. Wikidata often holds the key of a synonym usage (GBIF
+    still under an older genus); the build maps it to the accepted key of
+    the same taxon. Returns None when the request fails."""
+    req = urllib.request.Request(f"{GBIF_SPECIES_URL}/{key}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            usage = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return {"key": key, "status": "MISSING"} if exc.code == 404 else None
+    except Exception:
+        return None
+    # "accepted" carries the authorship: keep the canonical name only.
+    accepted = re.match(r"[A-Z][a-z]+(?: [a-z][a-z-]+){1,2}", usage.get("accepted", "") or "")
+    return {
+        "key": key,
+        "status": usage.get("taxonomicStatus", ""),
+        "accepted_key": str(usage.get("acceptedKey") or ""),
+        "accepted_name": accepted.group(0) if accepted else "",
+    }
+
+
 def gbif_aliases(scientific_name: str) -> list[str]:
     """Fetch accepted/synonym binomials from GBIF for alias bridging."""
     params = urllib.parse.urlencode({
@@ -784,6 +810,24 @@ def main():
         if idx % 200 == 0:
             save_json(existing, OUTPUT_FILE)
     print(f"  Found GBIF IDs for {gbif_count} species")
+    save_json(existing, OUTPUT_FILE)
+
+    # Phase 2e: GBIF backbone status of each stored GBIF key
+    need_status = [sci for sci in target_names
+                   if existing.get(sci, {}).get("gbif_id")
+                   and (existing[sci].get("gbif_status") or {}).get("key") != existing[sci]["gbif_id"]]
+    print(f"\nPhase 2e: GBIF key status ({len(need_status)} species)...")
+    synonyms = 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        statuses = pool.map(lambda sci: gbif_key_status(existing[sci]["gbif_id"]), need_status)
+        for idx, (sci, status) in enumerate(zip(need_status, statuses), start=1):
+            if status is None:
+                continue  # request failed: retried on the next run
+            existing[sci]["gbif_status"] = status
+            synonyms += "SYNONYM" in status["status"]
+            if idx % 1000 == 0:
+                save_json(existing, OUTPUT_FILE)
+    print(f"  Synonym keys: {synonyms}")
     save_json(existing, OUTPUT_FILE)
 
     # Phase 2c: Wikipedia sitelinks (articles iNat does not link)

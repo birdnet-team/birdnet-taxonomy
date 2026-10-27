@@ -204,6 +204,11 @@ names become aliases of the replacement taxon.
   record. An ID reached only through an alias loses to the species whose own
   name carries it; IDs that stay ambiguous (typically after a recent split) are
   dropped. The build fails if a shared ID slips through.
+- `gbif_id` is GBIF's accepted key for the species: a synonym key is replaced
+  by its accepted key when the accepted name keeps the species' epithet (a
+  genus change, or GBIF ranking it as a subspecies) and neither the key nor
+  that name belongs to another species here (a GBIF lump keeps the original
+  key).
 - Identifiers must match their format: numeric GBIF, NCBI, BirdLife, and
   observation.org IDs; 16-hex Avibase IDs; lowercase eBird codes; `Q`-prefixed
   Wikidata QIDs.
@@ -355,6 +360,7 @@ Fetches species identifiers, common name labels, and images from Wikidata and Wi
 - **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257), and the matched Wikidata item (`wikidata_qid`: the item behind the GBIF ID, else the NCBI ID, else the first match; lexeme senses are ignored, duplicate items resolve to the one with more identifiers). Stored IDs are kept; only gaps are filled. Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases. A species' own name wins over an alias, aliases shared by several species are skipped, and `id_sources` records which Wikidata taxon name supplied each ID so the build can reject IDs reached through an untrusted alias.
 - **Phase 2c — Wikipedia sitelinks:** Records each species' Wikipedia article titles in the configured `wikipedia.locales` (`wikipedia_sitelinks`), so the Wikipedia collector can fetch articles iNat does not link.
 - **Phase 2d — GBIF backbone match:** For species Wikidata has no GBIF ID for, queries the GBIF species match API (exact, species rank). An accepted match is the species' own ID; a synonym match records GBIF's accepted name in `id_sources`, so the build keeps it only when that name is a trusted alias. Misses are remembered (`gbif_match_checked`).
+- **Phase 2e — GBIF key status:** Looks up each stored GBIF key in the GBIF backbone (`gbif_status`: status, accepted key and name). Wikidata often holds the key of a GBIF synonym usage, e.g. GBIF still lists *Curruca nisoria* as *Sylvia nisoria*; such keys return few occurrences.
 - **Phase 3 — Labels:** Fetches `rdfs:label` common names in all available languages.
 - **Phase 4 — Images:** Fetches Wikidata P18 images and checks Wikimedia Commons licenses (CC, PD, GFDL).
 
