@@ -171,6 +171,7 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
     text = re.sub(r"[،,]?\s*لا توجد قيود معروفة لحقوق الطبع والنشر.*", "", text)
 
     # Sanitise: strip bracketed content, emoji, and non-name characters
+    text = re.sub(r"^\((.+)\)$", r"\1", text.strip())      # "(Hans Hillewaert)"
     text = re.sub(r"\s*[\(\[][^)\]]*[\)\]]", "", text)   # (...) and [...]
     text = re.sub(                                         # emoji & symbols
         r"[\U0001F000-\U0001FFFF"
@@ -183,6 +184,23 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
 
     return text.strip(" ,.\u3001\uff0c\u060c") if text.strip(" ,.\u3001\uff0c\u060c") else ""
 
+
+
+def _attributable(author: str, license_name: str) -> bool:
+    """An image can be credited: it has an author, or its license (public
+    domain, CC0) needs none."""
+    return bool(author) or license_name == "pd" or license_name.startswith("cc0")
+
+
+def _usable_wikimedia_image(wd_rec: dict) -> dict | None:
+    """A record's Commons image, unless it is a vector file (drawings, maps)
+    or its license requires attribution and no author is known."""
+    img = wd_rec.get("image") or {}
+    url = img.get("url", "")
+    if not url or url.lower().endswith(".svg"):
+        return None
+    author = _parse_image_author(img.get("attribution", ""), "wikimedia")
+    return img if _attributable(author, _normalize_license(img.get("license", ""))) else None
 
 
 def _normalize_license(value: str) -> str:
@@ -1247,10 +1265,10 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
         inat_rec = inat.get(entry["inat_key"], {}) if entry["inat_key"] else {}
         url = inat_rec.get("image_url", "")
         lic = inat_rec.get("image_license", "")
-        if url and lic in ACCEPTABLE_LICENSES:
+        author = _parse_image_author(inat_rec.get("image_attribution", ""), "inat")
+        if url and lic in ACCEPTABLE_LICENSES and _attributable(author, lic):
             entry["image_url"] = url
-            entry["image_author"] = _parse_image_author(
-                inat_rec.get("image_attribution", ""), "inat")
+            entry["image_author"] = author
             entry["image_license"] = lic
             entry["image_source"] = "iNaturalist"
             img_stats["inat"] += 1
@@ -1277,11 +1295,9 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     for sci, entry in taxonomy.items():
         if entry["image_url"]:
             continue
-        # Vector files are drawings or maps, not photos.
         wd_img = next(
-            (wikidata[n]["image"] for n in _entry_names(sci, entry)
-             if (wikidata.get(n, {}).get("image") or {}).get("url")
-             and not wikidata[n]["image"]["url"].lower().endswith(".svg")),
+            (img for n in _entry_names(sci, entry)
+             if (img := _usable_wikimedia_image(wikidata.get(n, {})))),
             None,
         )
         if wd_img:
@@ -1298,7 +1314,9 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             continue
         inat_rec = inat.get(entry["inat_key"], {}) if entry["inat_key"] else {}
         obs_photo = inat_rec.get("obs_photo")
-        if obs_photo and obs_photo.get("url"):
+        if (obs_photo and obs_photo.get("url") and _attributable(
+                _parse_image_author(obs_photo.get("attribution", ""), "inat"),
+                obs_photo.get("license", ""))):
             entry["image_url"] = obs_photo["url"]
             entry["image_author"] = _parse_image_author(
                 obs_photo.get("attribution", ""), "inat")
@@ -1910,6 +1928,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         image_license = override.get("image_license") or tax.get("image_license", "")
         image_source = override.get("image_source") or tax.get("image_source", "")
         image = None
+        if image_url and not _attributable(image_author, image_license):
+            image_url = image_author = image_license = image_source = ""
         if image_url:
             encoded_sci = quote(sci_name, safe='')
             image = {

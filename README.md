@@ -252,7 +252,9 @@ names become aliases of the replacement taxon.
 ### Images
 
 A photo claimed by several species stays with one of them (the species named in
-the file, else the most observed).
+the file, else the most observed). A photo whose license requires attribution
+(anything but public domain or CC0) is only used with a known author; otherwise
+the next image source is tried.
 
 Configured non-species sound classes live under `sound_classes` in
 `config.yml`. These records use their English display name as

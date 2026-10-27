@@ -208,6 +208,7 @@ sound_classes:
   - name: Thunder
     group: Geophony
     wikidata_qid: Q83301
+    image_file: Lightning_over_Oradea_Romania_zoom.jpg
     aliases:
       - thunderclap
       - thunder clap
@@ -223,6 +224,7 @@ sound_classes:
   - name: Wind
     group: Geophony
     wikidata_qid: Q8094
+    image_file: Tall_Grass_in_the_Wind_(Unsplash).jpg
     aliases:
       - windy
       - breeze
