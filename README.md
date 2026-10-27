@@ -205,7 +205,8 @@ names become aliases of the replacement taxon.
   name carries it; IDs that stay ambiguous (typically after a recent split) are
   dropped. The build fails if a shared ID slips through.
 - Identifiers must match their format: numeric GBIF, NCBI, BirdLife, and
-  observation.org IDs; 16-hex Avibase IDs; lowercase eBird codes.
+  observation.org IDs; 16-hex Avibase IDs; lowercase eBird codes; `Q`-prefixed
+  Wikidata QIDs.
 
 ### Names
 
@@ -350,7 +351,7 @@ The build only assigns eBird codes that exist in `ebird_taxonomy.json`. AviList 
 Fetches species identifiers, common name labels, and images from Wikidata and Wikimedia Commons via SPARQL queries.
 
 - **Phase 1 — eBird codes:** Resolves eBird species codes (P3444) for species not yet matched via AviList, using scientific name (P225) and iNat taxon ID (P3151) as lookup keys.
-- **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257). Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases. A species' own name wins over an alias, aliases shared by several species are skipped, and `id_sources` records which Wikidata taxon name supplied each ID so the build can reject IDs reached through an untrusted alias.
+- **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257), and the matched Wikidata item (`wikidata_qid`: the item behind the GBIF ID, else the NCBI ID, else the first match; lexeme senses are ignored, duplicate items resolve to the one with more identifiers). Stored IDs are kept; only gaps are filled. Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases. A species' own name wins over an alias, aliases shared by several species are skipped, and `id_sources` records which Wikidata taxon name supplied each ID so the build can reject IDs reached through an untrusted alias.
 - **Phase 2c — Wikipedia sitelinks:** Records each species' Wikipedia article titles in the configured `wikipedia.locales` (`wikipedia_sitelinks`), so the Wikipedia collector can fetch articles iNat does not link.
 - **Phase 2d — GBIF backbone match:** For species Wikidata has no GBIF ID for, queries the GBIF species match API (exact, species rank). An accepted match is the species' own ID; a synonym match records GBIF's accepted name in `id_sources`, so the build keeps it only when that name is a trusted alias. Misses are remembered (`gbif_match_checked`).
 - **Phase 3 — Labels:** Fetches `rdfs:label` common names in all available languages.
@@ -360,7 +361,7 @@ Fetches species identifiers, common name labels, and images from Wikidata and Wi
 |------|-------------|
 | `--new-only` | Only species not yet in wikidata_data.json |
 | `--ids-only` | Only query external identifiers; skip labels and images |
-| `--refresh-identifiers` | Replace existing GBIF/NCBI/Avibase/BirdLife IDs with fresh Wikidata values |
+| `--refresh-identifiers` | Replace existing GBIF/NCBI/Avibase/BirdLife IDs and Wikidata QIDs with fresh Wikidata values |
 | `--limit N` | Cap species queried in this run (0 = all) |
 | `--no-cache` | Bypass request cache |
 | `--dry-run` | Show species count without querying |
@@ -578,7 +579,7 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 **Taxonomy phase:**
 1. Cross-references iNaturalist, AviList, Wikidata, and configured sound classes to build a canonical entry list (see [Taxonomy Rules](#taxonomy-rules): retired iNat taxa are dropped, birds take their AviList name, lumped/subspecies taxa are folded into aliases)
 2. Resolves eBird codes from AviList, eBird's own scientific names, and Wikidata, validated against `raw_data/ebird_taxonomy.json` and unique per species
-3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife), Macaulay Library, Xeno-Canto (validated against other species' names), and observation.org; an identifier claimed by several species stays only with the species whose own name carries it
+3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife, Wikidata QID), Macaulay Library, Xeno-Canto (validated against other species' names), and observation.org; an identifier claimed by several species stays only with the species whose own name carries it
 4. Collects common names from iNaturalist, eBird (62 locales), and Wikidata labels; names shared between species in a locale stay with the most authoritative source
 5. Raw data collected under an older name (e.g. Wikipedia text keyed by the iNat name of a bird AviList renamed) is found through the species' source names
 6. Selects the best image for each species through a priority chain:
@@ -741,7 +742,7 @@ curl '/api/species/eurblk1'
 
 - **[iNaturalist](https://www.inaturalist.org)** — Taxonomy, common names, observation counts, and photos via the public API. Data licensed under various Creative Commons licenses by individual contributors.
 - **[eBird](https://ebird.org)** — Species descriptions, images, and common names (62 locales) from the Cornell Lab of Ornithology. Species codes from the eBird/Clements taxonomy.
-- **[Wikidata](https://www.wikidata.org)** — External identifiers (GBIF, NCBI, Avibase, BirdLife), eBird codes, common name labels, and P18 images via SPARQL. Data available under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
+- **[Wikidata](https://www.wikidata.org)** — Item IDs, external identifiers (GBIF, NCBI, Avibase, BirdLife), eBird codes, common name labels, and P18 images via SPARQL. Data available under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
 - **[Wikipedia](https://www.wikipedia.org)** — English summaries, localized article links, and optional public-service translations from English Wikipedia excerpts. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2026). AviList Core Team, 2026. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2026](https://doi.org/10.2173/avilist.v2026).
 - **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.

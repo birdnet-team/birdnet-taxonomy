@@ -345,7 +345,7 @@
 </div>
 {% endif %}
 
-{% if s.inat_id or s.ebird_code or s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name or s.observationorg_id %}
+{% if s.inat_id or s.ebird_code or s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name or s.observationorg_id or s.wikidata_qid %}
 <div class="section">
     <h3>External Identifiers</h3>
     <table class="info-table">
@@ -375,6 +375,9 @@
         {% endif %}
         {% if s.birdlife_id %}
         <tr><td>BirdLife</td><td><a href="http://datazone.birdlife.org/species/factsheet/{{ s.birdlife_id }}" target="_blank">{{ s.birdlife_id }}</a></td></tr>
+        {% endif %}
+        {% if s.wikidata_qid %}
+        <tr><td>Wikidata</td><td><a href="https://www.wikidata.org/wiki/{{ s.wikidata_qid }}" target="_blank">{{ s.wikidata_qid }}</a></td></tr>
         {% endif %}
     </table>
 </div>

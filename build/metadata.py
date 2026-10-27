@@ -83,7 +83,7 @@ EXTERNAL_ID_FIELDS = (
     "ebird_code", "gbif_id", "ncbi_id", "avibase_id", "birdlife_id",
     "ml_taxon_code", "xc_name", "observationorg_id",
 )
-WIKIDATA_ID_FIELDS = ("gbif_id", "ncbi_id", "avibase_id", "birdlife_id")
+WIKIDATA_ID_FIELDS = ("gbif_id", "ncbi_id", "avibase_id", "birdlife_id", "wikidata_qid")
 
 # og:description of eBird pages without a species account (generic site text).
 EBIRD_BOILERPLATE = re.compile(r"^\s*(Learn about\b|eBird transforms\b)")
@@ -1603,6 +1603,7 @@ ID_FORMATS = {
     "observationorg_id": re.compile(r"\d+"),
     "avibase_id": re.compile(r"[0-9A-F]{16}"),
     "ebird_code": re.compile(r"[a-z0-9]+"),
+    "wikidata_qid": re.compile(r"Q\d+"),
 }
 _BINOMIAL_SHAPE_RE = re.compile(r"[A-Z][a-z]+ [a-z][a-z-]+")
 # Localized "names" that are file names, catalogue numbers, or carry a

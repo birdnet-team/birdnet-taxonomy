@@ -61,8 +61,9 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
     "xc_name": "Anas platyrhynchos",
     "gbif_id": 9761484,
     "ncbi_id": 8839,
-    "avibase_id": "Anas-platyrhynchos",
+    "avibase_id": "85625D75F2524457",
     "birdlife_id": 22680186,
+    "wikidata_qid": "Q25348",
     "image": {
         "src": "https://static.inaturalist.org/photos/123/original.jpeg",
         "thumb": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=thumb",
@@ -119,11 +120,12 @@ class SpeciesRecord(BaseModel):
     ebird_code: Optional[str] = Field(None, examples=["mallar3"])
     ml_taxon_code: Optional[str] = Field(None, examples=["mallar3"])
     xc_name: Optional[str] = Field(None, examples=["Anas platyrhynchos"])
-    observationorg_id: Optional[int] = Field(None, description="observation.org species ID", examples=[87959])
+    observationorg_id: Optional[int] = Field(None, description="observation.org species ID", examples=[198])
     gbif_id: Optional[int] = Field(None, examples=[9761484])
     ncbi_id: Optional[int] = Field(None, examples=[8839])
-    avibase_id: Optional[str] = Field(None, examples=["Anas-platyrhynchos"])
+    avibase_id: Optional[str] = Field(None, examples=["85625D75F2524457"])
     birdlife_id: Optional[int] = Field(None, examples=[22680186])
+    wikidata_qid: Optional[str] = Field(None, description="Wikidata item ID", examples=["Q25348"])
 
     @field_validator("birdlife_id", "gbif_id", "ncbi_id", "inat_id",
                      "observationorg_id", mode="before")

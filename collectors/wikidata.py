@@ -57,9 +57,9 @@ WD_IDENTIFIERS = {
     "avibase_id": "P2026",
     "birdlife_id": "P5257",
 }
-EXTERNAL_IDENTIFIER_FIELDS = tuple(
-    key for key in WD_IDENTIFIERS
-    if key != "ebird_code"
+EXTERNAL_IDENTIFIER_FIELDS = (
+    *(key for key in WD_IDENTIFIERS if key != "ebird_code"),
+    "wikidata_qid",  # the matched Wikidata item itself
 )
 
 
@@ -162,8 +162,13 @@ def query_ebird_codes(
 def query_identifiers(
     species: list[tuple[str, int | None]],
     aliases: dict[str, list[str]] | None = None,
+    current: dict[str, dict] | None = None,
 ) -> dict[str, dict]:
-    """Batch-query Wikidata for external identifiers."""
+    """Batch-query Wikidata for external identifiers.
+
+    current: stored records; the species' Wikidata item follows the item of
+    its stored GBIF ID when that is still offered.
+    """
     if not species:
         return {}
 
@@ -178,6 +183,7 @@ def query_identifiers(
         optionals += f"  OPTIONAL {{ ?item wdt:{prop} {var} . }}\n"
 
     results = {}
+    selects.append("?item")
     select_str = " ".join(selects)
 
     search_items: list[tuple[str, str]] = []
@@ -212,24 +218,50 @@ def query_identifiers(
         )
         rows.extend(_sparql_query(query))
 
+    # Only taxon items count (lexeme senses can carry a taxon name too).
+    rows = [r for r in rows if re.fullmatch(r".*/Q\d+", r["item"]["value"])]
     # The species' own name beats an alias: an alias (e.g. a GBIF synonym)
-    # can point at a different, broader taxon after a split.
-    rows.sort(key=lambda r: name_to_sci.get(r["taxonName"]["value"]) != r["taxonName"]["value"])
+    # can point at a different, broader taxon after a split. Among duplicate
+    # items, the one with more identifiers wins (then the lower QID), so the
+    # choice does not depend on SPARQL row order.
+    rows.sort(key=lambda r: (
+        name_to_sci.get(r["taxonName"]["value"]) != r["taxonName"]["value"],
+        -sum(1 for key in WD_IDENTIFIERS if r.get(key, {}).get("value")),
+        int(r["item"]["value"].rsplit("/Q", 1)[-1]),
+    ))
+    # sci → {(ID key, value) or "": (item, name)}; first row wins
+    items: dict[str, dict] = {}
     for r in rows:
         taxon_name = r["taxonName"]["value"]
         sci = name_to_sci.get(taxon_name)
         if not sci:
             continue
         ids = results.setdefault(sci, {})
+        item = r["item"]["value"].rsplit("/", 1)[-1]
+        items.setdefault(sci, {}).setdefault("", (item, taxon_name))
         for key in WD_IDENTIFIERS:
             if key == "ebird_code":
                 continue
             val = r.get(key, {}).get("value", "")
+            if val:
+                items[sci].setdefault((key, val), (item, taxon_name))
             if val and not ids.get(key):
                 ids[key] = val
                 # Record which Wikidata taxon name supplied the ID so the
                 # build can reject IDs reached through an untrusted alias.
                 ids.setdefault("id_sources", {})[key] = taxon_name
+    # The species' item is the one behind its GBIF ID (the stored one if
+    # still offered), else behind its NCBI ID, else the first item matched.
+    for sci, by_value in items.items():
+        stored = (current or {}).get(sci, {})
+        ids = results[sci]
+        item, taxon_name = (by_value.get(("gbif_id", stored.get("gbif_id")))
+                            or by_value.get(("gbif_id", ids.get("gbif_id")))
+                            or by_value.get(("ncbi_id", stored.get("ncbi_id")))
+                            or by_value.get(("ncbi_id", ids.get("ncbi_id")))
+                            or by_value[""])
+        ids["wikidata_qid"] = item
+        ids.setdefault("id_sources", {})["wikidata_qid"] = taxon_name
 
     results = {sci: ids for sci, ids in results.items() if ids}
     remaining = [(sci, iid) for sci, iid in species
@@ -245,13 +277,17 @@ def query_identifiers(
                 f"  ?item wdt:P3151 ?inatId .\n"
                 f"{optionals}}}"
             )
-            rows = _sparql_query(query)
+            rows = [r for r in _sparql_query(query)
+                    if re.fullmatch(r".*/Q\d+", r["item"]["value"])]
             for r in rows:
                 iid = r["inatId"]["value"]
                 sci = iid_to_sci.get(iid)
                 if not sci:
                     continue
                 ids = results.setdefault(sci, {})
+                if not ids.get("wikidata_qid"):
+                    ids["wikidata_qid"] = r["item"]["value"].rsplit("/", 1)[-1]
+                    ids.setdefault("id_sources", {})["wikidata_qid"] = sci
                 for key in WD_IDENTIFIERS:
                     if key == "ebird_code":
                         continue
@@ -704,7 +740,8 @@ def main():
     n_batches = (len(need_ids) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 2: Identifiers ({len(need_ids)} species, "
           f"{n_batches} batches)...")
-    identifiers = query_identifiers(need_ids, aliases=aliases)
+    identifiers = query_identifiers(need_ids, aliases=aliases,
+                                    current=None if args.refresh_identifiers else existing)
     print(f"  Found identifiers for {len(identifiers)} species")
 
     if args.refresh_identifiers:
@@ -715,13 +752,15 @@ def main():
             entry.pop("id_sources", None)
             entry.pop("gbif_match_checked", None)
 
+    # Without --refresh-identifiers, stored IDs stay; only gaps are filled.
     for sci, ids in identifiers.items():
         entry = existing.setdefault(sci, {})
+        sources = ids.get("id_sources", {})
         for key, val in ids.items():
-            if key == "id_sources":
-                entry.setdefault("id_sources", {}).update(val)
-            else:
+            if key != "id_sources" and not entry.get(key):
                 entry[key] = val
+                if key in sources:
+                    entry.setdefault("id_sources", {})[key] = sources[key]
 
     save_json(existing, OUTPUT_FILE)
 
