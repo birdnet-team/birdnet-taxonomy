@@ -685,7 +685,7 @@ uvicorn web.server:app --reload
 **Species lookup** supports multiple identifier types. The `/species/{name}` and `/api/species/{name}` endpoints accept any of:
 - Scientific name (e.g., `Turdus merula`)
 - Common name in any locale (e.g., `Amsel`, `Merle noir`)
-- BirdNET ID (e.g., `BN15763`)
+- BirdNET ID (e.g., `BN15765`)
 - Scientific alias from `scientific_name_aliases`
 - Common-name alias from `common_name_aliases`
 - eBird species code (e.g., `eurblk1`)
