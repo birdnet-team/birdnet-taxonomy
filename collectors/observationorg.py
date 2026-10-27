@@ -29,6 +29,7 @@ from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT,
     is_full_species_name, load_canonical_species, load_json, save_json,
+    shared_id_species,
     setup_shutdown, is_shutting_down,
     RateLimiter,
 )
@@ -42,7 +43,7 @@ GBIF_SYNONYMS_URL = "https://api.gbif.org/v1/species/{key}/synonyms"
 
 # observation.org blocks generic bot user agents; use a browser-like one
 _OBS_USER_AGENT = ("Mozilla/5.0 (compatible; BirdNET/1.0; "
-                   "+https://github.com/birdnet-team/species-data)")
+                   "+https://github.com/birdnet-team/birdnet-taxonomy)")
 
 _rate = RateLimiter(10)   # no documented rate limit
 _gbif_rate = RateLimiter(20)
@@ -52,8 +53,16 @@ _gbif_rate = RateLimiter(20)
 # API helpers
 # ---------------------------------------------------------------------------
 
+class LookupFailed(Exception):
+    """A request failed — distinct from "no match", which may be cached."""
+
+
 def _obs_search(scientific_name: str) -> dict | None:
-    """Search observation.org species API. Returns first matching result."""
+    """Search observation.org species API. Returns first matching result.
+
+    Raises LookupFailed when the request fails, so callers never cache a
+    failed lookup as "species not on observation.org".
+    """
     _rate.acquire()
     params = urllib.parse.urlencode({"q": scientific_name, "format": "json"})
     url = f"{OBS_API_URL}?{params}"
@@ -64,8 +73,8 @@ def _obs_search(scientific_name: str) -> dict | None:
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             data = json.loads(resp.read())
-    except Exception:
-        return None
+    except Exception as exc:
+        raise LookupFailed(f"observation.org: {exc}") from exc
 
     results = data.get("results", [])
     if not results:
@@ -106,8 +115,8 @@ def _gbif_get_synonyms(scientific_name: str) -> list[str]:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
-    except Exception:
-        return []
+    except Exception as exc:
+        raise LookupFailed(f"GBIF: {exc}") from exc
 
     usage_key = data.get("usageKey")
     if not usage_key:
@@ -126,8 +135,8 @@ def _gbif_get_synonyms(scientific_name: str) -> list[str]:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             syn_data = json.loads(resp.read())
-    except Exception:
-        return names
+    except Exception as exc:
+        raise LookupFailed(f"GBIF: {exc}") from exc
 
     for rec in syn_data.get("results", []):
         syn = (rec.get("species") or rec.get("canonicalName") or "").strip()
@@ -173,6 +182,8 @@ def main() -> None:
                         help="Skip species already in output file")
     parser.add_argument("--retry-unresolved", action="store_true",
                         help="Retry species cached with no observation.org ID")
+    parser.add_argument("--recheck-shared", action="store_true",
+                        help="Re-resolve species whose cached ID is shared with another species")
     args = parser.parse_args()
 
     setup_shutdown()
@@ -198,6 +209,12 @@ def main() -> None:
     print(f"observation.org collector")
     print(f"  Input species: {len(species)}")
     print(f"  Existing:      {len(existing)}")
+
+    if args.recheck_shared:
+        shared = shared_id_species(existing, "observationorg_id") & set(species)
+        for sci in shared:
+            existing.pop(sci, None)
+        print(f"  Rechecking IDs shared by several species: {len(shared)}")
 
     if args.retry_unresolved:
         retry_names = {
@@ -282,6 +299,8 @@ def main() -> None:
             *_gbif_get_synonyms(sci),
         ]
         for alt in synonyms:
+            if alt in species and alt != sci:
+                continue  # a separate species in our taxonomy, not a synonym
             obs_id = _obs_lookup(alt)
             if obs_id is not None:
                 return sci, obs_id, alt
@@ -314,8 +333,8 @@ def main() -> None:
                     else:
                         existing[sci] = {"observationorg_id": None}
                 except Exception as exc:
+                    # Not cached: a failed lookup is retried on the next run
                     tqdm.write(f"  ERROR {sci}: {exc}")
-                    existing[sci] = {"observationorg_id": None}
                 pbar.update(1)
                 unsaved += 1
                 if unsaved >= args.save_every:

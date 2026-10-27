@@ -42,10 +42,13 @@ from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
     RateLimiter, is_full_species_name, load_json, save_json,
-    clean_aliases,
+    clean_aliases, same_epithet_stem,
 )
 from utils.description_quality import (
     contains_species_identity,
+    describes_species,
+    is_disambiguation_text,
+    names_other_species,
     select_description_text,
     word_count,
 )
@@ -53,10 +56,13 @@ from utils.description_quality import (
 INAT_DATA = RAW_DIR / "inat_data.json"
 OUTPUT_FILE = RAW_DIR / "wikipedia_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
+WIKIDATA_FILE = RAW_DIR / "wikidata_data.json"
+TRANSLATE_FILE = RAW_DIR / "translate_data.json"
 
 EN_API = "https://en.wikipedia.org/w/api.php"
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 BATCH_SIZE = 50  # max titles per MediaWiki query
+FULL_EXTRACT_WORKERS = 8  # whole-page extracts are one title per request
 
 setup_shutdown()
 
@@ -146,7 +152,7 @@ def load_species_with_wikipedia() -> dict[str, str]:
 
     species = {}
     for sci_name, record in inat_data.items():
-        if record.get("inat_id") is None:
+        if record.get("inat_id") is None or not record.get("is_active", True):
             continue
         if not is_full_species_name(sci_name):
             continue
@@ -154,7 +160,182 @@ def load_species_with_wikipedia() -> dict[str, str]:
         if wiki_url:
             species[sci_name] = wiki_url
 
+    # English articles iNat does not link, from Wikidata sitelinks
+    # (collectors.wikidata); limited to names the taxonomy or iNat uses.
+    known = {s for s, r in inat_data.items() if r.get("is_active", True)}
+    known.update(load_json(TAXONOMY_FILE))
+    for sci_name, record in load_json(WIKIDATA_FILE).items():
+        title = (record.get("wikipedia_sitelinks") or {}).get("en")
+        if title and sci_name not in species and sci_name in known and is_full_species_name(sci_name):
+            species[sci_name] = "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_"))
+
     return species
+
+
+def _sitelink_only_species(existing: dict, taxonomy: dict, wikidata: dict,
+                           locales: list[str]) -> list[tuple[str, dict[str, str]]]:
+    """Species with no Wikipedia data and no English article, but articles in
+    other configured locales (Wikidata sitelinks)."""
+    items = []
+    for sci, entry in taxonomy.items():
+        names = [sci, *entry.get("source_names", [])]
+        if entry.get("record_type") == "sound_class" or any(existing.get(n) for n in names):
+            continue
+        links = next(((wikidata.get(n) or {}).get("wikipedia_sitelinks") for n in names
+                      if (wikidata.get(n) or {}).get("wikipedia_sitelinks")), {})
+        links = {loc: t for loc, t in links.items() if loc in locales and loc != "en"}
+        has_english = any("en" in ((wikidata.get(n) or {}).get("wikipedia_sitelinks") or {})
+                          for n in names)
+        if links and not has_english:
+            items.append((sci, links))
+    return items
+
+
+_LEAD_BINOMIAL_RE = re.compile(r"\(([A-Z][a-z]+ [a-z][a-z-]+)[,)]")
+
+
+def _usable_english(rec: dict, sci: str, names: list[str], other_species: set[str]) -> bool:
+    """The build's test for a stored English article: it is about this species."""
+    text = rec.get("extract") or (rec.get("extracts") or {}).get("en", "")
+    return bool(text) and not is_disambiguation_text(text) and describes_species(
+        text, rec.get("title", ""), names, other_species=other_species,
+    ) and not names_other_species(text, names, other_species)
+
+
+def _name_title_species(species: dict[str, str], existing: dict,
+                        taxonomy: dict, wikidata: dict) -> dict[str, str]:
+    """English articles for species without a usable one, looked up by name.
+
+    Covers species no source links (typically new AviList splits) and species
+    whose linked article is about another taxon (iNat links a split's parent
+    or the genus). Tried titles: the Wikidata English sitelink, the scientific
+    name, older names with the same epithet (genus transfers, e.g. Litoria
+    caerulea for Pelodryas caerulea), and the English name.
+
+    A page counts only if its title or the binomial its intro opens with is
+    the species, or the same epithet in another genus that is not another
+    species here (a split's name often redirects to the parent's article,
+    which opens with the parent's name); it must pass the build's identity
+    checks and not be an article another species already uses. Returns
+    scientific name -> article URL.
+    """
+    other_species = set(taxonomy)
+    english_names = {sci: e.get("preferred_common_name", "").lower() for sci, e in taxonomy.items()}
+    used_titles: dict[str, set[str]] = {}
+    for sci, rec in existing.items():
+        url = (rec.get("wikipedia_urls") or {}).get("en", "")
+        if url and not rec.get("error"):
+            used_titles.setdefault(wiki_title_from_url(url).replace("_", " ").lower(), set()).add(sci)
+
+    candidates: list[tuple[str, str]] = []
+    identity: dict[str, list[str]] = {}
+    for sci, entry in taxonomy.items():
+        if entry.get("record_type") == "sound_class":
+            continue
+        names = [sci, *entry.get("source_names", [])]
+        rec = next((existing[n] for n in names if existing.get(n)), None)
+        own = _identity_names(sci, taxonomy)
+        if rec is None:
+            if any(n in species for n in names):
+                continue
+        elif _usable_english(rec, sci, own, other_species):
+            continue
+        elif (rec.get("wikipedia_urls") or {}).get("en") and not (
+                rec.get("extract") or (rec.get("extracts") or {}).get("en")):
+            continue  # extract not fetched yet: Phase 1b backfills it
+        identity[sci] = own
+        transfers = [a for a in entry.get("scientific_name_aliases", [])
+                     if a not in other_species and same_epithet_stem(a.split()[-1], sci.split()[-1])]
+        sitelink = next(((wikidata.get(n) or {}).get("wikipedia_sitelinks", {}).get("en")
+                         for n in names if (wikidata.get(n) or {}).get("wikipedia_sitelinks", {}).get("en")), "")
+        english = entry.get("preferred_common_name", "")
+        if english == sci:
+            english = ""
+        for title in dict.fromkeys([sitelink, sci, *transfers, english,
+                                    english[:1] + english[1:].lower()]):
+            if title:
+                candidates.append((sci, title))
+
+    def is_ours(binomial: str, sci: str) -> bool:
+        # Same epithet only, even for aliases: an alias with another epithet
+        # is usually the parent of a split (Siren intermedia for S. nettingi).
+        return ((binomial == sci or binomial not in other_species)
+                and is_full_species_name(binomial)
+                and same_epithet_stem(binomial.split()[-1], sci.split()[-1]))
+
+    found: dict[str, str] = {}
+    for batch in _chunks(candidates, 20):  # intro extracts: up to 20 pages per request
+        if is_shutting_down():
+            break
+        pages = _batch_query(EN_API, [t for _, t in batch], props="extracts|pageprops",
+                             extra_params={"exintro": "1", "explaintext": "1",
+                                           "exlimit": "max", "ppprop": "disambiguation"})
+        for sci, title in batch:
+            page = _lookup_page(pages, title)
+            if sci in found or not page or _is_disambiguation_page(page):
+                continue
+            resolved = page.get("title", "")
+            text = page.get("extract", "")
+            if used_titles.get(resolved.lower(), set()) - {sci}:
+                continue
+            names = identity[sci]
+            lead = _LEAD_BINOMIAL_RE.search(text[:300])
+            titled = (resolved.lower() == english_names[sci]
+                      and contains_species_identity(text, names))
+            if not (titled or is_ours(resolved, sci) or (lead and is_ours(lead.group(1), sci))):
+                continue
+            if (describes_species(text, resolved, names, other_species=other_species)
+                    and not names_other_species(text, names, other_species)):
+                found[sci] = "https://en.wikipedia.org/wiki/" + quote(resolved.replace(" ", "_"))
+    return found
+
+
+def _drop_llm_texts(species_names: list[str]) -> int:
+    """Drop LLM texts (shortenings, translations, English fallbacks) made from
+    articles that were replaced; collectors.translate redoes them."""
+    data = load_json(TRANSLATE_FILE)
+    dropped = [s for s in species_names if data.pop(s, None) is not None]
+    if dropped:
+        save_json(data, TRANSLATE_FILE)
+    return len(dropped)
+
+
+def _fetch_sitelink_extracts(items: list[tuple[str, dict[str, str]]], existing: dict,
+                             min_words: int, target_words: int, extra_sections: int,
+                             min_paragraphs: int, max_words: int) -> int:
+    """Intro extracts for species whose only articles are non-English."""
+    by_loc: dict[str, list[tuple[str, str]]] = {}
+    for sci, links in items:
+        for loc, title in links.items():
+            by_loc.setdefault(loc, []).append((sci, title))
+    added = 0
+    for loc, pairs in sorted(by_loc.items()):
+        api = f"https://{loc}.wikipedia.org/w/api.php"
+        for batch in _chunks(pairs, 20):  # intro extracts: up to 20 pages per request
+            if is_shutting_down():
+                return added
+            pages = _batch_query(api, [t for _, t in batch], props="extracts|pageprops",
+                extra_params={"exintro": "1", "explaintext": "1", "exlimit": "max",
+                              "ppprop": "disambiguation"})
+            for sci, title in batch:
+                page = _lookup_page(pages, title) or {}
+                text = page.get("extract", "")
+                if (not text or _is_disambiguation_page(page)
+                        or not contains_species_identity(f"{page.get('title', '')}\n{text}", [sci])):
+                    continue
+                text = select_description_text(text, min_words=min_words, target_words=target_words,
+                                               extra_sections=extra_sections,
+                                               min_paragraphs=min_paragraphs, max_words=max_words)
+                if not text:
+                    continue
+                rec = existing.setdefault(sci, {})
+                rec.setdefault("extracts", {})[loc] = text
+                rec.setdefault("wikipedia_urls", {})[loc] = (
+                    f"https://{loc}.wikipedia.org/wiki/"
+                    + quote(page.get("title", title).replace(" ", "_"))
+                )
+                added += 1
+    return added
 
 
 def wiki_title_from_url(url: str) -> str:
@@ -252,12 +433,16 @@ def _batch_query(api_url: str, titles: list[str], props: str,
             if pid is None or page.get("missing"):
                 continue
             if pid in pages_by_id:
-                # Merge list-type properties from continuation
-                for key in ("langlinks",):
-                    old_list = pages_by_id[pid].get(key, [])
-                    new_list = page.get(key, [])
-                    if new_list:
-                        pages_by_id[pid][key] = old_list + new_list
+                # Merge list-type properties from continuation, and take
+                # properties earlier responses lacked (intro extracts come
+                # for 20 pages per response).
+                stored = pages_by_id[pid]
+                for key, value in page.items():
+                    if key == "langlinks":
+                        if value:
+                            stored[key] = stored.get(key, []) + value
+                    elif key not in stored:
+                        stored[key] = value
             else:
                 pages_by_id[pid] = page
 
@@ -357,14 +542,34 @@ def _batch_fetch_locale_extracts(lang: str,
 
 
 def _batch_fetch_full_extracts(lang: str, titles: list[str]) -> dict[str, dict]:
-    """Fetch full plain-text extracts from one Wikipedia language edition."""
+    """Fetch full plain-text extracts from one Wikipedia language edition.
+
+    TextExtracts returns whole-page text for only one page per request
+    (exlimit is capped at 1 without exintro), so titles are fetched one per
+    request, in parallel under the shared rate limiter.
+    """
     api = EN_API if lang == "en" else f"https://{lang}.wikipedia.org/w/api.php"
-    return _batch_query(api, titles,
-        props="extracts",
-        extra_params={
-            "explaintext": "1",
-            "exlimit": str(BATCH_SIZE),
-        },
+
+    def fetch(title: str) -> dict[str, dict]:
+        return _batch_query(api, [title],
+            props="extracts|pageprops",
+            extra_params={
+                "explaintext": "1",
+                "exlimit": "1",
+                "ppprop": "disambiguation",
+            },
+        )
+
+    pages: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=FULL_EXTRACT_WORKERS) as pool:
+        for result in pool.map(fetch, titles):
+            pages.update(result)
+    return pages
+
+
+def _is_disambiguation_page(page: dict) -> bool:
+    return "disambiguation" in (page.get("pageprops") or {}) or is_disambiguation_text(
+        page.get("extract", "")
     )
 
 
@@ -508,6 +713,8 @@ def _quality_status(rec: dict, loc: str, min_words: int) -> str:
         text = rec.get("extract") or text
     if not text:
         return f"missing_{loc}"
+    if is_disambiguation_text(text):
+        return f"disambiguation_{loc}"
     if word_count(text) < min_words:
         return f"short_{loc}"
     return "ok"
@@ -568,6 +775,7 @@ def _run_quality_refetch(
     extra_sections: int,
     min_paragraphs: int,
     pbar: tqdm,
+    max_words: int = 0,
 ) -> Counter:
     """Fetch richer extracts for missing/short records across locales."""
     counts: Counter = Counter()
@@ -590,6 +798,19 @@ def _run_quality_refetch(
                 quality["previous_status"] = previous_status
 
                 page = _lookup_page(pages, title)
+                if page and _is_disambiguation_page(page):
+                    # The linked title is a disambiguation page; the species'
+                    # scientific name (or an alias) redirects to its article.
+                    page = None
+                    for name in _identity_names(sci, taxonomy):
+                        alt = _lookup_page(_batch_fetch_full_extracts(lang, [name]), name)
+                        if alt and alt.get("extract") and not _is_disambiguation_page(alt):
+                            page = alt
+                            break
+                    if not page:
+                        quality["last_status"] = "disambiguation"
+                        counts[f"{lang}:disambiguation"] += 1
+                        continue
                 if not page:
                     quality["last_status"] = "not_found"
                     counts[f"{lang}:not_found"] += 1
@@ -616,6 +837,7 @@ def _run_quality_refetch(
                     target_words=target_words,
                     extra_sections=extra_sections,
                     min_paragraphs=min_paragraphs,
+                    max_words=max_words,
                 )
                 if not selected:
                     quality["last_status"] = "empty"
@@ -731,7 +953,8 @@ def _run_phase3(english_data: dict[str, dict],
             continue
         img = data.get("image_url", "")
         if img:
-            filename = unquote(img.split("/")[-1])
+            # Commons answers with normalized titles (spaces, not underscores)
+            filename = unquote(img.split("/")[-1]).replace("_", " ")
             if filename:
                 images[filename] = input_title
 
@@ -917,6 +1140,7 @@ def main():
     target_words = int(desc_cfg.get("target_words", 120))
     extra_sections = int(desc_cfg.get("wikipedia_extra_sections", 2))
     min_paragraphs = int(desc_cfg.get("wikipedia_min_paragraphs", 1))
+    max_words = int(desc_cfg.get("max_words", 0))
 
     print("Loading species with Wikipedia URLs...")
     species = load_species_with_wikipedia()
@@ -925,6 +1149,22 @@ def main():
     existing = load_json(OUTPUT_FILE)
     print(f"  Already have Wikipedia data for {len(existing)} species")
     taxonomy = load_json(TAXONOMY_FILE)
+    # The stored English article is the accepted one (it may have been
+    # found by name after the iNat-linked article turned out to be wrong).
+    for sci, rec in existing.items():
+        url = (rec.get("wikipedia_urls") or {}).get("en")
+        if url and not rec.get("error") and sci in species:
+            species[sci] = url
+    replaced: list[str] = []
+    if not args.dry_run and not args.quality_refetch:
+        by_name = _name_title_species(species, existing, taxonomy, load_json(WIKIDATA_FILE))
+        # A record of a wrongly linked article is replaced by a fresh fetch.
+        replaced = [sci for sci in by_name if sci in existing]
+        for sci in replaced:
+            del existing[sci]
+        species.update(by_name)
+        print(f"  Found {len(by_name)} more English articles by species name "
+              f"({len(replaced)} replace an article about another taxon)")
 
     quality_work = []
     if args.quality_refetch:
@@ -1041,6 +1281,7 @@ def main():
             extra_sections=extra_sections,
             min_paragraphs=min_paragraphs,
             pbar=pbarq,
+            max_words=max_words,
         )
         pbarq.close()
         save_json(existing, OUTPUT_FILE)
@@ -1048,6 +1289,19 @@ def main():
             "  Quality refetch: "
             + ", ".join(f"{k}={v}" for k, v in sorted(quality_counts.items()))
         )
+
+    # Species whose only Wikipedia articles are non-English (Wikidata sitelinks)
+    sitelink_items = _sitelink_only_species(existing, taxonomy, load_json(WIKIDATA_FILE),
+                                            target_locales)
+    if args.limit:
+        sitelink_items = sitelink_items[:args.limit]
+    if sitelink_items:
+        print(f"\nNon-English-only articles: {len(sitelink_items)} species...")
+        added = _fetch_sitelink_extracts(sitelink_items, existing, min_english_words,
+                                         target_words, extra_sections, min_paragraphs,
+                                         max_words)
+        save_json(existing, OUTPUT_FILE)
+        print(f"  Added {added} locale extracts")
         if args.new_only and not work:
             return
 
@@ -1072,6 +1326,9 @@ def main():
         _assemble_records(work, english_data, {}, {}, existing)
         save_json(existing, OUTPUT_FILE)
         print(f"  Saved {found} records after Phase 1")
+        if replaced:
+            print(f"  Dropped LLM texts of {_drop_llm_texts(replaced)} species whose "
+                  "article was replaced (rerun collectors.translate)")
     else:
         print(f"\nPhase 1: No new species to fetch")
 

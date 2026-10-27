@@ -251,17 +251,26 @@
         <div style="font-size: 0.95rem; color: var(--muted); margin-bottom: 0.2rem;">also known as {{ s.common_name_alt }}</div>
         {% endif %}
         <div class="sci-name">{{ s.scientific_name }}</div>
+        {% if s.found is sameas false %}
+        <p style="margin: 0.6rem 0;">Not in the BirdNET+ Taxonomy ({{ taxonomy_version }}). <a href="{{ base }}/?q={{ s.scientific_name|urlencode }}">Search for similar names</a></p>
+        {% endif %}
 
         <table class="info-table">
             {% if s.birdnet_id %}
             <tr><td>BirdNET ID</td><td>{{ s.birdnet_id }}</td></tr>
             {% endif %}
+            {% if s.taxon_group %}
             <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
-            {% if s.observations_count %}
-            <tr><td>iNat observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
+            {% endif %}
+            {% if s.commonness is not none %}
+            {% set c = s.commonness %}
+            <tr><td>Commonness</td><td>{{ 'Very common' if c >= 80 else 'Common' if c >= 60 else 'Moderately common' if c >= 40 else 'Uncommon' if c >= 20 else 'Rare' }} ({{ c|round|int }}/100)<br><small style="color: var(--muted);">How often it is observed on iNaturalist compared with other {{ s.taxon_group }}, not how abundant it is</small></td></tr>
             {% endif %}
             {% if s.image_source %}
             <tr><td>Image source</td><td>{{ s.image_source }}</td></tr>
+            {% endif %}
+            {% if s.avicommons_image %}
+            <tr><td>Avicommons</td><td><a href="{{ s.avicommons_image.src }}" target="_blank" rel="noopener">Photo</a>{% if s.avicommons_image.author %} by {{ s.avicommons_image.author }}{% endif %}{% if s.avicommons_image.license %} ({{ s.avicommons_image.license }}){% endif %}</td></tr>
             {% endif %}
         </table>
 
@@ -345,7 +354,7 @@
 </div>
 {% endif %}
 
-{% if s.inat_id or s.ebird_code or s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name or s.observationorg_id %}
+{% if s.inat_id or s.ebird_code or s.gbif_id or s.ncbi_id or s.avibase_id or s.birdlife_id or s.ml_taxon_code or s.xc_name or s.observationorg_id or s.wikidata_qid %}
 <div class="section">
     <h3>External Identifiers</h3>
     <table class="info-table">
@@ -375,6 +384,9 @@
         {% endif %}
         {% if s.birdlife_id %}
         <tr><td>BirdLife</td><td><a href="http://datazone.birdlife.org/species/factsheet/{{ s.birdlife_id }}" target="_blank">{{ s.birdlife_id }}</a></td></tr>
+        {% endif %}
+        {% if s.wikidata_qid %}
+        <tr><td>Wikidata</td><td><a href="https://www.wikidata.org/wiki/{{ s.wikidata_qid }}" target="_blank">{{ s.wikidata_qid }}</a></td></tr>
         {% endif %}
     </table>
 </div>

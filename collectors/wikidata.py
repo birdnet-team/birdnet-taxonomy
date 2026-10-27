@@ -25,8 +25,10 @@ import csv
 import hashlib
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from config import load_config
 from collectors._common import (
@@ -42,6 +44,7 @@ OUTPUT_FILE = RAW_DIR / "wikidata_data.json"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 _COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 GBIF_MATCH_URL = "https://api.gbif.org/v1/species/match"
+GBIF_SPECIES_URL = "https://api.gbif.org/v1/species"
 GBIF_SYNONYMS_URL = "https://api.gbif.org/v1/species/{key}/synonyms"
 
 _SPARQL_BATCH = 150
@@ -57,9 +60,9 @@ WD_IDENTIFIERS = {
     "avibase_id": "P2026",
     "birdlife_id": "P5257",
 }
-EXTERNAL_IDENTIFIER_FIELDS = tuple(
-    key for key in WD_IDENTIFIERS
-    if key != "ebird_code"
+EXTERNAL_IDENTIFIER_FIELDS = (
+    *(key for key in WD_IDENTIFIERS if key != "ebird_code"),
+    "wikidata_qid",  # the matched Wikidata item itself
 )
 
 
@@ -162,8 +165,13 @@ def query_ebird_codes(
 def query_identifiers(
     species: list[tuple[str, int | None]],
     aliases: dict[str, list[str]] | None = None,
+    current: dict[str, dict] | None = None,
 ) -> dict[str, dict]:
-    """Batch-query Wikidata for external identifiers."""
+    """Batch-query Wikidata for external identifiers.
+
+    current: stored records; the species' Wikidata item follows the item of
+    its stored GBIF ID when that is still offered.
+    """
     if not species:
         return {}
 
@@ -178,6 +186,7 @@ def query_identifiers(
         optionals += f"  OPTIONAL {{ ?item wdt:{prop} {var} . }}\n"
 
     results = {}
+    selects.append("?item")
     select_str = " ".join(selects)
 
     search_items: list[tuple[str, str]] = []
@@ -186,36 +195,76 @@ def query_identifiers(
         for name in names:
             search_items.append((sci, name))
 
+    # Build name→sci mapping over all species, dropping aliases claimed by
+    # several species to avoid attributing Wikidata IDs to the wrong taxon.
+    name_to_sci: dict[str, str] = {}
+    for sci, name in search_items:
+        if name == sci:
+            name_to_sci[name] = sci  # a species' own name is never ambiguous
+        elif name in name_to_sci:
+            if name_to_sci[name] not in (sci, name):
+                name_to_sci[name] = ""  # alias of several species — skip
+        else:
+            name_to_sci[name] = sci
+    name_to_sci = {k: v for k, v in name_to_sci.items() if v}
+    search_items = [(sci, name) for sci, name in search_items if name_to_sci.get(name) == sci]
+
+    rows: list[dict] = []
     for i in range(0, len(search_items), _SPARQL_BATCH):
         batch = search_items[i:i + _SPARQL_BATCH]
         values = " ".join(f'"{name}"' for _, name in batch)
-        # Build name→sci mapping, dropping names claimed by more than one species
-        # in this batch to avoid attributing Wikidata IDs to the wrong taxon.
-        name_to_sci: dict[str, str] = {}
-        for sci, name in batch:
-            if name in name_to_sci:
-                if name_to_sci[name] != sci:
-                    name_to_sci[name] = ""  # ambiguous — mark and skip
-            else:
-                name_to_sci[name] = sci
-        name_to_sci = {k: v for k, v in name_to_sci.items() if v}
         query = (
             f"SELECT {select_str} WHERE {{\n"
             f"  VALUES ?taxonName {{ {values} }}\n"
             f"  ?item wdt:P225 ?taxonName .\n"
             f"{optionals}}}"
         )
-        rows = _sparql_query(query)
-        for r in rows:
-            taxon_name = r["taxonName"]["value"]
-            sci = name_to_sci.get(taxon_name, taxon_name)
-            ids = results.setdefault(sci, {})
-            for key in WD_IDENTIFIERS:
-                if key == "ebird_code":
-                    continue
-                val = r.get(key, {}).get("value", "")
-                if val and not ids.get(key):
-                    ids[key] = val
+        rows.extend(_sparql_query(query))
+
+    # Only taxon items count (lexeme senses can carry a taxon name too).
+    rows = [r for r in rows if re.fullmatch(r".*/Q\d+", r["item"]["value"])]
+    # The species' own name beats an alias: an alias (e.g. a GBIF synonym)
+    # can point at a different, broader taxon after a split. Among duplicate
+    # items, the one with more identifiers wins (then the lower QID), so the
+    # choice does not depend on SPARQL row order.
+    rows.sort(key=lambda r: (
+        name_to_sci.get(r["taxonName"]["value"]) != r["taxonName"]["value"],
+        -sum(1 for key in WD_IDENTIFIERS if r.get(key, {}).get("value")),
+        int(r["item"]["value"].rsplit("/Q", 1)[-1]),
+    ))
+    # sci → {(ID key, value) or "": (item, name)}; first row wins
+    items: dict[str, dict] = {}
+    for r in rows:
+        taxon_name = r["taxonName"]["value"]
+        sci = name_to_sci.get(taxon_name)
+        if not sci:
+            continue
+        ids = results.setdefault(sci, {})
+        item = r["item"]["value"].rsplit("/", 1)[-1]
+        items.setdefault(sci, {}).setdefault("", (item, taxon_name))
+        for key in WD_IDENTIFIERS:
+            if key == "ebird_code":
+                continue
+            val = r.get(key, {}).get("value", "")
+            if val:
+                items[sci].setdefault((key, val), (item, taxon_name))
+            if val and not ids.get(key):
+                ids[key] = val
+                # Record which Wikidata taxon name supplied the ID so the
+                # build can reject IDs reached through an untrusted alias.
+                ids.setdefault("id_sources", {})[key] = taxon_name
+    # The species' item is the one behind its GBIF ID (the stored one if
+    # still offered), else behind its NCBI ID, else the first item matched.
+    for sci, by_value in items.items():
+        stored = (current or {}).get(sci, {})
+        ids = results[sci]
+        item, taxon_name = (by_value.get(("gbif_id", stored.get("gbif_id")))
+                            or by_value.get(("gbif_id", ids.get("gbif_id")))
+                            or by_value.get(("ncbi_id", stored.get("ncbi_id")))
+                            or by_value.get(("ncbi_id", ids.get("ncbi_id")))
+                            or by_value[""])
+        ids["wikidata_qid"] = item
+        ids.setdefault("id_sources", {})["wikidata_qid"] = taxon_name
 
     results = {sci: ids for sci, ids in results.items() if ids}
     remaining = [(sci, iid) for sci, iid in species
@@ -231,19 +280,25 @@ def query_identifiers(
                 f"  ?item wdt:P3151 ?inatId .\n"
                 f"{optionals}}}"
             )
-            rows = _sparql_query(query)
+            rows = [r for r in _sparql_query(query)
+                    if re.fullmatch(r".*/Q\d+", r["item"]["value"])]
             for r in rows:
                 iid = r["inatId"]["value"]
                 sci = iid_to_sci.get(iid)
                 if not sci:
                     continue
                 ids = results.setdefault(sci, {})
+                if not ids.get("wikidata_qid"):
+                    ids["wikidata_qid"] = r["item"]["value"].rsplit("/", 1)[-1]
+                    ids.setdefault("id_sources", {})["wikidata_qid"] = sci
                 for key in WD_IDENTIFIERS:
                     if key == "ebird_code":
                         continue
                     val = r.get(key, {}).get("value", "")
                     if val and not ids.get(key):
                         ids[key] = val
+                        # Matched by iNat taxon ID: same taxon as the species.
+                        ids.setdefault("id_sources", {})[key] = sci
 
     return {sci: ids for sci, ids in results.items() if ids}
 
@@ -304,6 +359,33 @@ def _is_commons_license_ok(license_short: str) -> bool:
     return any(x in low for x in ("cc", "public domain", "pd", "gfdl"))
 
 
+def query_sitelinks(species_names: list[str], locales: list[str]) -> dict[str, dict[str, str]]:
+    """Wikipedia article titles per locale for each species (Wikidata sitelinks).
+
+    iNat links only one English article and none for many species; Wikidata
+    knows articles iNat doesn't, including non-English-only ones.
+    """
+    if not species_names or not locales:
+        return {}
+    sites = " ".join(f"<https://{loc}.wikipedia.org/>" for loc in locales)
+    results: dict[str, dict[str, str]] = {}
+    for i in range(0, len(species_names), _SPARQL_BATCH):
+        batch = species_names[i:i + _SPARQL_BATCH]
+        values = " ".join(f'"{s}"' for s in batch)
+        rows = _sparql_query(
+            f"SELECT ?taxonName ?site ?title WHERE {{\n"
+            f"  VALUES ?taxonName {{ {values} }}\n"
+            f"  VALUES ?site {{ {sites} }}\n"
+            f"  ?item wdt:P225 ?taxonName .\n"
+            f"  ?article schema:about ?item ; schema:isPartOf ?site ; schema:name ?title .\n"
+            f"}}"
+        )
+        for r in rows:
+            loc = r["site"]["value"].split("//", 1)[1].split(".", 1)[0]
+            results.setdefault(r["taxonName"]["value"], {}).setdefault(loc, r["title"]["value"])
+    return results
+
+
 def query_images(species: list[tuple[str, int | None]]) -> dict[str, str]:
     """Query Wikidata P18 (image) → {scientific_name: Commons filename}."""
     if not species:
@@ -351,6 +433,55 @@ def query_images(species: list[tuple[str, int | None]]) -> dict[str, str]:
                 results[sci] = urllib.parse.unquote(image_url.split("/")[-1])
 
     return results
+
+
+def gbif_match_id(scientific_name: str) -> tuple[str, str] | None:
+    """GBIF backbone ID for a species name → (gbif_id, name it belongs to).
+
+    Returns None when the request fails (retried next run) and ("", "") when
+    GBIF has no exact species-rank match. A synonym match yields the
+    accepted taxon's key and name; the build keeps it only if that name is a
+    trusted alias, so a split daughter can't take its parent's ID.
+    """
+    params = urllib.parse.urlencode({
+        "name": scientific_name, "strict": "true", "kingdom": "Animalia",
+    })
+    req = urllib.request.Request(f"{GBIF_MATCH_URL}?{params}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            match = json.loads(resp.read())
+    except Exception:
+        return None
+    if match.get("matchType") != "EXACT" or match.get("rank") != "SPECIES":
+        return "", ""
+    if match.get("status") == "ACCEPTED" and match.get("usageKey"):
+        return str(match["usageKey"]), scientific_name
+    if match.get("acceptedUsageKey") and match.get("species"):
+        return str(match["acceptedUsageKey"]), match["species"]
+    return "", ""
+
+
+def gbif_key_status(key: str) -> dict | None:
+    """GBIF backbone status of a taxon key: {key, status, accepted_key,
+    accepted_name}. Wikidata often holds the key of a synonym usage (GBIF
+    still under an older genus); the build maps it to the accepted key of
+    the same taxon. Returns None when the request fails."""
+    req = urllib.request.Request(f"{GBIF_SPECIES_URL}/{key}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            usage = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        return {"key": key, "status": "MISSING"} if exc.code == 404 else None
+    except Exception:
+        return None
+    # "accepted" carries the authorship: keep the canonical name only.
+    accepted = re.match(r"[A-Z][a-z]+(?: [a-z][a-z-]+){1,2}", usage.get("accepted", "") or "")
+    return {
+        "key": key,
+        "status": usage.get("taxonomicStatus", ""),
+        "accepted_key": str(usage.get("acceptedKey") or ""),
+        "accepted_name": accepted.group(0) if accepted else "",
+    }
 
 
 def gbif_aliases(scientific_name: str) -> list[str]:
@@ -496,6 +627,8 @@ def _load_species_list(cfg: dict) -> dict[str, int | None]:
         inat = load_json(INAT_FILE)
         for sci, rec in inat.items():
             inat_id = rec.get("inat_id")
+            if not rec.get("is_active", True):
+                continue  # taxon retired on iNat; the build drops it
             if inat_id is not None and is_full_species_name(sci):
                 species[sci] = inat_id
 
@@ -633,7 +766,8 @@ def main():
     n_batches = (len(need_ids) + _SPARQL_BATCH - 1) // _SPARQL_BATCH
     print(f"\nPhase 2: Identifiers ({len(need_ids)} species, "
           f"{n_batches} batches)...")
-    identifiers = query_identifiers(need_ids, aliases=aliases)
+    identifiers = query_identifiers(need_ids, aliases=aliases,
+                                    current=None if args.refresh_identifiers else existing)
     print(f"  Found identifiers for {len(identifiers)} species")
 
     if args.refresh_identifiers:
@@ -641,12 +775,70 @@ def main():
             entry = existing.setdefault(sci, {})
             for key in EXTERNAL_IDENTIFIER_FIELDS:
                 entry.pop(key, None)
+            entry.pop("id_sources", None)
+            entry.pop("gbif_match_checked", None)
 
+    # Without --refresh-identifiers, stored IDs stay; only gaps are filled.
     for sci, ids in identifiers.items():
         entry = existing.setdefault(sci, {})
+        sources = ids.get("id_sources", {})
         for key, val in ids.items():
-            entry[key] = val
+            if key != "id_sources" and not entry.get(key):
+                entry[key] = val
+                if key in sources:
+                    entry.setdefault("id_sources", {})[key] = sources[key]
 
+    save_json(existing, OUTPUT_FILE)
+
+    # Phase 2d: GBIF backbone IDs for species Wikidata has none for
+    need_gbif = [sci for sci in target_names
+                 if not existing.get(sci, {}).get("gbif_id")
+                 and not existing.get(sci, {}).get("gbif_match_checked")]
+    print(f"\nPhase 2d: GBIF backbone match ({len(need_gbif)} species)...")
+    gbif_count = 0
+    for idx, sci in enumerate(need_gbif, start=1):
+        result = gbif_match_id(sci)
+        if result is None:
+            continue  # request failed: retried on the next run
+        gbif_id, via = result
+        entry = existing.setdefault(sci, {})
+        entry["gbif_match_checked"] = True
+        if gbif_id:
+            entry["gbif_id"] = gbif_id
+            entry.setdefault("id_sources", {})["gbif_id"] = via
+            gbif_count += 1
+        if idx % 200 == 0:
+            save_json(existing, OUTPUT_FILE)
+    print(f"  Found GBIF IDs for {gbif_count} species")
+    save_json(existing, OUTPUT_FILE)
+
+    # Phase 2e: GBIF backbone status of each stored GBIF key
+    need_status = [sci for sci in target_names
+                   if existing.get(sci, {}).get("gbif_id")
+                   and (existing[sci].get("gbif_status") or {}).get("key") != existing[sci]["gbif_id"]]
+    print(f"\nPhase 2e: GBIF key status ({len(need_status)} species)...")
+    synonyms = 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        statuses = pool.map(lambda sci: gbif_key_status(existing[sci]["gbif_id"]), need_status)
+        for idx, (sci, status) in enumerate(zip(need_status, statuses), start=1):
+            if status is None:
+                continue  # request failed: retried on the next run
+            existing[sci]["gbif_status"] = status
+            synonyms += "SYNONYM" in status["status"]
+            if idx % 1000 == 0:
+                save_json(existing, OUTPUT_FILE)
+    print(f"  Synonym keys: {synonyms}")
+    save_json(existing, OUTPUT_FILE)
+
+    # Phase 2c: Wikipedia sitelinks (articles iNat does not link)
+    wiki_locales = [str(loc) for loc in cfg.get("wikipedia", {}).get("locales", [])]
+    need_sitelinks = [sci for sci in target_names
+                      if "wikipedia_sitelinks" not in existing.get(sci, {})]
+    print(f"\nPhase 2c: Wikipedia sitelinks ({len(need_sitelinks)} species)...")
+    sitelinks = query_sitelinks(need_sitelinks, wiki_locales)
+    for sci in need_sitelinks:
+        existing.setdefault(sci, {})["wikipedia_sitelinks"] = sitelinks.get(sci, {})
+    print(f"  Found articles for {len(sitelinks)} species")
     save_json(existing, OUTPUT_FILE)
 
     if args.ids_only:

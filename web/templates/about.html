@@ -49,25 +49,32 @@
 
 <p>
     The database covers birds along with other animal groups that produce
-    identifiable sounds: mammals, insects, amphibians, and reptiles.
+    identifiable sounds: mammals, insects, amphibians, and reptiles. A few
+    non-species sound classes, such as rain, thunder, engines, or chainsaws,
+    are included as well.
 </p>
 
 <p>
     For birds, we use <a href="https://avilist.org">AviList</a> as our
     taxonomic authority. AviList is a global bird species checklist that
     reconciles and unifies major world bird lists. A bird must appear on the
-    current AviList edition to be included in our database. Species found on
-    iNaturalist but absent from AviList are excluded, and species listed on
-    AviList but not yet on iNaturalist are still included so that coverage
-    stays as complete as possible.
+    current AviList edition to be included in our database, under its AviList
+    scientific name. iNaturalist taxa that AviList lumps into another species
+    or treats as a subspecies are folded into that species and remain
+    searchable as alternative names, except for a short reviewed list of
+    forms kept as separate species (for example Hooded Crow). Species listed on AviList but not yet on
+    iNaturalist are still included so that coverage stays as complete as
+    possible. Species AviList lists as extinct are excluded.
 </p>
 
 <p>
     For all other groups, we include species that have at least one sound
     recording documented on <a href="https://www.inaturalist.org">iNaturalist</a>.
-    Some groups, like insects and amphibians, require a slightly higher minimum
-    to filter out very sparse or questionable entries. Species flagged as
-    extinct on iNaturalist are excluded from all groups.
+    Bats are an exception: they also qualify with at least 100 observations of
+    any kind, since their calls are rarely recorded. Species with too little
+    metadata (no image, no description, and hardly any external identifiers)
+    are left out. Species flagged as extinct on iNaturalist are excluded from
+    all groups.
 </p>
 
 <h2>Where do the data come from?</h2>
@@ -75,14 +82,14 @@
 <p>
     No single source covers everything we need, so we pull from several
     databases and combine the results. iNaturalist provides the backbone: taxon
-    identifiers, observation counts, common names in dozens of languages, and
-    default taxon photos. eBird contributes species pages, Macaulay Library
+    identifiers, common names in dozens of languages, default taxon photos, and
+    the observation counts behind each species' commonness score. eBird contributes species pages, Macaulay Library
     images, and common names in over sixty regional language variants. Wikidata
-    supplies external identifiers (GBIF, NCBI, Avibase, BirdLife) and
-    Wikimedia Commons images with licensing information. Wikipedia provides
-    species descriptions in about twenty languages, and we use Claude to
-    translate or shorten descriptions for an additional set of target languages
-    where Wikipedia coverage is thin.
+    supplies its item IDs, external identifiers (GBIF, NCBI, Avibase, BirdLife),
+    and Wikimedia Commons images with licensing information. Wikipedia provides
+    species descriptions in about twenty languages, and a large language model
+    (Gemini, OpenAI, or Claude, whichever is configured) translates or shortens
+    descriptions where Wikipedia coverage is thin.
 </p>
 
 <p>
@@ -90,6 +97,19 @@
     Xeno-Canto, and <a href="https://observation.org">observation.org</a>
     so that users can quickly find sound recordings and observations for any
     species in the database.
+</p>
+
+<h2>What does commonness mean?</h2>
+
+<p>
+    Each species has a commonness score from 0 to 100. It ranks how often the
+    species is observed on iNaturalist compared with the other species of its
+    taxon group: 100 is the most observed bird (or mammal, insect, and so on),
+    0 the least. It describes how often people record a species, not how
+    abundant it is in an area. Conspicuous, widespread, or easily photographed
+    species score high, while abundant but secretive or remote species can
+    score low. We compare within taxon groups because recording effort differs
+    a lot between groups, for example birds and insects.
 </p>
 
 <h2>How are images chosen?</h2>
@@ -112,10 +132,19 @@
     species detail page.
 </p>
 
+<p>
+    For birds, we also reference the matching photo from
+    <a href="https://avicommons.org">Avicommons</a>, a hand-picked collection
+    of Creative-Commons-licensed bird photos, with its photographer and
+    license. It is matched by eBird species code and kept only when
+    Avicommons names the same species. We do not use it as our own image; it
+    is listed as an alternative.
+</p>
+
 <h2>How do names and descriptions work?</h2>
 
 <p>
-    Common names come from three sources that complement each other. For
+    Common names come from four sources that complement each other. For
     birds, the primary English name is taken from
     <a href="https://avilist.org">AviList</a>, our taxonomic authority,
     ensuring consistency with the accepted species list. eBird provides
@@ -129,21 +158,29 @@
 </p>
 
 <p>
-    Descriptions follow a similar pattern. We start with Wikipedia extracts,
-    then overlay higher-quality translations produced by Claude for our core
-    set of languages. If neither Wikipedia nor Claude has a usable text for a
-    given locale, we fall back to the eBird species description in English.
+    Descriptions follow a similar pattern. Native Wikipedia text comes first,
+    cleaned of headings, reference lists, and subspecies lists. Where a
+    language has no article, or only a stub, the language model translates the
+    English description, using the species' established common name in that
+    language. If no Wikipedia English text exists, the eBird species
+    description is used, and as a last resort the model writes an English
+    description strictly from the species' other-language Wikipedia articles.
 </p>
 
 <h2>What is a BirdNET ID?</h2>
 
 <p>
     Every species in the database receives a stable BirdNET identifier,
-    formatted as a five-digit number with a "BN" prefix, for example BN00042.
-    These identifiers are meant to remain constant across releases so that
-    downstream systems can reference a species without worrying about
-    taxonomic name changes. The mapping is stored persistently and new species
-    simply receive the next available number.
+    formatted as a five-digit number with a "BN" prefix. Birds use BN00001 to
+    BN19999 (for example BN00483, the Mallard), other animals BN20000 to
+    BN89999, and non-species sound classes such as rain or engines BN90000 to
+    BN99999. Within each range, IDs were assigned in alphabetical order of
+    scientific names at the last reassignment; species added later receive the
+    next available number in their range. These identifiers let downstream
+    systems reference a species without worrying about taxonomic name changes,
+    and the mapping is stored persistently. Before the 1.0 release,
+    identifiers may be reassigned as a documented breaking change when taxonomy
+    cleanup requires it; after 1.0 they are meant to remain constant.
 </p>
 
 <h2>Licensing and reuse</h2>
@@ -163,7 +200,7 @@
     programmatic access is provided through the
     <a href="{{ base }}/docs" target="_blank" rel="noopener noreferrer">REST API</a>.
     Source code and documentation live on
-    <a href="https://github.com/birdnet-team/species-data">GitHub</a>.
+    <a href="https://github.com/birdnet-team/birdnet-taxonomy">GitHub</a>.
 </p>
 
 </div>

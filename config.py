@@ -1,5 +1,5 @@
 """
-Shared configuration loader for the species-data pipeline.
+Shared configuration loader for the BirdNET+ Taxonomy pipeline.
 
 Reads config.yml from the project root and provides typed access
 to all settings. All scripts should use this instead of hardcoding values.

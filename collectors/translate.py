@@ -18,6 +18,7 @@ Provider is auto-detected from whichever key is present.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import threading
 import time
@@ -30,7 +31,10 @@ from collectors._common import (
     ROOT, RAW_DIR, setup_shutdown, is_shutting_down,
     load_json, save_json,
 )
-from utils.description_quality import word_count as _word_count
+from utils.description_quality import (
+    clean_description_text, is_disambiguation_text, names_other_species,
+    word_count as _word_count,
+)
 from utils.llm import call_llm, detect_provider, parse_json_response, PROVIDERS
 
 setup_shutdown()
@@ -63,8 +67,15 @@ def _acquire_request_slot() -> None:
         _next_request_time = now + _request_delay
 
 
+# Set when the provider keeps answering 429 after retries (quota used up):
+# no further requests are sent; untranslated items are picked up next run.
+_quota_exhausted = threading.Event()
+
+
 def _llm(system: str, user: str, max_tokens: int) -> str | None:
     """Call the configured LLM with rate limiting. Returns text or None."""
+    if _quota_exhausted.is_set():
+        return None
     try:
         return call_llm(
             user=user,
@@ -76,7 +87,14 @@ def _llm(system: str, user: str, max_tokens: int) -> str | None:
         )
     except Exception as exc:
         tqdm.write(f"  LLM error: {exc}")
+        if "HTTP 429" in str(exc) and not _quota_exhausted.is_set():
+            _quota_exhausted.set()
+            tqdm.write("  LLM quota exhausted — stopping requests; rerun later to continue.")
         return None
+
+
+def _stop_requested() -> bool:
+    return is_shutting_down() or _quota_exhausted.is_set()
 
 
 # ---------------------------------------------------------------------------
@@ -121,8 +139,9 @@ def shorten_extracts(
         "- Single flowing paragraph, no bullet points, no markdown\n"
         "- Do not start with the species name\n"
         "- Do not add information not present in the source\n\n"
-        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
-        '{"Scientific name": {"locale": "shortened text..."}, ...}'
+        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences.\n"
+        "Key each text by the SAME locale code shown in brackets in the input:\n"
+        '{"Scientific name": {"de": "shortened text..."}, ...}'
     )
     entries = [f"- {sci} [{loc}]: {text}" for sci, loc, text in items]
     user = (
@@ -139,7 +158,7 @@ def shorten_extracts(
     for sci, locales in parsed.items():
         if isinstance(locales, dict):
             for loc, text in locales.items():
-                if isinstance(text, str) and text.strip():
+                if loc in LOCALE_NAMES and isinstance(text, str) and text.strip():
                     out.setdefault(sci, {})[loc] = text.strip()
     return out
 
@@ -149,10 +168,12 @@ def translate_extracts(
     target_locales: list[str],
     max_source_chars: int = 3000,
     max_tokens: int = 16384,
+    names: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Translate English extracts to missing target locales.
 
     items: [(scientific_name, english_extract)]
+    names: {scientific_name: {locale: common name}} the translation must use
     Returns: {scientific_name: {locale: translation}}
     """
     locales = [l for l in target_locales if l != "en" and l in LOCALE_NAMES]
@@ -166,11 +187,19 @@ def translate_extracts(
         "RULES:\n"
         "- Preserve meaning, tone, and approximate length\n"
         "- Use natural phrasing in each language\n"
-        "- Single flowing paragraph, no bullet points, no markdown\n\n"
+        "- Single flowing paragraph, no bullet points, no markdown\n"
+        "- Call the species by the name listed under Names for that language; "
+        "where none is listed, use the scientific name. Never invent a common name\n\n"
         "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
         '{"Scientific name": {"de": "German...", "fr": "French...", ...}, ...}'
     )
-    entries = [f"- {sci}: {_truncate(text, max_source_chars)}" for sci, text in items]
+    entries = []
+    for sci, text in items:
+        given = {l: n for l, n in (names or {}).get(sci, {}).items() if l in locales}
+        entry = f"- {sci}: {_truncate(text, max_source_chars)}"
+        if given:
+            entry += "\n  Names: " + "; ".join(f"{l}={n}" for l, n in given.items())
+        entries.append(entry)
     user = (
         f"Translate these {len(items)} species descriptions.\n"
         f"Languages: {lang_list}\n\n"
@@ -183,9 +212,10 @@ def translate_extracts(
 
     parsed = parse_json_response(result, "translate")
     locale_set = set(locales)
+    batch = {sci for sci, _ in items}
     out: dict[str, dict[str, str]] = {}
     for sci, trans in parsed.items():
-        if isinstance(trans, dict):
+        if sci in batch and isinstance(trans, dict):
             filtered = {
                 k: v for k, v in trans.items()
                 if k in locale_set and isinstance(v, str) and v.strip()
@@ -200,6 +230,7 @@ def fallback_english_descriptions(
     target_words: int = 120,
     max_source_chars: int = 5000,
     max_tokens: int = 16384,
+    names: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Create English descriptions from non-English Wikipedia sources."""
     if not items:
@@ -212,14 +243,18 @@ def fallback_english_descriptions(
         "RULES:\n"
         "- Use ONLY facts present in the provided source extracts\n"
         "- One concise paragraph, no markdown, no citations\n"
-        "- Preserve scientific uncertainty; do not add unsourced facts\n\n"
-        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
+        "- Preserve scientific uncertainty; do not add unsourced facts\n"
+        "- Call the species by the English name given, else by its scientific name\n\n"
+        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, keyed by "
+        "the scientific name exactly as given:\n"
         '{"Scientific name": {"en": "English fallback text..."}, ...}'
     )
     entries = []
     for sci, sources in items:
         parts = [f"[{loc}] {_truncate(text, max_source_chars)}" for loc, text in sorted(sources.items())]
-        entries.append(f"- {sci}:\n" + "\n".join(parts))
+        english = (names or {}).get(sci, {}).get("en")
+        entries.append(f"- {sci}:\n" + (f"English name: {english}\n" if english else "")
+                       + "\n".join(parts))
     user = (
         f"Create English fallback descriptions for these {len(items)} species.\n\n"
         + "\n\n".join(entries)
@@ -230,11 +265,16 @@ def fallback_english_descriptions(
         return {}
 
     parsed = parse_json_response(result, "fallback")
+    # The model sometimes keys an answer by the English name, or gives the
+    # text directly instead of {"en": text}; map both back.
+    by_key = {sci: sci for sci, _ in items}
+    by_key.update({(names or {}).get(sci, {}).get("en", "").lower(): sci for sci, _ in items})
     out: dict[str, dict[str, str]] = {}
-    for sci, locales in parsed.items():
-        if not isinstance(locales, dict):
+    for key, locales in parsed.items():
+        sci = by_key.get(key) or by_key.get(str(key).lower())
+        if not sci:
             continue
-        text = locales.get("en")
+        text = locales.get("en") if isinstance(locales, dict) else locales
         if isinstance(text, str) and text.strip():
             out[sci] = {"en": text.strip()}
     return out
@@ -263,14 +303,24 @@ def _batch_by_char_budget(
     return batches
 
 
+# A native Wikipedia text this short is a stub; when the English source is
+# substantial, a translation of it is the better description.
+STUB_WORDS = 25
+
+
 def _missing_translation_locales(
     wiki_extracts: dict[str, str],
     llm_extracts: dict[str, str],
     target_locales: list[str],
+    en_text: str = "",
+    replace_stubs: bool = True,
 ) -> tuple[str, ...]:
+    rich_english = replace_stubs and _word_count(en_text) >= 40
     return tuple(
         loc for loc in target_locales
-        if not wiki_extracts.get(loc) and not llm_extracts.get(loc)
+        if not llm_extracts.get(loc)
+        and (not wiki_extracts.get(loc)
+             or (rich_english and _word_count(wiki_extracts[loc]) < STUB_WORDS))
     )
 
 
@@ -297,12 +347,41 @@ def _build_translation_batches(
     return batches
 
 
-def _merge_updates(target: dict, updates: dict[str, dict[str, str]]) -> None:
+def _merge_updates(target: dict, updates: dict[str, dict[str, str]],
+                   replace: set[tuple[str, str]] | None = None) -> None:
     for sci, extracts in updates.items():
         existing_extracts = target.setdefault(sci, {}).setdefault("extracts", {})
         for loc, text in extracts.items():
-            if loc not in existing_extracts:
+            if loc not in existing_extracts or (sci, loc) in (replace or ()):
                 existing_extracts[loc] = text
+
+
+def _source_hash(text: str) -> str:
+    """Fingerprint of the English source a translation was made from."""
+    return hashlib.sha1(" ".join((text or "").split()).encode("utf-8")).hexdigest()[:12]
+
+
+def _stale_translation_locales(entry: dict, en_text: str, wiki_extracts: dict[str, str],
+                               target_locales: list[str]) -> tuple[str, ...]:
+    """LLM translations made from an older English source.
+
+    Translations record the source hash; older ones without it count as
+    stale when the English source is now at least twice as long.
+    """
+    current = _source_hash(en_text)
+    fallback = set(entry.get("fallback_locales", []))
+    sources = entry.get("translated_from", {})
+    stale = []
+    for loc in target_locales:
+        text = entry.get("extracts", {}).get(loc)
+        if not text or wiki_extracts.get(loc) or loc in fallback:
+            continue
+        if loc in sources:
+            if sources[loc] != current:
+                stale.append(loc)
+        elif _word_count(en_text) >= 2 * _word_count(text):
+            stale.append(loc)
+    return tuple(stale)
 
 
 def _mark_fallback_locales(target: dict, updates: dict[str, dict[str, str]]) -> None:
@@ -313,11 +392,15 @@ def _mark_fallback_locales(target: dict, updates: dict[str, dict[str, str]]) -> 
         entry["fallback_locales"] = sorted(locs)
 
 
-def _append_journal(updates: dict[str, dict[str, str]], fallback: bool = False) -> None:
+def _append_journal(updates: dict[str, dict[str, str]], fallback: bool = False,
+                    translated_from: dict[str, dict[str, str]] | None = None) -> None:
     if not updates:
         return
+    entry = {"extracts": updates, "fallback": fallback}
+    if translated_from:
+        entry["translated_from"] = translated_from
     with JOURNAL_FILE.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"extracts": updates, "fallback": fallback}, ensure_ascii=False) + "\n")
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def _load_existing_outputs() -> dict:
@@ -337,7 +420,13 @@ def _load_existing_outputs() -> dict:
                 continue
             if isinstance(entry, dict):
                 extracts = entry.get("extracts") if "extracts" in entry else entry
-                _merge_updates(existing, extracts or {})
+                # Journal entries are newer than the saved file: they win,
+                # including retranslations of stale locales.
+                _merge_updates(existing, extracts or {}, replace={
+                    (sci, loc) for sci, locs in (extracts or {}).items() for loc in locs
+                })
+                for sci, sources in (entry.get("translated_from") or {}).items():
+                    existing.setdefault(sci, {}).setdefault("translated_from", {}).update(sources)
                 if entry.get("fallback"):
                     _mark_fallback_locales(existing, extracts or {})
                 replayed += 1
@@ -403,6 +492,10 @@ def main() -> None:
     parser.add_argument("--save-every", type=int, default=0)
     parser.add_argument("--char-budget", type=int, default=0)
     parser.add_argument("--max-source-chars", type=int, default=0)
+    parser.add_argument("--skip-stubs", action="store_true",
+                        help="Only translate locales without any text (leave native stubs)")
+    parser.add_argument("--retranslate-stale", action="store_true",
+                        help="Also redo LLM translations made from an older English source")
     parser.add_argument(
         "--provider", default="",
         choices=provider_choices,
@@ -442,6 +535,15 @@ def main() -> None:
     max_source_chars = max(500, args.max_source_chars or max_source_chars)
 
     wiki = load_json(WIKI_DATA)
+    # Work on the text the build publishes (no reference lists, subspecies
+    # lists, or markup), so stub checks and sources match the release.
+    for rec in wiki.values():
+        if rec.get("extract"):
+            rec["extract"] = clean_description_text(rec["extract"])
+        # A locale text needs an article URL or a provenance label.
+        known = set(rec.get("wikipedia_urls", {}) or {}) | set(rec.get("extract_sources", {}) or {})
+        rec["extracts"] = {loc: clean_description_text(t)
+                           for loc, t in rec.get("extracts", {}).items() if t and loc in known}
     if not wiki:
         raise SystemExit("ERROR: wikipedia_data.json not found. Run collectors/wikipedia.py first.")
 
@@ -459,7 +561,7 @@ def main() -> None:
     if not args.translate_only and not args.fallback_only:
         for sci, rec in wiki.items():
             for loc, text in rec.get("extracts", {}).items():
-                if not text:
+                if not text or is_disambiguation_text(text):
                     continue
                 if existing.get(sci, {}).get("extracts", {}).get(loc):
                     continue
@@ -468,28 +570,73 @@ def main() -> None:
 
     # ── Phase 2: species needing translation ──────────────────────────
     needs_translation: list[tuple[str, str, tuple[str, ...]]] = []
+    replace: set[tuple[str, str]] = set()  # stale LLM translations to overwrite
+    en_sources: dict[str, str] = {}
+    # Locale articles about a sister species are dropped by the build; treat
+    # them as missing so a translation takes their place.
+    taxonomy = load_json(RAW_DIR / "taxonomy.json")
+    canonical = set(taxonomy)
+    names_for: dict[str, list[str]] = {}
+    for tax_sci, entry in taxonomy.items():
+        own = [tax_sci, *entry.get("source_names", []), *entry.get("scientific_name_aliases", []),
+               *entry.get("xc_aliases", [])]
+        for name in [tax_sci, *entry.get("source_names", [])]:
+            names_for[name] = own
+
+    # The localized common names the build publishes; translations use them.
+    common_for: dict[str, dict[str, str]] = {}
+    for tax_sci, entry in taxonomy.items():
+        common = {loc: n for loc, n in (entry.get("common_names") or {}).items() if n}
+        if entry.get("preferred_common_name") and entry["preferred_common_name"] != tax_sci:
+            common["en"] = entry["preferred_common_name"]
+        for name in [tax_sci, *entry.get("source_names", [])]:
+            common_for[name] = common
+
+    def usable_wiki_extracts(sci: str, rec: dict) -> dict[str, str]:
+        return {loc: t for loc, t in rec.get("extracts", {}).items()
+                if not names_other_species(t, names_for.get(sci, [sci]), canonical)}
+
     if not args.shorten_only and not args.fallback_only and target_non_en:
         for sci, rec in wiki.items():
             en_text = rec.get("extract") or rec.get("extracts", {}).get("en")
-            if not en_text:
+            if not en_text or is_disambiguation_text(en_text):
                 continue
-            wp_ext = rec.get("extracts", {})
+            wp_ext = usable_wiki_extracts(sci, rec)
             cl_ext = existing.get(sci, {}).get("extracts", {})
-            missing = _missing_translation_locales(wp_ext, cl_ext, target_non_en)
+            missing = _missing_translation_locales(wp_ext, cl_ext, target_non_en, en_text,
+                                                   replace_stubs=not args.skip_stubs)
+            if args.retranslate_stale:
+                stale = _stale_translation_locales(
+                    existing.get(sci, {}), en_text, wp_ext, target_non_en)
+                replace.update((sci, loc) for loc in stale)
+                missing = tuple(dict.fromkeys([*missing, *stale]))
             if missing:
                 needs_translation.append((sci, en_text, missing))
+                en_sources[sci] = en_text
 
     # ── Phase 3: species needing English fallback ─────────────────────
     needs_fallback: list[tuple[str, dict[str, str]]] = []
     if args.fallback_missing:
+        min_english = int(cfg.get("descriptions", {}).get("min_english_words", 40))
         for sci, rec in wiki.items():
             wp_ext = rec.get("extracts", {})
             cl_ext = existing.get(sci, {}).get("extracts", {})
-            if rec.get("extract") or wp_ext.get("en") or cl_ext.get("en"):
+            if cl_ext.get("en"):
                 continue
-            sources = {loc: t for loc, t in wp_ext.items() if loc != "en" and t}
-            if sources:
+            sources = {loc: t for loc, t in wp_ext.items()
+                       if loc != "en" and t and not is_disambiguation_text(t)}
+            if not sources:
+                continue
+            en_text = rec.get("extract") or wp_ext.get("en") or ""
+            if is_disambiguation_text(en_text):
+                en_text = ""
+            if not en_text:
                 needs_fallback.append((sci, sources))
+            elif (_word_count(en_text) < min_english
+                    and max(map(_word_count, sources.values())) >= max(min_english, 2 * _word_count(en_text))):
+                # English stub, but a much richer article in another language:
+                # write English from both (sourced facts only).
+                needs_fallback.append((sci, {"en": en_text, **sources}))
 
     if args.limit:
         needs_shortening = needs_shortening[: args.limit]
@@ -546,7 +693,7 @@ def main() -> None:
         pbar = tqdm(total=len(needs_shortening), desc="Shorten", unit="ext")
         pending = 0
         for batch in shorten_batches:
-            if is_shutting_down():
+            if _stop_requested():
                 break
             results = shorten_extracts(batch, target_words=target_words, max_tokens=max_tokens)
             updates: dict[str, dict[str, str]] = {}
@@ -563,7 +710,7 @@ def main() -> None:
     else:
         print("\nPhase 1: No extracts need shortening")
 
-    if is_shutting_down():
+    if _stop_requested():
         return
 
     # ── Phase 2: Translate ────────────────────────────────────────────
@@ -576,6 +723,7 @@ def main() -> None:
             return translate_extracts(
                 batch, list(missing_locales),
                 max_source_chars=max_source_chars, max_tokens=max_tokens,
+                names=common_for,
             )
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -584,7 +732,8 @@ def main() -> None:
                 for missing, batch in translation_batches
             }
             for future in as_completed(futures):
-                if is_shutting_down():
+                if _stop_requested():
+                    pool.shutdown(wait=False, cancel_futures=True)
                     break
                 missing, batch = futures[future]
                 try:
@@ -596,13 +745,20 @@ def main() -> None:
 
                 updates: dict[str, dict[str, str]] = {}
                 for sci, trans in results.items():
-                    wp_ext = wiki.get(sci, {}).get("extracts", {})
+                    wp_ext = usable_wiki_extracts(sci, wiki.get(sci, {}))
                     for loc, text in trans.items():
                         cl_ext = existing.get(sci, {}).get("extracts", {})
-                        if not wp_ext.get(loc) and not cl_ext.get(loc):
+                        native_ok = wp_ext.get(loc) and _word_count(wp_ext[loc]) >= STUB_WORDS
+                        if not native_ok and (not cl_ext.get(loc) or (sci, loc) in replace):
                             updates.setdefault(sci, {})[loc] = text
-                _merge_updates(existing, updates)
-                _append_journal(updates)
+                _merge_updates(existing, updates, replace)
+                hashes = {
+                    sci: {loc: _source_hash(en_sources.get(sci, "")) for loc in locs}
+                    for sci, locs in updates.items()
+                }
+                for sci, sources in hashes.items():
+                    existing.setdefault(sci, {}).setdefault("translated_from", {}).update(sources)
+                _append_journal(updates, translated_from=hashes)
                 pbar.update(len(batch))
                 pending = _save_if_needed(existing, pending + 1, save_every)
 
@@ -612,7 +768,7 @@ def main() -> None:
     else:
         print("\nPhase 2: No translations needed")
 
-    if is_shutting_down():
+    if _stop_requested():
         return
 
     # ── Phase 3: English fallback ─────────────────────────────────────
@@ -621,11 +777,12 @@ def main() -> None:
         pbar = tqdm(total=len(needs_fallback), desc="Fallback", unit="sp")
         pending = 0
         for batch in fallback_batches:
-            if is_shutting_down():
+            if _stop_requested():
                 break
             results = fallback_english_descriptions(
                 batch, target_words=target_words,
                 max_source_chars=max_source_chars, max_tokens=max_tokens,
+                names=common_for,
             )
             updates: dict[str, dict[str, str]] = {}
             for sci, extracts in results.items():

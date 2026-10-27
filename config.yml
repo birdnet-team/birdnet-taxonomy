@@ -4,7 +4,15 @@
 # locales, taxon groups, API settings, etc.
 
 taxonomy:
-  version: "v0.2-Jun2026"
+  version: "v0.4-Oct2026"
+
+# BirdNET ID ranges (BN + 5 digits, inclusive). --reassign-ids numbers each
+# range alphabetically by scientific name; normal builds append new species
+# after the highest ID in their range.
+birdnet_ids:
+  birds: [1, 19999]
+  non_birds: [20000, 89999]
+  sound_classes: [90000, 99999]
 
 # iNaturalist iconic taxon groups to fetch.
 # sounds_only: if true, only fetch species with sound observations on iNat.
@@ -139,53 +147,6 @@ sound_classes:
       - Truck
       - Motorcycle
       - Machinery
-  - name: Human
-    group: Anthropogenic
-    wikidata_qid: Q5
-    aliases:
-      - human vocal
-      - human non-vocal
-      - human voice
-      - speech
-      - voice
-      - talking
-      - speaking
-      - singing
-      - shouting
-      - yelling
-      - whispering
-      - laughing
-      - crying
-      - cough
-      - coughing
-      - sneeze
-      - sneezing
-      - clapping
-      - footsteps
-      - person
-      - people
-    scientific_aliases:
-      - Human vocal
-      - Human non-vocal
-      - Human voice
-      - Speech
-      - Voice
-      - Talking
-      - Speaking
-      - Singing
-      - Shouting
-      - Yelling
-      - Whispering
-      - Laughing
-      - Crying
-      - Cough
-      - Coughing
-      - Sneeze
-      - Sneezing
-      - Clapping
-      - Footsteps
-      - Person
-      - People
   - name: Rain
     group: Geophony
     wikidata_qid: Q7925
@@ -208,6 +169,7 @@ sound_classes:
   - name: Thunder
     group: Geophony
     wikidata_qid: Q83301
+    image_file: Lightning_over_Oradea_Romania_zoom.jpg
     aliases:
       - thunderclap
       - thunder clap
@@ -223,6 +185,7 @@ sound_classes:
   - name: Wind
     group: Geophony
     wikidata_qid: Q8094
+    image_file: Tall_Grass_in_the_Wind_(Unsplash).jpg
     aliases:
       - windy
       - breeze
@@ -327,11 +290,57 @@ metadata_quality:
   report_path: "dev/metadata_quality_report.csv"
   drop_if_missing_image_and_description: true
   max_external_ids_for_thin_records: 1
+  # Groups never dropped: AviList is the bird authority, so every AviList
+  # species stays even before other sources cover a new split.
+  keep_groups:
+    - Aves
+
+# Release CSV export (dist/species_metadata.csv). The JSON carries every
+# locale; the CSV gets one common_name_<locale> column per locale listed here,
+# so the column set stays stable when locale coverage shifts between builds.
+csv_export:
+  locales:
+    - en
+    - ar
+    - bg
+    - ca
+    - cs
+    - cy
+    - da
+    - de
+    - es
+    - es_EC
+    - es_ES
+    - es_MX
+    - et
+    - fa
+    - fi
+    - fr
+    - he
+    - hr
+    - hu
+    - it
+    - ja
+    - ko
+    - lt
+    - nl
+    - "no"
+    - pl
+    - pt
+    - pt_PT
+    - ru
+    - sk
+    - sr
+    - sv
+    - tr
+    - uk
+    - zh
+    - zh-CN
 
 # AviList checklist download
 avilist:
-  url: "https://www.avilist.org/wp-content/uploads/2025/06/AviList-v2025-11Jun-extended.xlsx"
-  csv_file: "AviList-v2025-11Jun-extended.csv"   # converted from xlsx
+  url: "https://www.avilist.org/wp-content/uploads/2026/10/AviList-v2026-20Oct2026-extended-version.xlsx"
+  csv_file: "AviList-v2026-20Oct2026-extended.csv"   # converted from xlsx
 
 # LLM translation settings (API key is in .env, not here)
 # Supports Gemini, OpenAI, and Anthropic — provider auto-detected from .env.
@@ -343,6 +352,7 @@ avilist:
 #   openai:    gpt-4o-mini
 #   anthropic: claude-haiku-4-5-20251001
 llm:
+  enabled: true           # merge translate_data.json descriptions into the build
   provider: "auto"        # auto-detect from .env; or "gemini"/"openai"/"anthropic"
   model: ""               # leave empty to use provider default
   locales:
@@ -352,6 +362,9 @@ llm:
     - es         # Spanish
     - cs         # Czech
     - pt         # Portuguese
+    - ru         # Russian
+    - pl         # Polish
+    - nl         # Dutch
   batch_size: 12          # max species per API call (char budget may reduce this)
   translate_workers: 4    # parallel translation workers
   save_every: 10          # save raw_data/translate_data.json every N completed batches
@@ -384,7 +397,17 @@ macaulay:
 
 # Xeno-Canto settings (API key is in .env: XC_API_KEY=...)
 xenocanto:
-  rps: 5                 # max requests per second
+  rps: 2                 # max requests per second (XC returns 502s under ~5 rps)
+
+# Avicommons (https://avicommons.org): curated CC bird photos keyed by eBird
+# code. Referenced next to each bird's own image, never used as the image.
+avicommons:
+  url: "https://avicommons.org/2025.json"   # full JSON of a yearly release
+  static_url: "https://static.avicommons.org"
+  sizes:                 # pixel widths Avicommons serves: 160, 240, 320, 480, 900
+    thumb: 160
+    medium: 480
+    src: 900
 
 # observation.org settings
 observationorg:

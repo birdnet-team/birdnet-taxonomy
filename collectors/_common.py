@@ -1,5 +1,5 @@
 """
-Shared utilities for the species-data pipeline.
+Shared utilities for the BirdNET+ Taxonomy pipeline.
 
 Provides common infrastructure used by all collectors and build steps:
   - Path constants (ROOT, RAW_DIR)
@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw_data"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
 
-USER_AGENT = "BirdNET Species Metadata Crawler (https://github.com/birdnet-team/species-data)"
+USER_AGENT = "BirdNET Species Metadata Crawler (https://github.com/birdnet-team/birdnet-taxonomy)"
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,36 @@ def is_clean_common_name(name: str) -> bool:
     return not re.search(r"\s{2,}", clean)
 
 
+def same_epithet_stem(a: str, b: str) -> bool:
+    """True if two epithets differ at most by a Latin gender/case ending
+    (badius/badia, caffer/caffra, agilis/agile)."""
+    a, b = a.lower(), b.lower()
+    common = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        common += 1
+    return common >= 3 and common >= min(len(a), len(b)) - 2
+
+
+def related_species_names(a: str, b: str) -> bool:
+    """Same genus, or a genus transfer keeping the epithet stem."""
+    ga, ea = a.split()[:2]
+    gb, eb = b.split()[:2]
+    return ga == gb or same_epithet_stem(ea, eb)
+
+
+# Xeno-Canto match methods trusted to link a species to an unrelated name
+# (new genus and epithet): Wikidata's XC ID for the item, a known synonym,
+# or an exact English name within the species' XC group.
+TRUSTED_XC_METHODS = frozenset({"wikidata", "synonym", "english"})
+
+
+def xc_record_method(rec: dict) -> str:
+    """How an xc_data.json entry was resolved ("" if recorded before methods were)."""
+    return rec.get("method") or ("synonym" if rec.get("matched_name") else "")
+
+
 def clean_aliases(names: list[str] | tuple[str, ...] | set[str]) -> list[str]:
     """Filter and dedupe alternate scientific names for final metadata."""
     result: list[str] = []
@@ -150,6 +180,12 @@ def load_avilist_species(csv_path: Path) -> dict[str, dict]:
         return species
     with open(csv_path, encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter=";")
+        # AviList versions the Clements column name (e.g. _v2024, _v2025);
+        # resolve it by prefix so a new release doesn't silently drop names.
+        clements_col = next(
+            (c for c in (reader.fieldnames or []) if c.startswith("English_name_Clements")),
+            "English_name_Clements_v2025",
+        )
         for row in reader:
             if row.get("Taxon_rank") != "species":
                 continue
@@ -161,7 +197,7 @@ def load_avilist_species(csv_path: Path) -> dict[str, dict]:
                 "inat_id": None,
                 "preferred_common_name": (
                     row.get("English_name_AviList")
-                    or row.get("English_name_Clements_v2024")
+                    or row.get(clements_col)
                     or ""
                 ).strip(),
                 "ebird_code": (row.get("Species_code_Cornell_Lab") or "").strip(),
@@ -194,7 +230,7 @@ def load_canonical_species(cfg: dict | None = None,
     if inat_path.exists():
         inat = load_json(inat_path)
         for sci, rec in inat.items():
-            if not is_clean_scientific_name(sci):
+            if not is_clean_scientific_name(sci) or not rec.get("is_active", True):
                 continue
             if group and rec.get("taxon_group") != group:
                 continue
@@ -207,6 +243,20 @@ def load_canonical_species(cfg: dict | None = None,
                 species.setdefault(sci, _with_manual_aliases(sci, rec, manual_aliases))
 
     return species
+
+
+def shared_id_species(existing: dict, field: str) -> set[str]:
+    """Species whose cached ID in `field` is also cached for another species.
+
+    After a split, external sites (observation.org, Macaulay) may have returned
+    the parent's ID for the daughter species; such entries need re-resolving.
+    """
+    owners: dict[str, list[str]] = {}
+    for sci, rec in existing.items():
+        value = (rec or {}).get(field)
+        if value not in (None, ""):
+            owners.setdefault(str(value), []).append(sci)
+    return {sci for names in owners.values() if len(names) > 1 for sci in names}
 
 
 def load_manual_species_aliases() -> dict[str, list[str]]:
@@ -279,6 +329,7 @@ def cache_put(key: Path, value):
 LOCALE_NORMALIZE: dict[str, str] = {
     "nb": "no",
     "pt-br": "pt",
+    "zh-cn": "zh-CN",  # Wikidata lower-cases the region; iNat uses zh-CN
 }
 
 # Acceptable photo licenses (CC variants, public domain, GFDL).

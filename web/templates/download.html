@@ -96,7 +96,7 @@
         The BirdNET taxonomy dataset contains structured metadata for
         <strong>{{ total_species|default(0, true) }}</strong> species,
         including scientific and common names, taxonomy, external identifiers,
-        observation counts, descriptions, images, and translations in
+        commonness, descriptions, images, and translations in
         {{ locale_count }} languages.
         Version <strong>{{ taxonomy_version }}</strong>.
     </p>
@@ -136,11 +136,11 @@
 <div class="dl-info">
     <h3>What's included</h3>
     <ul>
-        <li><strong>Identifiers</strong> — BirdNET ID, iNaturalist, eBird, GBIF, NCBI, Avibase, BirdLife, Macaulay Library, Xeno-Canto</li>
+        <li><strong>Identifiers</strong> — BirdNET ID, iNaturalist, eBird, GBIF, NCBI, Avibase, BirdLife, Macaulay Library, Xeno-Canto, observation.org, Wikidata</li>
         <li><strong>Taxonomy</strong> — scientific name, common name, taxon group</li>
-        <li><strong>Observations</strong> — iNaturalist observation counts</li>
+        <li><strong>Commonness</strong> — how often a species is observed on iNaturalist, as a 0–100 percentile within its taxon group (not abundance)</li>
         <li><strong>Descriptions</strong> — species descriptions with source attribution</li>
-        <li><strong>Images</strong> — image URLs, attribution, and license info</li>
+        <li><strong>Images</strong> — image URLs, attribution, and license info, plus a reference to the matching <a href="https://avicommons.org">Avicommons</a> photo for birds</li>
         <li><strong>Translations</strong> — common names in {{ locale_count }} languages</li>
     </ul>
 </div>

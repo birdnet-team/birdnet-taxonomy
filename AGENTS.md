@@ -6,7 +6,8 @@ changes so your work matches the project's conventions.
 ## What this project is
 
 A data pipeline that collects, merges, and serves species metadata for **BirdNET+
-Taxonomy**. It covers birds, mammals, insects, reptiles, and amphibians. A chain of
+Taxonomy**. It covers birds, mammals, insects, reptiles, and amphibians, plus a few
+configured non-species sound classes (e.g. rain, engines). A chain of
 **collectors** fetch from external sources into `raw_data/`, a **build** step merges
 everything offline into final metadata, and a **FastAPI web server** browses and
 serves the dataset (HTML UI, REST API, image proxy).
@@ -34,18 +35,22 @@ serves the dataset (HTML UI, REST API, image proxy).
   common names must be canonical display names only: no parenthetical qualifiers,
   bracketed notes, slashes, symbols, or informal annotations. Regular spaces,
   apostrophes, and dashes/hyphens are fine when they are part of the accepted
-  name.
+  name. The only non-species records are the sound classes configured under
+  `sound_classes` in `config.yml` (`record_type: sound_class`).
 
 ## Pipeline order
 
 Collectors depend on earlier output, so order matters:
 
 1. AviList → 2. iNaturalist → 3. eBird → 4. Wikidata → 5. Wikipedia →
-6. Macaulay Library → 7. Xeno-Canto → 8. observation.org → 9. LLM Translation (optional) →
-10. Images (optional) → 11. Build
+6. Macaulay Library → 7. Xeno-Canto → 8. observation.org → 9. Avicommons →
+10. Sound Classes → 11. LLM Translation (optional) → 12. Build → 13. Images (optional)
 
-Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 optionally fills
-description gaps via LLM (Gemini/OpenAI/Anthropic); 10 generates images; 11 merges everything.
+Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 downloads the
+Avicommons bird photo index; 10 collects the configured sound classes; 11
+optionally fills description gaps via LLM (Gemini/OpenAI/Anthropic); 12 merges
+everything (and writes `raw_data/taxonomy.json`, which later collector runs use);
+13 generates images for the built species list.
 
 ## Taxon groups
 
@@ -56,13 +61,18 @@ description gaps via LLM (Gemini/OpenAI/Anthropic); 10 generates images; 11 merg
 - Disabled groups are kept as comments in `config.yml`; their cached data is retained
   but excluded from builds via the `allowed_groups` filter in `build_taxonomy()`.
 - **AviList is the authority** for bird taxonomy and English common names. The
-  Clements/eBird name is kept as `common_name_alt`.
+  Clements/eBird name is kept as `common_name_alt`. iNat taxa AviList lumps are
+  folded into the AviList species as aliases, except reviewed exceptions in the
+  git-tracked `overrides/bird_splits.csv` (e.g. Hooded Crow), which stay separate.
 - When a species has no common name, fall back to the scientific name.
 
 ## Identifiers and stability
 
 - Each species has a **BirdNET ID** in the form `BN{5 digits}`, stored in the
-  git-tracked `bn_ids.json` registry. Before the 1.0 release, BirdNET IDs may be
+  git-tracked `bn_ids.json` registry. IDs fall into ranges set in `config.yml`
+  (`birdnet_ids`): birds `BN00001`–`BN19999`, other animals `BN20000`–`BN89999`,
+  sound classes `BN90000`–`BN99999`; each range is alphabetical by scientific
+  name as of the last reassignment. Before the 1.0 release, BirdNET IDs may be
   reassigned as an intentional breaking change when taxonomy cleanup requires it.
   Reassignment must be explicit (`--reassign-ids`), documented in the same
   change, and never done accidentally. After 1.0, treat IDs as permanent unless
@@ -87,6 +97,11 @@ description gaps via LLM (Gemini/OpenAI/Anthropic); 10 generates images; 11 merg
   stable while still forcing regeneration when a source URL or crop anchor changes.
 - Smart cropping uses a YOLO ONNX model with center-crop fallback. Override anchors
   take precedence over smart crop.
+- Birds also reference their matching [Avicommons](https://avicommons.org) photo in
+  `avicommons_image` (URLs, author, license). It is matched by `ebird_code` and kept
+  only when Avicommons names the same species (scientific name or alias, or English
+  name). It is a reference, never the species image: do not proxy, crop, or fall
+  back to it.
 
 ## Deployment awareness
 
@@ -97,7 +112,9 @@ description gaps via LLM (Gemini/OpenAI/Anthropic); 10 generates images; 11 merg
 ## Repository hygiene
 
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`
-  and `overrides/species_overrides.csv` are git-tracked and meaningful.
+  and the files in `overrides/` (`species_overrides.csv`, `species_aliases.csv`,
+  `common_name_aliases.csv`, `bird_splits.csv`, `priority_species.csv`) are
+  git-tracked and meaningful.
 - Secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.)
   live in `.env`, never in `config.yml` or source.
   `utils/llm.py` auto-detects which LLM key is present and uses it.

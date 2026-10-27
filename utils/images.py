@@ -30,6 +30,7 @@ from __future__ import annotations
 import io
 import logging
 import re
+import time
 import unicodedata
 import json
 from dataclasses import dataclass
@@ -395,15 +396,26 @@ def _normalise_url(url: str) -> str:
     return url
 
 
-def download_image(url: str, timeout: int = 30) -> Image.Image | None:
-    """Download an image from a URL and return as PIL Image, or None."""
+def download_image(url: str, timeout: int = 30, retries: int = 3) -> Image.Image | None:
+    """Download an image from a URL and return as PIL Image, or None.
+
+    Rate limiting (429) and server errors are retried with backoff;
+    Wikimedia throttles parallel downloads.
+    """
     url = _normalise_url(url)
     req = Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urlopen(req, timeout=timeout) as resp:
-            raw = resp.read()
-    except (HTTPError, URLError, TimeoutError):
-        return None
+    for attempt in range(retries + 1):
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                raw = resp.read()
+            break
+        except HTTPError as exc:
+            if exc.code != 429 and exc.code < 500 or attempt == retries:
+                return None
+        except (URLError, TimeoutError):
+            if attempt == retries:
+                return None
+        time.sleep(2 ** (attempt + 1))
 
     try:
         return Image.open(io.BytesIO(raw))

@@ -28,8 +28,8 @@ from tqdm import tqdm
 
 from config import load_config
 from collectors._common import (
-    RAW_DIR, USER_AGENT,
-    load_canonical_species, load_json, save_json,
+    RAW_DIR, USER_AGENT, is_full_species_name,
+    load_canonical_species, load_json, save_json, shared_id_species,
     setup_shutdown, is_shutting_down,
     RateLimiter,
 )
@@ -74,6 +74,7 @@ def _ml_lookup(scientific_name: str) -> str | None:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
     except Exception:
+        _note_failure()
         return None
 
     # Filter to species-level entries matching the exact scientific name
@@ -138,6 +139,15 @@ def _wikidata_ml_codes(species_names: list[str]) -> dict[str, str]:
 # GBIF synonym fallback
 # ---------------------------------------------------------------------------
 
+# Failed requests are counted so they are never cached as "no ML code".
+_failures = 0
+
+
+def _note_failure():
+    global _failures
+    _failures += 1
+
+
 def _gbif_synonyms(scientific_name: str) -> list[str]:
     """Get alternate scientific names for a species via GBIF."""
     # Step 1: match to get GBIF key
@@ -148,6 +158,7 @@ def _gbif_synonyms(scientific_name: str) -> list[str]:
         with urllib.request.urlopen(req, timeout=10) as resp:
             match = json.loads(resp.read())
     except Exception:
+        _note_failure()
         return []
 
     key = match.get("usageKey")
@@ -161,6 +172,7 @@ def _gbif_synonyms(scientific_name: str) -> list[str]:
         with urllib.request.urlopen(req2, timeout=10) as resp2:
             syns = json.loads(resp2.read())
     except Exception:
+        _note_failure()
         return []
 
     names = []
@@ -188,6 +200,8 @@ def main():
                         help="Preview without fetching")
     parser.add_argument("--new-only", action="store_true",
                         help="Only species not yet in macaulay_data.json")
+    parser.add_argument("--recheck-shared", action="store_true",
+                        help="Re-resolve species whose cached ML code is shared with another species")
     args = parser.parse_args()
 
     setup_shutdown()
@@ -210,6 +224,14 @@ def main():
 
     print(f"  {len(species)} species"
           + (f" (group: {args.group})" if args.group else ""))
+
+    all_species = set(species)
+
+    if args.recheck_shared:
+        shared = shared_id_species(existing, "ml_taxon_code") & all_species
+        for sci in shared:
+            existing.pop(sci, None)
+        print(f"  Rechecking ML codes shared by several species: {len(shared)}")
 
     if args.new_only:
         species = {s: r for s, r in species.items() if s not in existing}
@@ -234,8 +256,8 @@ def main():
             continue
         if rec.get("taxon_group") != "Aves":
             continue
-        # Check ebird_data or wikidata for an eBird code
-        code = ebird.get(sci, {}).get("ebird_code", "")
+        # Bird ML codes are eBird codes; prefer the taxonomy's validated one
+        code = rec.get("ebird_code", "") or ebird.get(sci, {}).get("ebird_code", "")
         if not code:
             code = wikidata.get(sci, {}).get("ebird_code", "")
         if code:
@@ -303,11 +325,14 @@ def main():
             if is_shutting_down():
                 break
             rec = species.get(sci, {})
+            failures_before = _failures
             synonyms = [
                 *rec.get("scientific_name_aliases", []),
                 *_gbif_synonyms(sci),
             ]
             for syn in synonyms:
+                if syn in all_species and syn != sci:
+                    continue  # a separate species in our taxonomy, not a synonym
                 code = _ml_lookup(syn)
                 if code:
                     existing[sci] = {
@@ -318,8 +343,10 @@ def main():
                     phase4_count += 1
                     break
             else:
-                # No synonym matched — store null to avoid re-processing
-                existing[sci] = {"ml_taxon_code": None}
+                # No synonym matched — store null to avoid re-processing,
+                # unless a request failed (then retry on the next run)
+                if _failures == failures_before:
+                    existing[sci] = {"ml_taxon_code": None}
         progress.close()
         print(f"  Resolved {phase4_count} via GBIF synonyms")
         save_json(existing, OUTPUT_FILE)

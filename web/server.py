@@ -21,6 +21,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import re
 import unicodedata
 from collections import Counter
@@ -40,33 +41,43 @@ from config import (
     load_root_path, load_host_name,
 )
 
+_taxonomy_version = get_taxonomy_version()
+
 
 # ---------------------------------------------------------------------------
 # Pydantic response models (for OpenAPI schema + Swagger examples)
 # ---------------------------------------------------------------------------
 
 _SPECIES_EXAMPLE: dict[str, Any] = {
-    "taxonomy_version": "v2025-11Jun",
-    "birdnet_id": "BN00498",
+    "taxonomy_version": _taxonomy_version,
+    "birdnet_id": "BN00483",
     "scientific_name": "Anas platyrhynchos",
     "common_name": "Mallard",
     "taxon_group": "Aves",
-    "observations_count": 829418,
     "inat_id": 6930,
     "ebird_code": "mallar3",
     "ml_taxon_code": "mallar3",
     "xc_name": "Anas platyrhynchos",
     "gbif_id": 9761484,
     "ncbi_id": 8839,
-    "avibase_id": "Anas-platyrhynchos",
+    "avibase_id": "85625D75F2524457",
     "birdlife_id": 22680186,
+    "wikidata_qid": "Q25348",
+    "commonness": 100.0,
     "image": {
         "src": "https://static.inaturalist.org/photos/123/original.jpeg",
         "thumb": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=thumb",
         "medium": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=medium",
-        "source": "inat",
+        "source": "iNaturalist",
         "author": "anonymous",
         "license": "cc-by-sa",
+    },
+    "avicommons_image": {
+        "src": "https://static.avicommons.org/mallar3-442898452-900.jpg",
+        "thumb": "https://static.avicommons.org/mallar3-442898452-160.jpg",
+        "medium": "https://static.avicommons.org/mallar3-442898452-480.jpg",
+        "author": "David H. Gleit",
+        "license": "cc-by-nc-2.5",
     },
     "description_source": "wikipedia",
     "translate_locales": ["pt"],
@@ -94,9 +105,9 @@ _SPECIES_LIST_EXAMPLE: dict[str, Any] = {
 
 class SpeciesRecord(BaseModel):
     """Full species metadata record."""
-    taxonomy_version: Optional[str] = Field(None, examples=["v2025-11Jun"])
-    birdnet_id: Optional[str] = Field(None, examples=["BN00498"])
-    scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
+    taxonomy_version: Optional[str] = Field(None, examples=[_taxonomy_version])
+    birdnet_id: Optional[str] = Field(None, examples=["BN00483"])
+    scientific_name: Optional[str] = Field(None, examples=["Anas platyrhynchos"])
     scientific_name_aliases: Optional[list[str]] = Field(
         None,
         description="Clean binomial scientific names that resolve to this canonical species",
@@ -104,23 +115,30 @@ class SpeciesRecord(BaseModel):
     )
     common_name_aliases: Optional[list[str]] = Field(
         None,
-        description="Additional common-name search aliases for non-species sound classes",
-        examples=[["human vocal", "human non-vocal"]],
+        description="Additional common-name search aliases (sound classes, and reviewed species aliases such as 'human vocal' for Homo sapiens)",
+        examples=[["chain saw", "power saw"]],
     )
     common_name: str = Field("", examples=["Mallard"])
     common_name_alt: Optional[str] = Field(None, description="Alternative English name (Clements/eBird)", examples=["Rock Pigeon"])
     taxon_group: str = Field("", examples=["Aves"])
     record_type: Optional[str] = Field("species", examples=["species", "sound_class"])
-    observations_count: Optional[int] = Field(None, examples=[829418])
     inat_id: Optional[int] = Field(None, examples=[6930])
     ebird_code: Optional[str] = Field(None, examples=["mallar3"])
     ml_taxon_code: Optional[str] = Field(None, examples=["mallar3"])
     xc_name: Optional[str] = Field(None, examples=["Anas platyrhynchos"])
-    observationorg_id: Optional[int] = Field(None, description="observation.org species ID", examples=[87959])
+    observationorg_id: Optional[int] = Field(None, description="observation.org species ID", examples=[198])
     gbif_id: Optional[int] = Field(None, examples=[9761484])
     ncbi_id: Optional[int] = Field(None, examples=[8839])
-    avibase_id: Optional[str] = Field(None, examples=["Anas-platyrhynchos"])
+    avibase_id: Optional[str] = Field(None, examples=["85625D75F2524457"])
     birdlife_id: Optional[int] = Field(None, examples=[22680186])
+    wikidata_qid: Optional[str] = Field(None, description="Wikidata item ID", examples=["Q25348"])
+    commonness: Optional[float] = Field(
+        None, description="How often the species is observed on iNaturalist, as a percentile (0-100) within its taxon group; not abundance",
+        examples=[100.0])
+    found: Optional[bool] = Field(
+        None,
+        description="false on the placeholder returned for an unknown name (fallback=true); absent on real records",
+        examples=[False])
 
     @field_validator("birdlife_id", "gbif_id", "ncbi_id", "inat_id",
                      "observationorg_id", mode="before")
@@ -136,10 +154,15 @@ class SpeciesRecord(BaseModel):
             "src": "https://static.inaturalist.org/photos/123/original.jpeg",
             "thumb": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=thumb",
             "medium": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=medium",
-            "source": "inat",
+            "source": "iNaturalist",
             "author": "anonymous",
             "license": "cc-by-sa",
         }],
+    )
+    avicommons_image: Optional[dict[str, str]] = Field(
+        None,
+        description="Matching Avicommons bird photo (by eBird code), referenced alongside the species image; URLs point to static.avicommons.org",
+        examples=[_SPECIES_EXAMPLE["avicommons_image"]],
     )
     description_source: Optional[str] = Field(None, examples=["wikipedia"])
     description_sources: Optional[dict[str, str]] = Field(
@@ -166,8 +189,8 @@ class SpeciesRecord(BaseModel):
 
 class PaginatedSpecies(BaseModel):
     """Paginated list of species records."""
-    taxonomy_version: str = Field(..., examples=["v2025-11Jun"])
-    total: int = Field(..., examples=[13361])
+    taxonomy_version: str = Field(..., examples=[_taxonomy_version])
+    total: int = Field(..., examples=[16536])
     page: int = Field(..., examples=[1])
     per_page: int = Field(..., examples=[50])
     results: list[dict[str, Any]] = Field(...)
@@ -175,8 +198,8 @@ class PaginatedSpecies(BaseModel):
     model_config = {
         "json_schema_extra": {
             "examples": [{
-                "taxonomy_version": "v2025-11Jun",
-                "total": 13361,
+                "taxonomy_version": _taxonomy_version,
+                "total": 16536,
                 "page": 1,
                 "per_page": 2,
                 "results": [_SPECIES_LIST_EXAMPLE],
@@ -193,7 +216,7 @@ class SearchResponse(PaginatedSpecies):
         "json_schema_extra": {
             "examples": [{
                 "query": "mallard",
-                "taxonomy_version": "v2025-11Jun",
+                "taxonomy_version": _taxonomy_version,
                 "total": 1,
                 "page": 1,
                 "per_page": 50,
@@ -205,16 +228,16 @@ class SearchResponse(PaginatedSpecies):
 
 class StatsResponse(BaseModel):
     """Dataset statistics."""
-    taxonomy_version: str = Field(..., examples=["v2025-11Jun"])
-    total_species: int = Field(..., examples=[13361])
-    groups: dict[str, int] = Field(..., examples=[{"Aves": 11157, "Mammalia": 1087, "Insecta": 566, "Amphibia": 540, "Reptilia": 11}])
+    taxonomy_version: str = Field(..., examples=[_taxonomy_version])
+    total_species: int = Field(..., examples=[16536])
+    groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2196, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 5, "Geophony": 3}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
 
 
 class GroupCount(BaseModel):
     """Taxon group with species count."""
     name: str = Field(..., examples=["Aves"])
-    count: int = Field(..., examples=[11157])
+    count: int = Field(..., examples=[11022])
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -241,10 +264,9 @@ def _quote_path(value: Any) -> str:
 
 _root_path = load_root_path()
 _host_name = load_host_name()
-_taxonomy_version = get_taxonomy_version()
 _site_title = "BirdNET+ Taxonomy"
 
-USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"
+USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/birdnet-taxonomy)"
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -431,15 +453,17 @@ def _init_image_config(dev: bool = False):
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    # uvicorn imports this module afresh, so --dev arrives via the environment.
+    dev = os.environ.get("SPECIES_DATA_DEV") == "1"
     if not _species_list:
-        load_data()
-    _init_image_config(dev=_dev_mode)
+        load_data(dev=dev)
+    _init_image_config(dev=dev)
     templates.env.globals["quote_path"] = _quote_path
     yield
 
 
 app = FastAPI(
-    title=f"BirdNET Species Metadata API {_taxonomy_version}".strip(),
+    title=f"BirdNET+ Taxonomy API {_taxonomy_version}".strip(),
     description="Browse and query species metadata for BirdNET models.",
     version="1.0.0",
     lifespan=lifespan,
@@ -601,7 +625,7 @@ async def image_proxy(scientific_name: str,
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def home(request: FRequest, q: str = "", group: str = "",
-               lang: str = "", sort: str = "obs", page: int = 1, per_page: int = 51):
+               lang: str = "", sort: str = "bn", page: int = 1, per_page: int = 51):
     """Home page with search and species listing."""
     results = _search(q, group)
 
@@ -615,8 +639,8 @@ async def home(request: FRequest, q: str = "", group: str = "",
         results = sorted(results, key=_name_sort_key)
     elif sort == "z-a":
         results = sorted(results, key=_name_sort_key, reverse=True)
-    elif sort == "obs":
-        results = sorted(results, key=lambda r: r.get("observations_count", 0) or 0, reverse=True)
+    elif sort == "common":
+        results = sorted(results, key=lambda r: r.get("commonness") or 0, reverse=True)
     elif sort == "bn":
         results = sorted(results, key=lambda r: r.get("birdnet_id") or "")
 
@@ -681,10 +705,14 @@ async def about_page(request: FRequest):
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
          include_in_schema=False)
 async def species_page(request: FRequest, scientific_name: str, lang: str = ""):
-    """Species detail page. Accepts scientific name, common name, eBird code, or iNat ID."""
+    """Species detail page. Accepts scientific name, common name, eBird code, or iNat ID.
+
+    An unknown name renders the placeholder record (dummy image, a not-found
+    note with a search link) instead of a 404, like the API.
+    """
     rec = _find_species(scientific_name)
     if not rec:
-        raise HTTPException(status_code=404, detail="Species not found")
+        rec = {**_placeholder_record(scientific_name), "commonness": None}
 
     # Redirect to canonical URL if accessed via alias
     canonical = rec.get("scientific_name", "")
@@ -816,8 +844,8 @@ def _filter_species(data: list[dict], *,
                     has_image: str = "",
                     has_description: str = "",
                     description_source: str = "",
-                    min_observations: int | None = None,
-                    max_observations: int | None = None) -> list[dict]:
+                    min_commonness: float | None = None,
+                    max_commonness: float | None = None) -> list[dict]:
     """Apply boolean / range filters to a species list."""
     result = data
 
@@ -839,13 +867,13 @@ def _filter_species(data: list[dict], *,
         result = [r for r in result
                   if (r.get("description_source") or "").lower() in sources]
 
-    if min_observations is not None:
+    if min_commonness is not None:
         result = [r for r in result
-                  if (r.get("observations_count") or 0) >= min_observations]
+                  if r.get("commonness") is not None and r["commonness"] >= min_commonness]
 
-    if max_observations is not None:
+    if max_commonness is not None:
         result = [r for r in result
-                  if (r.get("observations_count") or 0) <= max_observations]
+                  if r.get("commonness") is not None and r["commonness"] <= max_commonness]
 
     return result
 
@@ -887,7 +915,7 @@ def _to_csv(records: list[dict], fields: str | None = None) -> str:
         # Deterministic column order: fixed columns first, rest sorted
         priority = [
             "scientific_name", "common_name", "taxon_group",
-            "observations_count", "inat_id", "ebird_code",
+            "inat_id", "ebird_code",
         ]
         all_keys: set[str] = set()
         for r in records:
@@ -962,10 +990,10 @@ async def api_search(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (wikipedia, ebird)"),
-    min_observations: Optional[int] = Query(None, description="Minimum observation count"),
-    max_observations: Optional[int] = Query(None, description="Maximum observation count"),
-    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -observations_count)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, ebird, llm, llm_fallback)"),
+    min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
+    max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
+    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),
     fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
     exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
@@ -979,7 +1007,7 @@ async def api_search(
         results, group=group,
         has_image=has_image, has_description=has_description,
         description_source=description_source,
-        min_observations=min_observations, max_observations=max_observations,
+        min_commonness=min_commonness, max_commonness=max_commonness,
     )
     results = _sort_species(results, sort)
 
@@ -1036,10 +1064,10 @@ async def api_species_list(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (wikipedia, ebird)"),
-    min_observations: Optional[int] = Query(None, description="Minimum observation count"),
-    max_observations: Optional[int] = Query(None, description="Maximum observation count"),
-    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -observations_count)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, ebird, llm, llm_fallback)"),
+    min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
+    max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
+    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),
     fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
     exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
@@ -1053,7 +1081,7 @@ async def api_species_list(
         base_list, group=group,
         has_image=has_image, has_description=has_description,
         description_source=description_source,
-        min_observations=min_observations, max_observations=max_observations,
+        min_commonness=min_commonness, max_commonness=max_commonness,
     )
     data = _sort_species(data, sort)
 
@@ -1078,20 +1106,53 @@ async def api_species_list(
     }
 
 
+def _placeholder_record(name: str) -> dict:
+    """Stand-in for an unknown name, so clients can still render something:
+    the requested name, no metadata, and the dummy image (the image proxy
+    serves it for unknown names)."""
+    quoted = _quote_path(name)
+    return {
+        "found": False,
+        "scientific_name": name,
+        "common_name": name,
+        "taxon_group": "",
+        "record_type": "unknown",
+        "common_names": {},
+        "descriptions": {},
+        "image": {
+            "thumb": _with_image_prefix(f"/api/image/{quoted}?size=thumb"),
+            "medium": _with_image_prefix(f"/api/image/{quoted}?size=medium"),
+        },
+    }
+
+
 @app.get("/api/species/{scientific_name:path}", tags=["API"],
          response_model=SpeciesRecord,
-         response_model_exclude_none=True)
+         response_model_exclude_none=True,
+         response_model_exclude_unset=True,
+         responses={404: {"description": "Unknown name and fallback=false"}})
 async def api_species_detail(
     scientific_name: str,
     fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
     exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
+    fallback: bool = Query(True, description="For an unknown name, return a placeholder record "
+                                             "(found=false, dummy image) instead of a 404"),
 ):
-    """Get full metadata for one species by scientific name, common name, eBird code, or iNat ID."""
+    """Get full metadata for one species by scientific name, common name, eBird code, or iNat ID.
+
+    An unknown name returns a placeholder record (`found: false`, the
+    requested name as scientific and common name, dummy image URLs) so
+    clients can render it without failing; pass `fallback=false` for a 404.
+    """
     rec = _find_species(scientific_name)
     if not rec:
-        raise HTTPException(status_code=404, detail="Species not found")
+        if not fallback:
+            raise HTTPException(status_code=404, detail="Species not found")
+        rec = _placeholder_record(scientific_name)
     out = _project(rec, fields, exclude, locale)
+    if rec.get("found") is False:
+        out["found"] = False  # kept through field selection: marks the placeholder
     out["taxonomy_version"] = _taxonomy_version
     return out
 
@@ -1162,7 +1223,8 @@ def _search(q: str, group: str = "") -> list[dict]:
         else:
             score = 30
 
-        score += min(rec.get("observations_count", 0) / 1_000_000, 10)
+        # Among equal matches, more commonly recorded species first.
+        score += (rec.get("commonness") or 0) / 20
         scored.append((score, rec))
 
     scored.sort(key=lambda x: -x[0])
@@ -1229,8 +1291,8 @@ def main():
     if args.reload and args.workers > 1:
         parser.error("--reload and --workers > 1 are mutually exclusive")
 
-    load_data(dev=args.dev)
-    _init_image_config(dev=args.dev)
+    if args.dev:
+        os.environ["SPECIES_DATA_DEV"] = "1"
     uvicorn.run(
         "web.server:app",
         host=args.host,

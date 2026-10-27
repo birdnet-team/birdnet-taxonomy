@@ -127,8 +127,10 @@ def _load_image_config() -> tuple[dict[str, ImageSize], dict[str, int]]:
 
 
 def _prune_image_cache(base_dir: Path, sizes: dict[str, ImageSize],
-                       species: list[dict]) -> None:
-    """Remove orphaned cached images and stale sidecar files."""
+                       species: list[dict], dry_run: bool = False) -> None:
+    """Remove orphaned cached images and stale sidecar files (dry_run: only
+    report them)."""
+    verb = "Would remove" if dry_run else "Removing"
     expected = set()
     for rec in species:
         url = _image_src(rec)
@@ -151,8 +153,9 @@ def _prune_image_cache(base_dir: Path, sizes: dict[str, ImageSize],
             if path.name == "dummy.webp":
                 continue
             if path.suffix != ".webp" or path.name not in expected:
-                print(f"  Removing stale cache file: {path}")
-                path.unlink()
+                print(f"  {verb} stale cache file: {path}")
+                if not dry_run:
+                    path.unlink()
 
         state_dir = size_dir / ".state"
         if not state_dir.is_dir():
@@ -161,14 +164,16 @@ def _prune_image_cache(base_dir: Path, sizes: dict[str, ImageSize],
             if not state_path.is_file():
                 continue
             if state_path.suffix != ".json":
-                print(f"  Removing stale cache metadata: {state_path}")
-                state_path.unlink()
+                print(f"  {verb} stale cache metadata: {state_path}")
+                if not dry_run:
+                    state_path.unlink()
                 continue
             image_name = state_path.name[:-5]
             image_path = size_dir / image_name
             if image_name == "dummy.webp" or image_name not in expected or not image_path.exists():
-                print(f"  Removing stale cache metadata: {state_path}")
-                state_path.unlink()
+                print(f"  {verb} stale cache metadata: {state_path}")
+                if not dry_run:
+                    state_path.unlink()
 
 
 def _has_any_cached_image(base_dir: Path, sizes: dict[str, ImageSize],
@@ -198,20 +203,9 @@ def _process_species(rec: dict, sizes: dict[str, ImageSize],
 
     img = download_image(url)
     if img is None:
-        # Use dummy image as fallback for failed downloads
-        ok = 0
-        for size_name in sizes:
-            out_dir = base_dir / size_name
-            dummy = out_dir / "dummy.webp"
-            fname = image_filename(sci, common, "Stefan Kahl")
-            dest = out_dir / fname
-            if image_cache_is_current(dest, url, crop_anchor=crop_anchor):
-                ok += 1
-            elif dummy.exists():
-                import shutil
-                shutil.copy2(dummy, dest)
-                ok += 1
-        return ok, len(sizes) - ok
+        # Failed downloads are retried on the next run; the web server's
+        # image proxy serves the dummy image meanwhile.
+        return 0, len(sizes)
 
     fname = image_filename(sci, common, author)
     ok = 0
@@ -277,10 +271,11 @@ def main():
     base_dir = ROOT / ("dev" if args.dev else "dist") / "images"
 
     # Generate fallback dummy images
-    _generate_dummy_images(base_dir, sizes, qualities)
+    if not args.dry_run:
+        _generate_dummy_images(base_dir, sizes, qualities)
 
     if not args.new_only:
-        _prune_image_cache(base_dir, sizes, species)
+        _prune_image_cache(base_dir, sizes, species, dry_run=args.dry_run)
 
     # Build work list: species that need at least one size
     work: list[tuple[dict, dict[str, ImageSize]]] = []
