@@ -244,6 +244,9 @@ names become aliases of the replacement taxon.
   place. Links to rejected articles are dropped with them.
 - An English article claimed by several species stays with the species it names
   first.
+- A stored locale text is used only with that locale's article URL or a
+  provenance label from `utils.translate`; unlabelled machine translations left
+  by older runs are ignored.
 - Texts are cleaned of citation marks, sentences with leftover wiki markup,
   section headings, repeated sentences, and reference-list text (author–year
   citations, ISBNs, URLs, archive-link notes, link lists) that survived

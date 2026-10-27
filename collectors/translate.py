@@ -519,8 +519,10 @@ def main() -> None:
     for rec in wiki.values():
         if rec.get("extract"):
             rec["extract"] = clean_description_text(rec["extract"])
+        # A locale text needs an article URL or a provenance label.
+        known = set(rec.get("wikipedia_urls", {}) or {}) | set(rec.get("extract_sources", {}) or {})
         rec["extracts"] = {loc: clean_description_text(t)
-                           for loc, t in rec.get("extracts", {}).items() if t}
+                           for loc, t in rec.get("extracts", {}).items() if t and loc in known}
     if not wiki:
         raise SystemExit("ERROR: wikipedia_data.json not found. Run collectors/wikipedia.py first.")
 

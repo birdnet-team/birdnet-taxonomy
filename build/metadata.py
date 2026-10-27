@@ -1859,9 +1859,13 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
 
         # Wikipedia: use English extract independently from locale extracts.
         # Locale-only Wikipedia data must not block English fallback sources.
-        # Older collector runs stored section headings and reference tails.
-        wp_extracts = {loc: clean_description_text(t) for loc, t in wp.get("extracts", {}).items()}
+        # Older collector runs stored section headings and reference tails,
+        # and some unlabelled machine translations: a locale text needs an
+        # article URL or a provenance label (utils.translate) to be used.
         wp_extract_sources = wp.get("extract_sources", {}) or {}
+        wp_known = set(wp.get("wikipedia_urls", {}) or {}) | set(wp_extract_sources)
+        wp_extracts = {loc: clean_description_text(t) for loc, t in wp.get("extracts", {}).items()
+                       if loc in wp_known}
         wp_en = clean_description_text(wp.get("extract") or "") or wp_extracts.get("en", "")
         # A disambiguation page ("Ruff may refer to:") is a list, not a
         # description; skip it here and in every source below.
