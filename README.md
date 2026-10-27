@@ -765,7 +765,7 @@ uvicorn web.server:app --reload
 - Xeno-Canto name (`xc_name`)
 - iNaturalist taxon ID (e.g., `12716`)
 
-HTML species pages redirect to the canonical scientific name URL when accessed via an alias.
+HTML species pages redirect to the canonical scientific name URL when accessed via an alias. An unknown name renders a placeholder page (dummy image, a not-found note, and a search link) instead of a 404, like the API.
 
 **Image proxy** (`/api/image/{name}?size=thumb|medium`) serves species images with on-demand downloading, smart cropping, and caching. Returns a dummy image (BirdNET logo on gray background) for unknown species or failed downloads. All images cached with 24-hour `Cache-Control` headers.
 
@@ -777,7 +777,7 @@ HTML species pages redirect to the canonical scientific name URL when accessed v
 | `/download` | Download page (HTML) |
 | `/api/image/{name}?size=` | Image proxy — `thumb` (150×100), `medium` (480×320, default) |
 | `/api/species` | List species (JSON/CSV) with filtering, sorting, field selection; CSV omits description excerpts |
-| `/api/species/{name}` | Single species detail (JSON) with field selection |
+| `/api/species/{name}` | Single species detail (JSON) with field selection; an unknown name returns a placeholder record (see below) |
 | `/api/search?q=` | Search species by name with full query options |
 | `/api/suggest?q=` | Autocomplete suggestions (`limit`, `lang`) |
 | `/api/locales` | List locale codes present in the dataset |
@@ -809,6 +809,8 @@ All list/search endpoints (`/api/species`, `/api/search`) support these paramete
 
 The detail endpoint (`/api/species/{name}`) supports `fields`, `exclude`, and `locale`.
 
+**Unknown names** don't break clients: by default `/api/species/{name}` answers an unknown name with HTTP 200 and a placeholder record — `found: false`, the requested name as `scientific_name` and `common_name`, `record_type: unknown`, empty `common_names`/`descriptions`, and `image.thumb`/`image.medium` URLs that serve the dummy image (the image proxy does the same for unknown names). `found` is kept even when `fields` leaves it out, and is absent on real records. Pass `fallback=false` to get a 404 instead.
+
 **Examples:**
 
 ```bash
@@ -826,6 +828,9 @@ curl '/api/search?q=eagle&fields=scientific_name,common_name&per_page=20'
 
 # Look up a species by eBird code
 curl '/api/species/eurbla'
+
+# Strict lookup: 404 instead of a placeholder for an unknown name
+curl '/api/species/Foo%20bar?fallback=false'
 ```
 
 ## Data Sources

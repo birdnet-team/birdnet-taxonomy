@@ -107,7 +107,7 @@ class SpeciesRecord(BaseModel):
     """Full species metadata record."""
     taxonomy_version: Optional[str] = Field(None, examples=[_taxonomy_version])
     birdnet_id: Optional[str] = Field(None, examples=["BN00483"])
-    scientific_name: str = Field(..., examples=["Anas platyrhynchos"])
+    scientific_name: Optional[str] = Field(None, examples=["Anas platyrhynchos"])
     scientific_name_aliases: Optional[list[str]] = Field(
         None,
         description="Clean binomial scientific names that resolve to this canonical species",
@@ -135,6 +135,10 @@ class SpeciesRecord(BaseModel):
     commonness: Optional[float] = Field(
         None, description="How often the species is observed on iNaturalist, as a percentile (0-100) within its taxon group; not abundance",
         examples=[100.0])
+    found: Optional[bool] = Field(
+        None,
+        description="false on the placeholder returned for an unknown name (fallback=true); absent on real records",
+        examples=[False])
 
     @field_validator("birdlife_id", "gbif_id", "ncbi_id", "inat_id",
                      "observationorg_id", mode="before")
@@ -701,10 +705,14 @@ async def about_page(request: FRequest):
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
          include_in_schema=False)
 async def species_page(request: FRequest, scientific_name: str, lang: str = ""):
-    """Species detail page. Accepts scientific name, common name, eBird code, or iNat ID."""
+    """Species detail page. Accepts scientific name, common name, eBird code, or iNat ID.
+
+    An unknown name renders the placeholder record (dummy image, a not-found
+    note with a search link) instead of a 404, like the API.
+    """
     rec = _find_species(scientific_name)
     if not rec:
-        raise HTTPException(status_code=404, detail="Species not found")
+        rec = {**_placeholder_record(scientific_name), "commonness": None}
 
     # Redirect to canonical URL if accessed via alias
     canonical = rec.get("scientific_name", "")
@@ -1098,20 +1106,53 @@ async def api_species_list(
     }
 
 
+def _placeholder_record(name: str) -> dict:
+    """Stand-in for an unknown name, so clients can still render something:
+    the requested name, no metadata, and the dummy image (the image proxy
+    serves it for unknown names)."""
+    quoted = _quote_path(name)
+    return {
+        "found": False,
+        "scientific_name": name,
+        "common_name": name,
+        "taxon_group": "",
+        "record_type": "unknown",
+        "common_names": {},
+        "descriptions": {},
+        "image": {
+            "thumb": _with_image_prefix(f"/api/image/{quoted}?size=thumb"),
+            "medium": _with_image_prefix(f"/api/image/{quoted}?size=medium"),
+        },
+    }
+
+
 @app.get("/api/species/{scientific_name:path}", tags=["API"],
          response_model=SpeciesRecord,
-         response_model_exclude_none=True)
+         response_model_exclude_none=True,
+         response_model_exclude_unset=True,
+         responses={404: {"description": "Unknown name and fallback=false"}})
 async def api_species_detail(
     scientific_name: str,
     fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
     exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
+    fallback: bool = Query(True, description="For an unknown name, return a placeholder record "
+                                             "(found=false, dummy image) instead of a 404"),
 ):
-    """Get full metadata for one species by scientific name, common name, eBird code, or iNat ID."""
+    """Get full metadata for one species by scientific name, common name, eBird code, or iNat ID.
+
+    An unknown name returns a placeholder record (`found: false`, the
+    requested name as scientific and common name, dummy image URLs) so
+    clients can render it without failing; pass `fallback=false` for a 404.
+    """
     rec = _find_species(scientific_name)
     if not rec:
-        raise HTTPException(status_code=404, detail="Species not found")
+        if not fallback:
+            raise HTTPException(status_code=404, detail="Species not found")
+        rec = _placeholder_record(scientific_name)
     out = _project(rec, fields, exclude, locale)
+    if rec.get("found") is False:
+        out["found"] = False  # kept through field selection: marks the placeholder
     out["taxonomy_version"] = _taxonomy_version
     return out
 

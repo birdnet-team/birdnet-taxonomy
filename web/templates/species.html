@@ -251,12 +251,17 @@
         <div style="font-size: 0.95rem; color: var(--muted); margin-bottom: 0.2rem;">also known as {{ s.common_name_alt }}</div>
         {% endif %}
         <div class="sci-name">{{ s.scientific_name }}</div>
+        {% if s.found is sameas false %}
+        <p style="margin: 0.6rem 0;">Not in the BirdNET+ Taxonomy ({{ taxonomy_version }}). <a href="{{ base }}/?q={{ s.scientific_name|urlencode }}">Search for similar names</a></p>
+        {% endif %}
 
         <table class="info-table">
             {% if s.birdnet_id %}
             <tr><td>BirdNET ID</td><td>{{ s.birdnet_id }}</td></tr>
             {% endif %}
+            {% if s.taxon_group %}
             <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
+            {% endif %}
             {% if s.commonness is not none %}
             {% set c = s.commonness %}
             <tr><td>Commonness</td><td>{{ 'Very common' if c >= 80 else 'Common' if c >= 60 else 'Moderately common' if c >= 40 else 'Uncommon' if c >= 20 else 'Rare' }} ({{ c|round|int }}/100)<br><small style="color: var(--muted);">How often it is observed on iNaturalist compared with other {{ s.taxon_group }}, not how abundant it is</small></td></tr>
