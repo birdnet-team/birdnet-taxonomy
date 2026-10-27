@@ -154,19 +154,26 @@ _BIB_MARKER_RE = re.compile(
     r"^\s*\([a-z]{2,3}(?: \+ [a-z]{2,3})*\) |"  # fr source-language tag: "(en) Gould, « ... »"
     r"\bRetrieved (?:\d{1,2} )?[A-Z][a-z]+ \d|\b(?:[Cc]onsultado el|consulté le|abgerufen am) \d|"
     r"tarihinde (?:alındı|erişildi)|kaynağından arşivlendi|Downloaded from|https?://|\bwww\.|"
-    r"\(englanniksi\)|\(Arkistoitu|\bLaji\.fi\b")
+    r"\(englanniksi\)|\(Arkistoitu|\bLaji\.fi\b|\bARKive\b|Species Account|"
+    r"Internet Bird Collection(?:\s*[.》)]|\s+(?:Resim|Wikimedia|Lynx))|"
+    r"\b[Vv]ideos? (?:on|by|from|of)\b[^.]{0,60}Internet Bird Collection|"
+    r"Wikimedia Commons'ta|Vikitür'de|\(PDF\b")
+# A sentence that is only an author list ("Helb, H.-W.; Bergmann, H.-H.").
+_BIB_AUTHOR_LIST_RE = re.compile(
+    r"(?:[A-ZÀ-Þ][\w'’-]+,\s+(?:[A-Z]\.[\s-]*)+;\s*)+[A-ZÀ-Þ][\w'’-]+,\s+(?:[A-Z]\.[\s-]*)+")
 _BIB_AUTHORS_RE = re.compile(
     r"^(?:文献\s*)?(?:(?:[A-ZÀ-ÖØ-Þ][\w'’-]*\.?|&|and|et|y|e|und|de|da|van|von|der|den|du|le|la|al\.|Jr\.?)"
     r"[\s,;]*){1,15}\(?(?:1[789]|20)\d{2}[a-z]?\)?(?:\s*\"\d{4}\")?\s*[:.)]")
 _BIB_VENUE_RE = re.compile(
-    r"\bvol\.|\bs?[ps]p?\.\s*\d|\bJournal\b|\bProceedings\b|\bBulletin\b|\bAnnal[se]s?\b|Zootaxa|"
-    r"Copeia|Novitates|Herpetologica|Zeitschrift|\bRevue\b|\bMus(?:eum|ée|eo)\b|University Press|"
+    r"\bvol\.|\bs?[ps]p?\.\s*\d|\b\d+\s*\(\d+\)\s*:\s*\d|\bJournal\b|\bProceedings\b|\bBulletin\b|\bAnnal[se]s?\b|Zootaxa|"
+    r"Copeia|Novitates|Herpetologica|Zeitschrift|\bRevue\b|\bMus(?:eum|ée|eo|eu)\b|University Press|"
     r"Verlag|texte intégral|Full text|Handbook|\bSoc(?:iety|iété)?\b|\bActa\b|\bZool", re.IGNORECASE)
 
 
 def _starts_citation(sentence: str, rest: str) -> bool:
     """True if a sentence begins reference-list text (rest: it and what follows)."""
     return bool(_BIB_MARKER_RE.search(sentence)
+                or _BIB_AUTHOR_LIST_RE.fullmatch(sentence.strip())
                 or (_BIB_AUTHORS_RE.match(rest) and _BIB_VENUE_RE.search(rest)))
 
 
