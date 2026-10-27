@@ -81,11 +81,11 @@
     identifiers, observation counts, common names in dozens of languages, and
     default taxon photos. eBird contributes species pages, Macaulay Library
     images, and common names in over sixty regional language variants. Wikidata
-    supplies external identifiers (GBIF, NCBI, Avibase, BirdLife) and
-    Wikimedia Commons images with licensing information. Wikipedia provides
-    species descriptions in about twenty languages, and we use Claude to
-    translate or shorten descriptions for an additional set of target languages
-    where Wikipedia coverage is thin.
+    supplies its item IDs, external identifiers (GBIF, NCBI, Avibase, BirdLife),
+    and Wikimedia Commons images with licensing information. Wikipedia provides
+    species descriptions in about twenty languages, and a large language model
+    (Gemini, OpenAI, or Claude, whichever is configured) translates or shortens
+    descriptions where Wikipedia coverage is thin.
 </p>
 
 <p>
@@ -132,10 +132,13 @@
 </p>
 
 <p>
-    Descriptions follow a similar pattern. We start with Wikipedia extracts,
-    then overlay higher-quality translations produced by Claude for our core
-    set of languages. If neither Wikipedia nor Claude has a usable text for a
-    given locale, we fall back to the eBird species description in English.
+    Descriptions follow a similar pattern. Native Wikipedia text comes first,
+    cleaned of headings, reference lists, and subspecies lists. Where a
+    language has no article, or only a stub, the language model translates the
+    English description, using the species' established common name in that
+    language. If no Wikipedia English text exists, the eBird species
+    description is used, and as a last resort the model writes an English
+    description strictly from the species' other-language Wikipedia articles.
 </p>
 
 <h2>What is a BirdNET ID?</h2>
@@ -143,10 +146,11 @@
 <p>
     Every species in the database receives a stable BirdNET identifier,
     formatted as a five-digit number with a "BN" prefix, for example BN00042.
-    These identifiers are meant to remain constant across releases so that
-    downstream systems can reference a species without worrying about
-    taxonomic name changes. The mapping is stored persistently and new species
-    simply receive the next available number.
+    These identifiers let downstream systems reference a species without
+    worrying about taxonomic name changes. The mapping is stored persistently
+    and new species receive the next available number. Before the 1.0 release,
+    identifiers may be reassigned as a documented breaking change when taxonomy
+    cleanup requires it; after 1.0 they are meant to remain constant.
 </p>
 
 <h2>Licensing and reuse</h2>
