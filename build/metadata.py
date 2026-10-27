@@ -40,7 +40,7 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from config import load_config, image_url_prefix, LOCALE_NAMES
 from collectors._common import (
     ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE, TRUSTED_XC_METHODS,
@@ -1713,6 +1713,36 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
     return renamed
 
 
+def _resolve_localized_name_collisions(records: list[dict]) -> int:
+    """Keep each non-English localized name on one species.
+
+    Name conflicts between sources are settled earlier by source rank; this
+    breaks the remaining ties (two species with the same name from the same
+    source): the species whose Wikipedia article in that locale has the name
+    as its title keeps it, else the more-observed one. Returns the number of
+    names dropped.
+    """
+    owners: dict[tuple[str, str], list[dict]] = {}
+    for rec in records:
+        if rec.get("record_type") == "sound_class":
+            continue
+        for loc, name in rec["common_names"].items():
+            if loc != "en":
+                owners.setdefault((loc, name.lower()), []).append(rec)
+    dropped = 0
+    for (loc, name), group in owners.items():
+        if len(group) < 2:
+            continue
+        def title(rec: dict) -> str:
+            url = (rec.get("wikipedia_urls") or {}).get(loc, "")
+            return unquote(url.rsplit("/", 1)[-1]).replace("_", " ").lower()
+        group.sort(key=lambda r: (title(r) != name, -(r.get("observations_count") or 0)))
+        for rec in group[1:]:
+            rec["common_names"].pop(loc)
+            dropped += 1
+    return dropped
+
+
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    translate: dict = None,
                    manual_overrides: dict | None = None,
@@ -1980,6 +2010,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     print(f"  Images kept on one species only (shared photo): {_dedupe_images(records)} removed")
     renamed = _resolve_display_name_collisions(records, taxonomy)
     print(f"  Display names: {renamed} species renamed (name shared with another species)")
+    print(f"  Localized names: {_resolve_localized_name_collisions(records)} dropped "
+          "(same name on a more-observed species or the article's title species)")
 
     # Assign BirdNET species IDs (persistent, append-only)
     if reassign_ids:

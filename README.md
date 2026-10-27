@@ -210,7 +210,9 @@ names become aliases of the replacement taxon.
 ### Names
 
 - When two species carry the same localized name, the more authoritative source
-  (AviList > eBird > iNat > Wikidata) keeps it.
+  (AviList > eBird > iNat > Wikidata) keeps it; on a tie, the species whose
+  Wikipedia article in that language has the name as its title, else the
+  more-observed one. The other loses that locale's name.
 - Never used as a localized common name (the next source's name is used
   instead): a known scientific name, or (from iNat or Wikidata) an unrecorded
   synonym — a known genus with the species' epithet or a gender variant of it
