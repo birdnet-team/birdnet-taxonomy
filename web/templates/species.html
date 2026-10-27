@@ -257,8 +257,9 @@
             <tr><td>BirdNET ID</td><td>{{ s.birdnet_id }}</td></tr>
             {% endif %}
             <tr><td>Taxon group</td><td><span class="badge badge-{{ s.taxon_group|lower }}">{{ s.taxon_group }}</span></td></tr>
-            {% if s.observations_count %}
-            <tr><td>iNat observations</td><td>{{ "{:,}".format(s.observations_count) }}</td></tr>
+            {% if s.commonness is not none %}
+            {% set c = s.commonness %}
+            <tr><td>Commonness</td><td>{{ 'Very common' if c >= 80 else 'Common' if c >= 60 else 'Moderately common' if c >= 40 else 'Uncommon' if c >= 20 else 'Rare' }} ({{ c|round|int }}/100)<br><small style="color: var(--muted);">How often it is observed on iNaturalist compared with other {{ s.taxon_group }}, not how abundant it is</small></td></tr>
             {% endif %}
             {% if s.image_source %}
             <tr><td>Image source</td><td>{{ s.image_source }}</td></tr>

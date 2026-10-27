@@ -265,7 +265,7 @@ names become aliases of the replacement taxon.
 ### Images
 
 A photo claimed by several species stays with one of them (the species named in
-the file, else the most observed). A photo whose license requires attribution
+the file, else the most commonly observed). A photo whose license requires attribution
 (anything but public domain or CC0) is only used with a known author, and
 Commons files of a skull, skeleton, or postage stamp, or whose file name names
 another species of the taxonomy, are skipped; otherwise the next image source
@@ -625,6 +625,18 @@ under `metadata_quality.keep_groups` (birds: AviList is the authority) are
 scored but never dropped, so a new AviList split stays even before other
 sources cover it.
 
+Each species gets `commonness`, a number from 0 to 100 (one decimal): the percentile of
+its iNaturalist observation count within its taxon group (100 = the most
+observed species of the group; species with equal counts share a value; sound
+classes have none). It measures how often a species is observed and recorded
+on iNaturalist, not how abundant it is in an area: conspicuous, widespread,
+or easily photographed species score high, while abundant but secretive or
+remote ones may score low. Comparing within taxon groups keeps groups with very
+different recording effort (birds vs. insects) on the same scale. Raw
+observation counts are used only inside the build (quality score, tie-breaks)
+and are not published. The web UI labels it very common (80+), common (60+),
+moderately common (40+), uncommon (20+), or rare (below 20).
+
 The JSON output contains full multilingual descriptions and every collected common-name locale. The CSV output is a lighter export and does not include description excerpts; scientific aliases and metadata quality flags are exported as pipe-separated fields. It has one `common_name_<locale>` column per locale listed under `csv_export.locales` in `config.yml`, so the column set stays stable between builds.
 
 Image fields in the final metadata:
@@ -725,13 +737,13 @@ All list/search endpoints (`/api/species`, `/api/search`) support these paramete
 | `fields` | `?fields=scientific_name,common_name` | Return only specified fields (comma-separated) |
 | `exclude` | `?exclude=common_names,descriptions` | Return all fields except these |
 | `locale` | `?locale=en,de,fr` | Filter `common_names` and `descriptions` to specific locales |
-| `sort` | `?sort=-observations_count` | Sort by field; prefix `-` for descending |
+| `sort` | `?sort=-commonness` | Sort by field; prefix `-` for descending |
 | `group` | `?group=Aves` | Filter by taxon group |
 | `has_image` | `?has_image=true` | Filter species with/without images |
 | `has_description` | `?has_description=true` | Filter species with/without English description |
 | `description_source` | `?description_source=llm,wikipedia` | Filter by description source |
-| `min_observations` | `?min_observations=10000` | Minimum iNaturalist observation count |
-| `max_observations` | `?max_observations=50000` | Maximum iNaturalist observation count |
+| `min_commonness` | `?min_commonness=80` | Minimum `commonness` (0–100) |
+| `max_commonness` | `?max_commonness=20` | Maximum `commonness` (0–100) |
 | `format` | `?format=csv` | Response format — `json` (default) or `csv` |
 | `page` | `?page=2` | Page number (default 1) |
 | `per_page` | `?per_page=100` | Results per page (1–500, default 50) |
@@ -741,8 +753,8 @@ The detail endpoint (`/api/species/{name}`) supports `fields`, `exclude`, and `l
 **Examples:**
 
 ```bash
-# Top 10 most observed birds with images
-curl '/api/species?group=Aves&has_image=true&sort=-observations_count&per_page=10&fields=scientific_name,common_name,observations_count'
+# Top 10 most commonly observed birds with images
+curl '/api/species?group=Aves&has_image=true&sort=-commonness&per_page=10&fields=scientific_name,common_name,commonness'
 
 # German and French names/descriptions for a species
 curl '/api/species/Anas%20platyrhynchos?locale=de,fr&fields=scientific_name,common_names,descriptions'
@@ -759,7 +771,7 @@ curl '/api/species/eurblk1'
 
 ## Data Sources
 
-- **[iNaturalist](https://www.inaturalist.org)** — Taxonomy, common names, observation counts, and photos via the public API. Data licensed under various Creative Commons licenses by individual contributors.
+- **[iNaturalist](https://www.inaturalist.org)** — Taxonomy, common names, observation counts (published only as `commonness`), and photos via the public API. Data licensed under various Creative Commons licenses by individual contributors.
 - **[eBird](https://ebird.org)** — Species descriptions, images, and common names (62 locales) from the Cornell Lab of Ornithology. Species codes from the eBird/Clements taxonomy.
 - **[Wikidata](https://www.wikidata.org)** — Item IDs, external identifiers (GBIF, NCBI, Avibase, BirdLife), eBird codes, common name labels, and P18 images via SPARQL. Data available under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
 - **[Wikipedia](https://www.wikipedia.org)** — English summaries, localized article links, and optional public-service translations from English Wikipedia excerpts. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).

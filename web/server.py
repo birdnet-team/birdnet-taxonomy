@@ -54,7 +54,6 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
     "scientific_name": "Anas platyrhynchos",
     "common_name": "Mallard",
     "taxon_group": "Aves",
-    "observations_count": 829418,
     "inat_id": 6930,
     "ebird_code": "mallar3",
     "ml_taxon_code": "mallar3",
@@ -64,6 +63,7 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
     "avibase_id": "85625D75F2524457",
     "birdlife_id": 22680186,
     "wikidata_qid": "Q25348",
+    "commonness": 100.0,
     "image": {
         "src": "https://static.inaturalist.org/photos/123/original.jpeg",
         "thumb": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=thumb",
@@ -115,7 +115,6 @@ class SpeciesRecord(BaseModel):
     common_name_alt: Optional[str] = Field(None, description="Alternative English name (Clements/eBird)", examples=["Rock Pigeon"])
     taxon_group: str = Field("", examples=["Aves"])
     record_type: Optional[str] = Field("species", examples=["species", "sound_class"])
-    observations_count: Optional[int] = Field(None, examples=[829418])
     inat_id: Optional[int] = Field(None, examples=[6930])
     ebird_code: Optional[str] = Field(None, examples=["mallar3"])
     ml_taxon_code: Optional[str] = Field(None, examples=["mallar3"])
@@ -126,6 +125,9 @@ class SpeciesRecord(BaseModel):
     avibase_id: Optional[str] = Field(None, examples=["85625D75F2524457"])
     birdlife_id: Optional[int] = Field(None, examples=[22680186])
     wikidata_qid: Optional[str] = Field(None, description="Wikidata item ID", examples=["Q25348"])
+    commonness: Optional[float] = Field(
+        None, description="Percentile (0-100) of iNaturalist observations within the taxon group",
+        examples=[100.0])
 
     @field_validator("birdlife_id", "gbif_id", "ncbi_id", "inat_id",
                      "observationorg_id", mode="before")
@@ -607,7 +609,7 @@ async def image_proxy(scientific_name: str,
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def home(request: FRequest, q: str = "", group: str = "",
-               lang: str = "", sort: str = "obs", page: int = 1, per_page: int = 51):
+               lang: str = "", sort: str = "bn", page: int = 1, per_page: int = 51):
     """Home page with search and species listing."""
     results = _search(q, group)
 
@@ -621,8 +623,8 @@ async def home(request: FRequest, q: str = "", group: str = "",
         results = sorted(results, key=_name_sort_key)
     elif sort == "z-a":
         results = sorted(results, key=_name_sort_key, reverse=True)
-    elif sort == "obs":
-        results = sorted(results, key=lambda r: r.get("observations_count", 0) or 0, reverse=True)
+    elif sort == "common":
+        results = sorted(results, key=lambda r: r.get("commonness") or 0, reverse=True)
     elif sort == "bn":
         results = sorted(results, key=lambda r: r.get("birdnet_id") or "")
 
@@ -822,8 +824,8 @@ def _filter_species(data: list[dict], *,
                     has_image: str = "",
                     has_description: str = "",
                     description_source: str = "",
-                    min_observations: int | None = None,
-                    max_observations: int | None = None) -> list[dict]:
+                    min_commonness: float | None = None,
+                    max_commonness: float | None = None) -> list[dict]:
     """Apply boolean / range filters to a species list."""
     result = data
 
@@ -845,13 +847,13 @@ def _filter_species(data: list[dict], *,
         result = [r for r in result
                   if (r.get("description_source") or "").lower() in sources]
 
-    if min_observations is not None:
+    if min_commonness is not None:
         result = [r for r in result
-                  if (r.get("observations_count") or 0) >= min_observations]
+                  if r.get("commonness") is not None and r["commonness"] >= min_commonness]
 
-    if max_observations is not None:
+    if max_commonness is not None:
         result = [r for r in result
-                  if (r.get("observations_count") or 0) <= max_observations]
+                  if r.get("commonness") is not None and r["commonness"] <= max_commonness]
 
     return result
 
@@ -893,7 +895,7 @@ def _to_csv(records: list[dict], fields: str | None = None) -> str:
         # Deterministic column order: fixed columns first, rest sorted
         priority = [
             "scientific_name", "common_name", "taxon_group",
-            "observations_count", "inat_id", "ebird_code",
+            "inat_id", "ebird_code",
         ]
         all_keys: set[str] = set()
         for r in records:
@@ -969,9 +971,9 @@ async def api_search(
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
     description_source: str = Query("", description="Filter by source (wikipedia, ebird)"),
-    min_observations: Optional[int] = Query(None, description="Minimum observation count"),
-    max_observations: Optional[int] = Query(None, description="Maximum observation count"),
-    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -observations_count)"),
+    min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
+    max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
+    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),
     fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
     exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
@@ -985,7 +987,7 @@ async def api_search(
         results, group=group,
         has_image=has_image, has_description=has_description,
         description_source=description_source,
-        min_observations=min_observations, max_observations=max_observations,
+        min_commonness=min_commonness, max_commonness=max_commonness,
     )
     results = _sort_species(results, sort)
 
@@ -1043,9 +1045,9 @@ async def api_species_list(
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
     description_source: str = Query("", description="Filter by source (wikipedia, ebird)"),
-    min_observations: Optional[int] = Query(None, description="Minimum observation count"),
-    max_observations: Optional[int] = Query(None, description="Maximum observation count"),
-    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -observations_count)"),
+    min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
+    max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
+    sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),
     fields: Optional[str] = Query(None, description="Comma-separated fields to include"),
     exclude: Optional[str] = Query(None, description="Comma-separated fields to exclude"),
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
@@ -1059,7 +1061,7 @@ async def api_species_list(
         base_list, group=group,
         has_image=has_image, has_description=has_description,
         description_source=description_source,
-        min_observations=min_observations, max_observations=max_observations,
+        min_commonness=min_commonness, max_commonness=max_commonness,
     )
     data = _sort_species(data, sort)
 
@@ -1168,7 +1170,8 @@ def _search(q: str, group: str = "") -> list[dict]:
         else:
             score = 30
 
-        score += min(rec.get("observations_count", 0) / 1_000_000, 10)
+        # Among equal matches, more commonly recorded species first.
+        score += (rec.get("commonness") or 0) / 20
         scored.append((score, rec))
 
     scored.sort(key=lambda x: -x[0])

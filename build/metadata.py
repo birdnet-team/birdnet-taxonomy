@@ -1507,6 +1507,28 @@ def _bn_id_kind(rec: dict) -> str:
     return "birds" if rec.get("taxon_group") == "Aves" else "non_birds"
 
 
+def _assign_commonness(records: list[dict]) -> None:
+    """commonness: percentile (0-100, one decimal) of a species' iNaturalist observation
+    count within its taxon group, so groups with very different recording
+    effort stay comparable (100 = most observed in its group; equal counts
+    share a value). It reflects how often iNat users record a species, not
+    true abundance. Sound classes get None."""
+    groups: dict[str, list[dict]] = {}
+    for rec in records:
+        if rec.get("record_type") == "sound_class":
+            rec["commonness"] = None
+        else:
+            groups.setdefault(rec.get("taxon_group", ""), []).append(rec)
+    for recs in groups.values():
+        counts = sorted(r.get("_observations") or 0 for r in recs)
+        below: dict[int, int] = {}
+        for i, c in enumerate(counts):
+            below.setdefault(c, i)  # species with fewer observations
+        span = max(len(counts) - 1, 1)
+        for rec in recs:
+            rec["commonness"] = round(100 * below[rec.get("_observations") or 0] / span, 1)
+
+
 def _assign_bn_ids(records: list[dict], reassign: bool) -> None:
     """Assign BirdNET IDs within the configured range of each record kind.
 
@@ -1599,7 +1621,7 @@ def _metadata_quality(record: dict) -> tuple[int, list[str], int]:
     else:
         flags.append("missing_common_name")
 
-    if record.get("observations_count"):
+    if record.get("_observations"):
         score += 5
 
     return min(100, score), flags, external_id_count
@@ -1745,7 +1767,7 @@ def _dedupe_images(records: list[dict]) -> int:
             continue
         fname = src.rsplit("/", 1)[-1].lower().replace("%20", "_").replace(" ", "_")
         recs.sort(key=lambda r: (r["scientific_name"].lower().replace(" ", "_") not in fname,
-                                 -(r.get("observations_count") or 0)))
+                                 -(r.get("_observations") or 0)))
         for rec in recs[1:]:
             rec.update(image=None, image_author="", image_license="", image_source="",
                        image_crop_anchor=None)
@@ -1824,7 +1846,7 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
             r.get("taxon_group") != "Aves",
             not any(variant(n) for n in attested[r["scientific_name"]]),
             bool(unused(r["scientific_name"])),
-            -(r.get("observations_count") or 0),
+            -(r.get("_observations") or 0),
         ))
         for rec in group[1:]:
             if rec.get("taxon_group") == "Aves":
@@ -1864,7 +1886,7 @@ def _resolve_localized_name_collisions(records: list[dict]) -> int:
         def title(rec: dict) -> str:
             url = (rec.get("wikipedia_urls") or {}).get(loc, "")
             return unquote(url.rsplit("/", 1)[-1]).replace("_", " ").lower()
-        group.sort(key=lambda r: (title(r) != name, -(r.get("observations_count") or 0)))
+        group.sort(key=lambda r: (title(r) != name, -(r.get("_observations") or 0)))
         for rec in group[1:]:
             rec["common_names"].pop(loc)
             dropped += 1
@@ -1945,8 +1967,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
       scientific_name, common_name, taxon_group, common_names,
       descriptions, description_source, wikipedia_urls,
             image, image_author, image_license, image_source,
-      inat_id, ebird_code, gbif_id, ncbi_id, avibase_id, birdlife_id,
-      observations_count
+      inat_id, ebird_code, gbif_id, ncbi_id, avibase_id, birdlife_id
     """
     records = []
     desc_sources: dict[str, int] = Counter()
@@ -2193,7 +2214,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "xc_name": tax.get("xc_name", ""),
             "observationorg_id": tax.get("observationorg_id", ""),
             "wikidata_qid": tax.get("wikidata_qid", ""),
-            "observations_count": tax.get("observations_count", 0),
+            "commonness": None,  # set once the final species set is known
+            # iNat observation count: build-internal (quality score and
+            # tie-breaks), not published.
+            "_observations": tax.get("observations_count", 0),
         }
         for field, pattern in ID_FORMATS.items():
             if record.get(field) not in (None, "") and not pattern.fullmatch(str(record[field])):
@@ -2214,8 +2238,11 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     # Assign BirdNET species IDs (persistent; ranges per record kind)
     _assign_bn_ids(records, reassign_ids)
 
-    # Sort by BirdNET ID
+    # Sort by BirdNET ID; drop build-internal fields
     records.sort(key=lambda r: r.get("birdnet_id") or "")
+    _assign_commonness(records)
+    for rec in records:
+        rec.pop("_observations", None)
 
     # Print stats
     groups = Counter(r["taxon_group"] for r in records)
@@ -2273,7 +2300,7 @@ def records_to_csv(records: list[dict], locales: list[str] | None = None) -> str
         "inat_id", "ebird_code", "gbif_id", "ncbi_id",
         "avibase_id", "birdlife_id", "ml_taxon_code", "xc_name",
         "observationorg_id", "wikidata_qid",
-        "observations_count",
+        "commonness",
         "description_source",
         "metadata_quality_score", "metadata_quality_flags",
         "image_url",
