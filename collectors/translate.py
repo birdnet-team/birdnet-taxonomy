@@ -245,7 +245,8 @@ def fallback_english_descriptions(
         "- One concise paragraph, no markdown, no citations\n"
         "- Preserve scientific uncertainty; do not add unsourced facts\n"
         "- Call the species by the English name given, else by its scientific name\n\n"
-        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
+        "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, keyed by "
+        "the scientific name exactly as given:\n"
         '{"Scientific name": {"en": "English fallback text..."}, ...}'
     )
     entries = []
@@ -264,15 +265,16 @@ def fallback_english_descriptions(
         return {}
 
     parsed = parse_json_response(result, "fallback")
-    # The model sometimes keys an answer by the English name; map it back.
+    # The model sometimes keys an answer by the English name, or gives the
+    # text directly instead of {"en": text}; map both back.
     by_key = {sci: sci for sci, _ in items}
     by_key.update({(names or {}).get(sci, {}).get("en", "").lower(): sci for sci, _ in items})
     out: dict[str, dict[str, str]] = {}
     for key, locales in parsed.items():
         sci = by_key.get(key) or by_key.get(str(key).lower())
-        if not sci or not isinstance(locales, dict):
+        if not sci:
             continue
-        text = locales.get("en")
+        text = locales.get("en") if isinstance(locales, dict) else locales
         if isinstance(text, str) and text.strip():
             out[sci] = {"en": text.strip()}
     return out

@@ -42,11 +42,13 @@ from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
     RateLimiter, is_full_species_name, load_json, save_json,
-    clean_aliases,
+    clean_aliases, same_epithet_stem,
 )
 from utils.description_quality import (
     contains_species_identity,
+    describes_species,
     is_disambiguation_text,
+    names_other_species,
     select_description_text,
     word_count,
 )
@@ -55,6 +57,7 @@ INAT_DATA = RAW_DIR / "inat_data.json"
 OUTPUT_FILE = RAW_DIR / "wikipedia_data.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 WIKIDATA_FILE = RAW_DIR / "wikidata_data.json"
+TRANSLATE_FILE = RAW_DIR / "translate_data.json"
 
 EN_API = "https://en.wikipedia.org/w/api.php"
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
@@ -188,29 +191,78 @@ def _sitelink_only_species(existing: dict, taxonomy: dict, wikidata: dict,
     return items
 
 
-def _name_title_species(species: dict[str, str], existing: dict,
-                        taxonomy: dict) -> dict[str, str]:
-    """English articles for species no source links (typically new AviList
-    splits), looked up under the species' English or scientific name.
+_LEAD_BINOMIAL_RE = re.compile(r"\(([A-Z][a-z]+ [a-z][a-z-]+)[,)]")
 
-    A page counts only if its title, after redirects, is one of those names
-    (a split's name often redirects to the parent species' article) and its
-    intro names the species. Returns scientific name -> article URL.
+
+def _usable_english(rec: dict, sci: str, names: list[str], other_species: set[str]) -> bool:
+    """The build's test for a stored English article: it is about this species."""
+    text = rec.get("extract") or (rec.get("extracts") or {}).get("en", "")
+    return bool(text) and not is_disambiguation_text(text) and describes_species(
+        text, rec.get("title", ""), names, other_species=other_species,
+    ) and not names_other_species(text, names, other_species)
+
+
+def _name_title_species(species: dict[str, str], existing: dict,
+                        taxonomy: dict, wikidata: dict) -> dict[str, str]:
+    """English articles for species without a usable one, looked up by name.
+
+    Covers species no source links (typically new AviList splits) and species
+    whose linked article is about another taxon (iNat links a split's parent
+    or the genus). Tried titles: the Wikidata English sitelink, the scientific
+    name, older names with the same epithet (genus transfers, e.g. Litoria
+    caerulea for Pelodryas caerulea), and the English name.
+
+    A page counts only if its title or the binomial its intro opens with is
+    the species, or the same epithet in another genus that is not another
+    species here (a split's name often redirects to the parent's article,
+    which opens with the parent's name); it must pass the build's identity
+    checks and not be an article another species already uses. Returns
+    scientific name -> article URL.
     """
+    other_species = set(taxonomy)
+    english_names = {sci: e.get("preferred_common_name", "").lower() for sci, e in taxonomy.items()}
+    used_titles: dict[str, set[str]] = {}
+    for sci, rec in existing.items():
+        url = (rec.get("wikipedia_urls") or {}).get("en", "")
+        if url and not rec.get("error"):
+            used_titles.setdefault(wiki_title_from_url(url).replace("_", " ").lower(), set()).add(sci)
+
     candidates: list[tuple[str, str]] = []
-    accepted_titles: dict[str, set[str]] = {}
+    identity: dict[str, list[str]] = {}
     for sci, entry in taxonomy.items():
-        names = [sci, *entry.get("source_names", [])]
-        if entry.get("record_type") == "sound_class" or any(
-                n in species or existing.get(n) for n in names):
+        if entry.get("record_type") == "sound_class":
             continue
+        names = [sci, *entry.get("source_names", [])]
+        rec = next((existing[n] for n in names if existing.get(n)), None)
+        own = _identity_names(sci, taxonomy)
+        if rec is None:
+            if any(n in species for n in names):
+                continue
+        elif _usable_english(rec, sci, own, other_species):
+            continue
+        elif (rec.get("wikipedia_urls") or {}).get("en") and not (
+                rec.get("extract") or (rec.get("extracts") or {}).get("en")):
+            continue  # extract not fetched yet: Phase 1b backfills it
+        identity[sci] = own
+        transfers = [a for a in entry.get("scientific_name_aliases", [])
+                     if a not in other_species and same_epithet_stem(a.split()[-1], sci.split()[-1])]
+        sitelink = next(((wikidata.get(n) or {}).get("wikipedia_sitelinks", {}).get("en")
+                         for n in names if (wikidata.get(n) or {}).get("wikipedia_sitelinks", {}).get("en")), "")
         english = entry.get("preferred_common_name", "")
         if english == sci:
             english = ""
-        accepted_titles[sci] = {sci.lower(), english.lower()} - {""}
-        for title in dict.fromkeys([english, english[:1] + english[1:].lower(), sci]):
+        for title in dict.fromkeys([sitelink, sci, *transfers, english,
+                                    english[:1] + english[1:].lower()]):
             if title:
                 candidates.append((sci, title))
+
+    def is_ours(binomial: str, sci: str) -> bool:
+        # Same epithet only, even for aliases: an alias with another epithet
+        # is usually the parent of a split (Siren intermedia for S. nettingi).
+        return ((binomial == sci or binomial not in other_species)
+                and is_full_species_name(binomial)
+                and same_epithet_stem(binomial.split()[-1], sci.split()[-1]))
+
     found: dict[str, str] = {}
     for batch in _chunks(candidates, 20):  # intro extracts: up to 20 pages per request
         if is_shutting_down():
@@ -223,11 +275,29 @@ def _name_title_species(species: dict[str, str], existing: dict,
             if sci in found or not page or _is_disambiguation_page(page):
                 continue
             resolved = page.get("title", "")
-            if (resolved.lower() in accepted_titles[sci]
-                    and contains_species_identity(page.get("extract", ""),
-                                                  _identity_names(sci, taxonomy))):
+            text = page.get("extract", "")
+            if used_titles.get(resolved.lower(), set()) - {sci}:
+                continue
+            names = identity[sci]
+            lead = _LEAD_BINOMIAL_RE.search(text[:300])
+            titled = (resolved.lower() == english_names[sci]
+                      and contains_species_identity(text, names))
+            if not (titled or is_ours(resolved, sci) or (lead and is_ours(lead.group(1), sci))):
+                continue
+            if (describes_species(text, resolved, names, other_species=other_species)
+                    and not names_other_species(text, names, other_species)):
                 found[sci] = "https://en.wikipedia.org/wiki/" + quote(resolved.replace(" ", "_"))
     return found
+
+
+def _drop_llm_texts(species_names: list[str]) -> int:
+    """Drop LLM texts (shortenings, translations, English fallbacks) made from
+    articles that were replaced; collectors.translate redoes them."""
+    data = load_json(TRANSLATE_FILE)
+    dropped = [s for s in species_names if data.pop(s, None) is not None]
+    if dropped:
+        save_json(data, TRANSLATE_FILE)
+    return len(dropped)
 
 
 def _fetch_sitelink_extracts(items: list[tuple[str, dict[str, str]]], existing: dict,
@@ -363,12 +433,16 @@ def _batch_query(api_url: str, titles: list[str], props: str,
             if pid is None or page.get("missing"):
                 continue
             if pid in pages_by_id:
-                # Merge list-type properties from continuation
-                for key in ("langlinks",):
-                    old_list = pages_by_id[pid].get(key, [])
-                    new_list = page.get(key, [])
-                    if new_list:
-                        pages_by_id[pid][key] = old_list + new_list
+                # Merge list-type properties from continuation, and take
+                # properties earlier responses lacked (intro extracts come
+                # for 20 pages per response).
+                stored = pages_by_id[pid]
+                for key, value in page.items():
+                    if key == "langlinks":
+                        if value:
+                            stored[key] = stored.get(key, []) + value
+                    elif key not in stored:
+                        stored[key] = value
             else:
                 pages_by_id[pid] = page
 
@@ -1075,10 +1149,22 @@ def main():
     existing = load_json(OUTPUT_FILE)
     print(f"  Already have Wikipedia data for {len(existing)} species")
     taxonomy = load_json(TAXONOMY_FILE)
+    # The stored English article is the accepted one (it may have been
+    # found by name after the iNat-linked article turned out to be wrong).
+    for sci, rec in existing.items():
+        url = (rec.get("wikipedia_urls") or {}).get("en")
+        if url and not rec.get("error") and sci in species:
+            species[sci] = url
+    replaced: list[str] = []
     if not args.dry_run and not args.quality_refetch:
-        by_name = _name_title_species(species, existing, taxonomy)
+        by_name = _name_title_species(species, existing, taxonomy, load_json(WIKIDATA_FILE))
+        # A record of a wrongly linked article is replaced by a fresh fetch.
+        replaced = [sci for sci in by_name if sci in existing]
+        for sci in replaced:
+            del existing[sci]
         species.update(by_name)
-        print(f"  Found {len(by_name)} more English articles by species name")
+        print(f"  Found {len(by_name)} more English articles by species name "
+              f"({len(replaced)} replace an article about another taxon)")
 
     quality_work = []
     if args.quality_refetch:
@@ -1240,6 +1326,9 @@ def main():
         _assemble_records(work, english_data, {}, {}, existing)
         save_json(existing, OUTPUT_FILE)
         print(f"  Saved {found} records after Phase 1")
+        if replaced:
+            print(f"  Dropped LLM texts of {_drop_llm_texts(replaced)} species whose "
+                  "article was replaced (rerun collectors.translate)")
     else:
         print(f"\nPhase 1: No new species to fetch")
 

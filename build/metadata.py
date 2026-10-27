@@ -2075,6 +2075,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         manual_common_aliases = {}
 
     image_prefix = image_url_prefix()
+    min_english_words = int(load_config().get("descriptions", {}).get("min_english_words", 40))
     wrong_article = 0
     invalid_ids = 0
     avicommons_rejected: list[str] = []
@@ -2186,6 +2187,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             # yields to native Wikipedia text added since.
             native = descriptions.get(loc, "")
             if loc in translated and word_count(native) >= max(25, word_count(text) // 2):
+                continue
+            # A fallback was written for a missing or stub article; a
+            # substantive native text (e.g. an article found later) replaces it.
+            if loc in fallback_locales and word_count(native) >= min_english_words:
                 continue
             text = clean_description_text(text)
             # Guard against malformed locale keys (e.g. an LLM echoing the
