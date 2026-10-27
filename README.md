@@ -613,7 +613,10 @@ The build also computes `metadata_quality_score` and
 `metadata_quality_flags` before BirdNET IDs are assigned. When
 `metadata_quality.enabled` is true, species below `metadata_quality.min_score`
 or matching the configured thin-record rule are dropped and listed in the
-configured report CSV, defaulting to `dev/metadata_quality_report.csv`.
+configured report CSV, defaulting to `dev/metadata_quality_report.csv`. Groups
+under `metadata_quality.keep_groups` (birds: AviList is the authority) are
+scored but never dropped, so a new AviList split stays even before other
+sources cover it.
 
 The JSON output contains full multilingual descriptions and every collected common-name locale. The CSV output is a lighter export and does not include description excerpts; scientific aliases and metadata quality flags are exported as pipe-separated fields. It has one `common_name_<locale>` column per locale listed under `csv_export.locales` in `config.yml`, so the column set stays stable between builds.
 

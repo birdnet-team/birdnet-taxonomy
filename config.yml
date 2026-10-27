@@ -329,6 +329,10 @@ metadata_quality:
   report_path: "dev/metadata_quality_report.csv"
   drop_if_missing_image_and_description: true
   max_external_ids_for_thin_records: 1
+  # Groups never dropped: AviList is the bird authority, so every AviList
+  # species stays even before other sources cover a new split.
+  keep_groups:
+    - Aves
 
 # Release CSV export (dist/species_metadata.csv). The JSON carries every
 # locale; the CSV gets one common_name_<locale> column per locale listed here,

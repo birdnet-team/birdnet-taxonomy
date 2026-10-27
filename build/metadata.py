@@ -1519,6 +1519,7 @@ def _apply_metadata_quality_filter(
         for group, score in (quality_cfg.get("group_min_scores", {}) or {}).items()
     }
     drop_thin = bool(quality_cfg.get("drop_if_missing_image_and_description", False))
+    keep_groups = {str(g) for g in quality_cfg.get("keep_groups", []) or []}
     max_thin_external_ids = int(
         quality_cfg.get("max_external_ids_for_thin_records", 1) or 0
     )
@@ -1550,10 +1551,13 @@ def _apply_metadata_quality_filter(
 
         reasons: list[str] = []
         threshold = group_min_scores.get(str(record.get("taxon_group") or ""), min_score)
-        if threshold and score < threshold:
+        if record.get("taxon_group") in keep_groups:
+            threshold = 0
+        elif threshold and score < threshold:
             reasons.append(f"score_below_{threshold}")
         if (
             drop_thin
+            and record.get("taxon_group") not in keep_groups
             and "missing_image" in flags
             and "missing_english_description" in flags
             and external_id_count <= max_thin_external_ids
