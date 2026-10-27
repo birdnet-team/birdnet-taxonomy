@@ -633,9 +633,17 @@ Image fields in the final metadata:
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 
 **BirdNET species IDs:**
-Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00728`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
+Each record receives a BirdNET ID in the format `BN{5 digits}`, stored in the git-tracked `bn_ids.json` registry. IDs fall into fixed ranges (`birdnet_ids` in `config.yml`):
 
-Downstream consumers should not use `birdnet_id` as a join key across pre-1.0 taxonomy versions; match on `scientific_name`, `scientific_name_aliases`, or an external identifier instead. IDs were last reassigned for the AviList v2026 / taxonomy-cleanup build (retired iNat taxa removed, AviList lumps folded, extinct birds excluded).
+| Range | Records | Example |
+|-------|---------|---------|
+| `BN00000`–`BN19999` | Birds | `BN00482` (Mallard) |
+| `BN20000`–`BN89999` | Other animals (mammals, insects, amphibians, reptiles) | `BN20827` (Coyote) |
+| `BN90000`–`BN99999` | Non-species sound classes (anthropogenic and geophony) | `BN90003` (Human) |
+
+`--reassign-ids` numbers each range alphabetically by scientific name from its start. Normal builds preserve existing IDs and give a new record the next number after the highest ID in its range (IDs of removed records stay reserved), so alphabetical order holds only as of the last reassignment. The build fails if a range is full or a kept ID lies outside its record's range. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change.
+
+Downstream consumers should not use `birdnet_id` as a join key across pre-1.0 taxonomy versions; match on `scientific_name`, `scientific_name_aliases`, or an external identifier instead. IDs were last reassigned for v0.4-Oct2026, which introduced the ranges above (AviList v2026, retired iNat taxa removed, AviList lumps folded, extinct birds excluded).
 
 | Flag | Description |
 |------|-------------|
@@ -685,7 +693,7 @@ uvicorn web.server:app --reload
 **Species lookup** supports multiple identifier types. The `/species/{name}` and `/api/species/{name}` endpoints accept any of:
 - Scientific name (e.g., `Turdus merula`)
 - Common name in any locale (e.g., `Amsel`, `Merle noir`)
-- BirdNET ID (e.g., `BN15765`)
+- BirdNET ID (e.g., `BN10483`)
 - Scientific alias from `scientific_name_aliases`
 - Common-name alias from `common_name_aliases`
 - eBird species code (e.g., `eurblk1`)

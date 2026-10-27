@@ -1495,6 +1495,57 @@ def _load_bn_ids() -> dict[str, int]:
     return {}
 
 
+def _bn_id_ranges() -> dict[str, tuple[int, int]]:
+    """BirdNET ID ranges per record kind from config.yml."""
+    cfg = load_config().get("birdnet_ids", {})
+    return {kind: tuple(cfg[kind]) for kind in ("birds", "non_birds", "sound_classes")}
+
+
+def _bn_id_kind(rec: dict) -> str:
+    if rec.get("record_type") == "sound_class":
+        return "sound_classes"
+    return "birds" if rec.get("taxon_group") == "Aves" else "non_birds"
+
+
+def _assign_bn_ids(records: list[dict], reassign: bool) -> None:
+    """Assign BirdNET IDs within the configured range of each record kind.
+
+    With reassign, every range is renumbered alphabetically by scientific
+    name from its start; otherwise existing IDs stay and new species get the
+    next number after the highest ID in their range. Fails if a range
+    overflows or a kept ID lies outside its record's range.
+    """
+    ranges = _bn_id_ranges()
+    bn_ids = {} if reassign else _load_bn_ids()
+    by_kind: dict[str, list[dict]] = {kind: [] for kind in ranges}
+    for rec in records:
+        by_kind[_bn_id_kind(rec)].append(rec)
+    new_count = 0
+    for kind, recs in by_kind.items():
+        lo, hi = ranges[kind]
+        outside = [r["scientific_name"] for r in recs
+                   if r["scientific_name"] in bn_ids and not lo <= bn_ids[r["scientific_name"]] <= hi]
+        if outside:
+            raise SystemExit(f"BirdNET IDs outside the {kind} range {lo}-{hi} for "
+                             f"{len(outside)} records (e.g. {outside[0]}); rebuild with --reassign-ids")
+        # IDs of removed species stay reserved: count the whole registry.
+        next_id = max((v for v in bn_ids.values() if lo <= v <= hi), default=lo - 1) + 1
+        for rec in sorted(recs, key=lambda r: r["scientific_name"]):
+            if rec["scientific_name"] not in bn_ids:
+                if next_id > hi:
+                    raise SystemExit(f"BirdNET ID range for {kind} ({lo}-{hi}) is full")
+                bn_ids[rec["scientific_name"]] = next_id
+                next_id += 1
+                new_count += 1
+    for rec in records:
+        rec["birdnet_id"] = f"BN{bn_ids[rec['scientific_name']]:05d}"
+    if reassign or new_count:
+        _save_bn_ids(bn_ids)
+    counts = ", ".join(f"{kind}: {len(recs)}" for kind, recs in by_kind.items())
+    verb = "reassigned" if reassign else f"{new_count} new;"
+    print(f"  BirdNET IDs: {verb} {counts}")
+
+
 def _save_bn_ids(bn_ids: dict[str, int]) -> None:
     """Save BirdNET species ID mapping (atomic write)."""
     tmp = BN_IDS_FILE.with_suffix(".tmp")
@@ -2160,31 +2211,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     print(f"  LLM descriptions: {_align_llm_species_names(records)} aligned with the "
           "localized common name")
 
-    # Assign BirdNET species IDs (persistent, append-only)
-    if reassign_ids:
-        # Re-sort and reassign all IDs from scratch (pre-release only)
-        sorted_names = sorted(r["scientific_name"] for r in records)
-        bn_ids = {name: i for i, name in enumerate(sorted_names, start=1)}
-        _save_bn_ids(bn_ids)
-        for rec in records:
-            rec["birdnet_id"] = f"BN{bn_ids[rec['scientific_name']]:05d}"
-        print(f"  BirdNET IDs: reassigned {len(bn_ids)} IDs")
-    else:
-        bn_ids = _load_bn_ids()
-        next_id = max(bn_ids.values(), default=0) + 1
-        new_count = 0
-        for rec in records:
-            sci = rec["scientific_name"]
-            if sci not in bn_ids:
-                bn_ids[sci] = next_id
-                next_id += 1
-                new_count += 1
-            rec["birdnet_id"] = f"BN{bn_ids[sci]:05d}"
-        if new_count:
-            _save_bn_ids(bn_ids)
-            print(f"  BirdNET IDs: {new_count} new (total {len(bn_ids)})")
-        else:
-            print(f"  BirdNET IDs: {len(bn_ids)} (no new)")
+    # Assign BirdNET species IDs (persistent; ranges per record kind)
+    _assign_bn_ids(records, reassign_ids)
 
     # Sort by BirdNET ID
     records.sort(key=lambda r: r.get("birdnet_id") or "")

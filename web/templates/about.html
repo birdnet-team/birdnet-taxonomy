@@ -145,10 +145,13 @@
 
 <p>
     Every species in the database receives a stable BirdNET identifier,
-    formatted as a five-digit number with a "BN" prefix, for example BN00042.
-    These identifiers let downstream systems reference a species without
+    formatted as a five-digit number with a "BN" prefix. Birds use BN00000 to
+    BN19999 (for example BN00482, the Mallard), other animals BN20000 to
+    BN89999, and non-species sound classes such as rain or engines BN90000 to
+    BN99999; within each range, IDs follow the alphabetical order of scientific
+    names. These identifiers let downstream systems reference a species without
     worrying about taxonomic name changes. The mapping is stored persistently
-    and new species receive the next available number. Before the 1.0 release,
+    and new species receive the next available number in their range. Before the 1.0 release,
     identifiers may be reassigned as a documented breaking change when taxonomy
     cleanup requires it; after 1.0 they are meant to remain constant.
 </p>
