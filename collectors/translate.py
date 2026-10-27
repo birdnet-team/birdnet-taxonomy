@@ -32,7 +32,8 @@ from collectors._common import (
     load_json, save_json,
 )
 from utils.description_quality import (
-    is_disambiguation_text, names_other_species, word_count as _word_count,
+    clean_description_text, is_disambiguation_text, names_other_species,
+    word_count as _word_count,
 )
 from utils.llm import call_llm, detect_provider, parse_json_response, PROVIDERS
 
@@ -513,6 +514,13 @@ def main() -> None:
     max_source_chars = max(500, args.max_source_chars or max_source_chars)
 
     wiki = load_json(WIKI_DATA)
+    # Work on the text the build publishes (no reference lists, subspecies
+    # lists, or markup), so stub checks and sources match the release.
+    for rec in wiki.values():
+        if rec.get("extract"):
+            rec["extract"] = clean_description_text(rec["extract"])
+        rec["extracts"] = {loc: clean_description_text(t)
+                           for loc, t in rec.get("extracts", {}).items() if t}
     if not wiki:
         raise SystemExit("ERROR: wikipedia_data.json not found. Run collectors/wikipedia.py first.")
 

@@ -489,7 +489,9 @@ Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia
 - **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for the configured target locales — a native Wikipedia stub under 25 words counts as missing when the English text has at least 40 words. Sends the English text for translation into all missing locales at once.
 - **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English descriptions only from traceable Wikipedia extracts: for species without English text, from their non-English extracts; for English stubs (under `descriptions.min_english_words`) whose non-English article is at least twice as long, from the stub plus those extracts. Fallback locales are marked as `llm_fallback` in build output.
 
-Translations record a hash of their English source, so `--retranslate-stale` can redo them when the English text changes; the build prefers native Wikipedia text added later over an older machine translation for the same locale. When the provider keeps answering HTTP 429 after retries (quota exhausted), the run stops sending requests and saves; rerun later to continue.
+All phases work on Wikipedia text cleaned the way the build cleans it (no
+reference lists, subspecies lists, or markup), so stub checks and sources match
+the release. Translations record a hash of their English source, so `--retranslate-stale` can redo them when the English text changes; the build prefers native Wikipedia text added later over an older machine translation for the same locale. When the provider keeps answering HTTP 429 after retries (quota exhausted), the run stops sending requests and saves; rerun later to continue.
 
 LLM output is stored in `translate_data.json` and overlaid on Wikipedia extracts during the build step. The LLM only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
 
