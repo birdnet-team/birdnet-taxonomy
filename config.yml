@@ -10,7 +10,7 @@ taxonomy:
 # range alphabetically by scientific name; normal builds append new species
 # after the highest ID in their range.
 birdnet_ids:
-  birds: [0, 19999]
+  birds: [1, 19999]
   non_birds: [20000, 89999]
   sound_classes: [90000, 99999]
 

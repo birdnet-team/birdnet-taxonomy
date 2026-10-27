@@ -65,7 +65,7 @@ description gaps via LLM (Gemini/OpenAI/Anthropic); 10 generates images; 11 merg
 
 - Each species has a **BirdNET ID** in the form `BN{5 digits}`, stored in the
   git-tracked `bn_ids.json` registry. IDs fall into ranges set in `config.yml`
-  (`birdnet_ids`): birds `BN00000`–`BN19999`, other animals `BN20000`–`BN89999`,
+  (`birdnet_ids`): birds `BN00001`–`BN19999`, other animals `BN20000`–`BN89999`,
   sound classes `BN90000`–`BN99999`; each range is alphabetical by scientific
   name as of the last reassignment. Before the 1.0 release, BirdNET IDs may be
   reassigned as an intentional breaking change when taxonomy cleanup requires it.

@@ -637,7 +637,7 @@ Each record receives a BirdNET ID in the format `BN{5 digits}`, stored in the gi
 
 | Range | Records | Example |
 |-------|---------|---------|
-| `BN00000`–`BN19999` | Birds | `BN00482` (Mallard) |
+| `BN00001`–`BN19999` | Birds | `BN00483` (Mallard) |
 | `BN20000`–`BN89999` | Other animals (mammals, insects, amphibians, reptiles) | `BN20827` (Coyote) |
 | `BN90000`–`BN99999` | Non-species sound classes (anthropogenic and geophony) | `BN90003` (Human) |
 
@@ -693,7 +693,7 @@ uvicorn web.server:app --reload
 **Species lookup** supports multiple identifier types. The `/species/{name}` and `/api/species/{name}` endpoints accept any of:
 - Scientific name (e.g., `Turdus merula`)
 - Common name in any locale (e.g., `Amsel`, `Merle noir`)
-- BirdNET ID (e.g., `BN10483`)
+- BirdNET ID (e.g., `BN10484`)
 - Scientific alias from `scientific_name_aliases`
 - Common-name alias from `common_name_aliases`
 - eBird species code (e.g., `eurblk1`)
