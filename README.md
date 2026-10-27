@@ -632,7 +632,7 @@ Image fields in the final metadata:
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 
 **BirdNET species IDs:**
-Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00726`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
+Each species receives a BirdNET ID in the format `BN{5 digits}` (e.g. `BN00728`), stored in the git-tracked `bn_ids.json` registry. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change. Normal builds preserve existing IDs and assign new IDs only to newly added species.
 
 Downstream consumers should not use `birdnet_id` as a join key across pre-1.0 taxonomy versions; match on `scientific_name`, `scientific_name_aliases`, or an external identifier instead. IDs were last reassigned for the AviList v2026 / taxonomy-cleanup build (retired iNat taxa removed, AviList lumps folded, extinct birds excluded).
 
@@ -684,7 +684,7 @@ uvicorn web.server:app --reload
 **Species lookup** supports multiple identifier types. The `/species/{name}` and `/api/species/{name}` endpoints accept any of:
 - Scientific name (e.g., `Turdus merula`)
 - Common name in any locale (e.g., `Amsel`, `Merle noir`)
-- BirdNET ID (e.g., `BN10600`)
+- BirdNET ID (e.g., `BN15763`)
 - Scientific alias from `scientific_name_aliases`
 - Common-name alias from `common_name_aliases`
 - eBird species code (e.g., `eurblk1`)
