@@ -1,5 +1,5 @@
 """
-Shared utilities for the species-data pipeline.
+Shared utilities for the BirdNET+ Taxonomy pipeline.
 
 Provides common infrastructure used by all collectors and build steps:
   - Path constants (ROOT, RAW_DIR)
@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw_data"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
 
-USER_AGENT = "BirdNET Species Metadata Crawler (https://github.com/birdnet-team/species-data)"
+USER_AGENT = "BirdNET Species Metadata Crawler (https://github.com/birdnet-team/birdnet-taxonomy)"
 
 
 # ---------------------------------------------------------------------------

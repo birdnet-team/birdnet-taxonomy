@@ -68,7 +68,7 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
         "src": "https://static.inaturalist.org/photos/123/original.jpeg",
         "thumb": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=thumb",
         "medium": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=medium",
-        "source": "inat",
+        "source": "iNaturalist",
         "author": "anonymous",
         "license": "cc-by-sa",
     },
@@ -126,7 +126,7 @@ class SpeciesRecord(BaseModel):
     birdlife_id: Optional[int] = Field(None, examples=[22680186])
     wikidata_qid: Optional[str] = Field(None, description="Wikidata item ID", examples=["Q25348"])
     commonness: Optional[float] = Field(
-        None, description="Percentile (0-100) of iNaturalist observations within the taxon group",
+        None, description="How often the species is observed on iNaturalist, as a percentile (0-100) within its taxon group; not abundance",
         examples=[100.0])
 
     @field_validator("birdlife_id", "gbif_id", "ncbi_id", "inat_id",
@@ -143,7 +143,7 @@ class SpeciesRecord(BaseModel):
             "src": "https://static.inaturalist.org/photos/123/original.jpeg",
             "thumb": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=thumb",
             "medium": "https://birdnet.cornell.edu/taxonomy/api/image/Anas%20platyrhynchos?size=medium",
-            "source": "inat",
+            "source": "iNaturalist",
             "author": "anonymous",
             "license": "cc-by-sa",
         }],
@@ -174,7 +174,7 @@ class SpeciesRecord(BaseModel):
 class PaginatedSpecies(BaseModel):
     """Paginated list of species records."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
-    total: int = Field(..., examples=[13361])
+    total: int = Field(..., examples=[16536])
     page: int = Field(..., examples=[1])
     per_page: int = Field(..., examples=[50])
     results: list[dict[str, Any]] = Field(...)
@@ -183,7 +183,7 @@ class PaginatedSpecies(BaseModel):
         "json_schema_extra": {
             "examples": [{
                 "taxonomy_version": _taxonomy_version,
-                "total": 13361,
+                "total": 16536,
                 "page": 1,
                 "per_page": 2,
                 "results": [_SPECIES_LIST_EXAMPLE],
@@ -213,15 +213,15 @@ class SearchResponse(PaginatedSpecies):
 class StatsResponse(BaseModel):
     """Dataset statistics."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
-    total_species: int = Field(..., examples=[13361])
-    groups: dict[str, int] = Field(..., examples=[{"Aves": 11157, "Mammalia": 1087, "Insecta": 566, "Amphibia": 540, "Reptilia": 11}])
+    total_species: int = Field(..., examples=[16536])
+    groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2195, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 6, "Geophony": 3}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
 
 
 class GroupCount(BaseModel):
     """Taxon group with species count."""
     name: str = Field(..., examples=["Aves"])
-    count: int = Field(..., examples=[11157])
+    count: int = Field(..., examples=[11022])
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -250,7 +250,7 @@ _root_path = load_root_path()
 _host_name = load_host_name()
 _site_title = "BirdNET+ Taxonomy"
 
-USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/species-data)"
+USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/birdnet-taxonomy)"
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -447,7 +447,7 @@ async def lifespan(application: FastAPI):
 
 
 app = FastAPI(
-    title=f"BirdNET Species Metadata API {_taxonomy_version}".strip(),
+    title=f"BirdNET+ Taxonomy API {_taxonomy_version}".strip(),
     description="Browse and query species metadata for BirdNET models.",
     version="1.0.0",
     lifespan=lifespan,
@@ -970,7 +970,7 @@ async def api_search(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (wikipedia, ebird)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, ebird, llm, llm_fallback)"),
     min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
     max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
     sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),
@@ -1044,7 +1044,7 @@ async def api_species_list(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (wikipedia, ebird)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, ebird, llm, llm_fallback)"),
     min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
     max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
     sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),

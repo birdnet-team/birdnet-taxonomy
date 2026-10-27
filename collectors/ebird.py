@@ -5,7 +5,7 @@ Fetch species descriptions, images, and common names from eBird.
 Phase 1 (scraper): Scrapes og:description and og:image meta tags from eBird
   species pages. Only applies to bird species that have an eBird species code.
 
-Phase 2 (names): Downloads the eBird taxonomy CSV for 62 locales to collect
+Phase 2 (names): Downloads the eBird taxonomy CSV for 63 locales to collect
   common names in all available languages. Outputs ebird_names.json.
 
 Output:

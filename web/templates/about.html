@@ -49,7 +49,9 @@
 
 <p>
     The database covers birds along with other animal groups that produce
-    identifiable sounds: mammals, insects, amphibians, and reptiles.
+    identifiable sounds: mammals, insects, amphibians, and reptiles. A few
+    non-species sound classes, such as rain, thunder, engines, or human voices,
+    are included as well.
 </p>
 
 <p>
@@ -68,9 +70,11 @@
 <p>
     For all other groups, we include species that have at least one sound
     recording documented on <a href="https://www.inaturalist.org">iNaturalist</a>.
-    Some groups, like insects and amphibians, require a slightly higher minimum
-    to filter out very sparse or questionable entries. Species flagged as
-    extinct on iNaturalist are excluded from all groups.
+    Bats are an exception: they also qualify with at least 100 observations of
+    any kind, since their calls are rarely recorded. Species with too little
+    metadata (no image, no description, and hardly any external identifiers)
+    are left out. Species flagged as extinct on iNaturalist are excluded from
+    all groups.
 </p>
 
 <h2>Where do the data come from?</h2>
@@ -131,7 +135,7 @@
 <h2>How do names and descriptions work?</h2>
 
 <p>
-    Common names come from three sources that complement each other. For
+    Common names come from four sources that complement each other. For
     birds, the primary English name is taken from
     <a href="https://avilist.org">AviList</a>, our taxonomic authority,
     ensuring consistency with the accepted species list. eBird provides
@@ -161,10 +165,11 @@
     formatted as a five-digit number with a "BN" prefix. Birds use BN00001 to
     BN19999 (for example BN00483, the Mallard), other animals BN20000 to
     BN89999, and non-species sound classes such as rain or engines BN90000 to
-    BN99999; within each range, IDs follow the alphabetical order of scientific
-    names. These identifiers let downstream systems reference a species without
-    worrying about taxonomic name changes. The mapping is stored persistently
-    and new species receive the next available number in their range. Before the 1.0 release,
+    BN99999. Within each range, IDs were assigned in alphabetical order of
+    scientific names at the last reassignment; species added later receive the
+    next available number in their range. These identifiers let downstream
+    systems reference a species without worrying about taxonomic name changes,
+    and the mapping is stored persistently. Before the 1.0 release,
     identifiers may be reassigned as a documented breaking change when taxonomy
     cleanup requires it; after 1.0 they are meant to remain constant.
 </p>
@@ -186,7 +191,7 @@
     programmatic access is provided through the
     <a href="{{ base }}/docs" target="_blank" rel="noopener noreferrer">REST API</a>.
     Source code and documentation live on
-    <a href="https://github.com/birdnet-team/species-data">GitHub</a>.
+    <a href="https://github.com/birdnet-team/birdnet-taxonomy">GitHub</a>.
 </p>
 
 </div>

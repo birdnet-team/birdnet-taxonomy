@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 
 from tqdm import tqdm
 
-from config import load_config
+from config import load_config, load_env_value
 from collectors._common import RAW_DIR, USER_AGENT, RateLimiter, load_json, save_json
 from utils.description_quality import word_count
 
@@ -425,7 +425,7 @@ def main() -> None:
     batch_size = max(1, args.batch_size or default_batch_size)
     batch_max_chars = max(1, args.batch_max_chars or default_batch_max_chars)
     min_source_words = args.min_source_words or default_min_source_words
-    api_key = os.environ.get(args.api_key_env, "").strip() if args.api_key_env else ""
+    api_key = load_env_value(args.api_key_env) if args.api_key_env else ""
     email = (args.email or "").strip()
 
     wiki = load_json(args.input)

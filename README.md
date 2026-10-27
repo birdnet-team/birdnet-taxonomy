@@ -37,8 +37,8 @@ Download the most recent version here: https://birdnet.cornell.edu/taxonomy/down
 - [Step 8 - observation.org](#step-8--observationorg)
 - [Step 9 - Sound Classes](#step-9--sound-classes)
 - [Step 10 - LLM Translation](#step-10--llm-translation)
-- [Step 11 - Images](#step-11--images)
-- [Step 12 - Build](#step-12--build)
+- [Step 11 - Build](#step-11--build)
+- [Step 12 - Images](#step-12--images)
 - [Web Server](#web-server)
 - [Data Sources](#data-sources)
 - [License](#license)
@@ -142,7 +142,7 @@ utils/
 web/
     server.py              # FastAPI app serving HTML, REST API, and image endpoints
     static/                # Static web assets
-    templates/             # Jinja2 templates for home and species pages
+    templates/             # Jinja2 templates (home, species, about, download)
 ```
 
 ## Taxon Groups
@@ -271,6 +271,8 @@ Commons files of a skull, skeleton, or postage stamp, or whose file name names
 another species of the taxonomy, are skipped; otherwise the next image source
 is tried.
 
+### Sound classes
+
 Configured non-species sound classes live under `sound_classes` in
 `config.yml`. These records use their English display name as
 `scientific_name`, carry `record_type: sound_class`, and are grouped separately
@@ -292,10 +294,10 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 8. observation.org | `python -m collectors.observationorg` | `raw_data/observationorg_data.json` |
 | 9. Sound Classes | `python -m collectors.sound_classes` | `raw_data/sound_classes.json` |
 | 10. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
-| 11. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
-| 12. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}` |
+| 11. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}`, `raw_data/taxonomy.json` |
+| 12. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 10 is optional LLM-based translation and description shortening, disabled by default. Step 11 downloads images. Step 12 merges everything into the final output — no API calls, purely offline.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 10 is optional LLM-based translation and description shortening (enabled through `llm.enabled` in `config.yml`). Step 11 merges everything into the final output — no API calls, purely offline — and also writes `raw_data/taxonomy.json`, which later collector runs use as their species list. Step 12 downloads and crops images for the built species list.
 
 ### Step 1 — AviList
 
@@ -340,7 +342,7 @@ Then runs an **observation photo fallback** phase: for any species whose default
 Collects eBird species data in two phases:
 
 - **Phase 1 — Scraper:** Scrapes eBird species pages for English descriptions (`og:description`) and Macaulay Library images (`og:image`). Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps). Only for bird species with an eBird code; codes come from the built `raw_data/taxonomy.json` when present (validated against eBird), and each code is scraped once.
-- **Phase 2 — Common names:** Downloads the eBird taxonomy CSV for 62 locales to collect common names in all available languages, and saves `raw_data/ebird_taxonomy.json` (eBird code → scientific name). Downloads are cached per eBird taxonomy version, so a new eBird release is fetched on the next run.
+- **Phase 2 — Common names:** Downloads the eBird taxonomy CSV for 63 locales to collect common names in all available languages, and saves `raw_data/ebird_taxonomy.json` (eBird code → scientific name). Downloads are cached per eBird taxonomy version, so a new eBird release is fetched on the next run.
 
 The build only assigns eBird codes that exist in `ebird_taxonomy.json`. AviList can carry codes eBird has not published yet, and it leaves the code empty where its species concept has no 1:1 eBird match; the build then falls back to eBird's own scientific name (e.g. `Tyto furcata` → `brnowl`) and finally Wikidata, never giving one code to two species.
 
@@ -376,7 +378,7 @@ Fetches species identifiers, common name labels, and images from Wikidata and Wi
 
 ### Step 5 — Wikipedia
 
-Fetches multilingual Wikipedia data in four phases:
+Fetches multilingual Wikipedia data in these phases:
 
 - **Phase 1 — English Wikipedia:** Batch-fetches extracts, langlinks, page images, and Wikidata descriptions for each species' Wikipedia article — the article iNat links, or for species iNat links none, the English article from Wikidata sitelinks, else an article found under the species' English or scientific name (typically new AviList splits and recent genus transfers: the title after redirects must be one of those names, since a split's name often redirects to the parent species' article, and the intro must name the species). Up to 50 titles per request. Includes a search fallback for titles not found in batch results.
 - **Non-English-only articles:** Species without any English article but with articles in other configured locales (Wikidata sitelinks) get those intro extracts directly (identity-checked against the scientific name; disambiguation pages skipped).
@@ -400,12 +402,14 @@ python -m utils.translate --locales de,es,fr,cs,it,pt --limit 100
 
 The utility is incremental and only fills blank locale excerpts when English
 Wikipedia text exists. It stores per-locale provenance in `extract_sources`,
-for example `Source: Wikipedia, translated by LibreTranslate`, which the build
+for example `Source: Wikipedia, translated by MyMemory`, which the build
 carries through to `description_sources`. Service endpoint, rate limit, and
 default target locales live under `translation` in `config.yml`. By default it
-only fills German, Spanish, French, Czech (`cs`), Italian, and Portuguese. If
-the selected service needs a key, set the configured `LIBRETRANSLATE_API_KEY`
-environment variable.
+uses MyMemory (`translation.email` / `--email` doubles the free daily quota)
+and only fills German, Spanish, French, Czech (`cs`), Italian, and Portuguese.
+For LibreTranslate, use `--provider libretranslate` and, if the instance needs
+a key, name its variable in `translation.api_key_env` (e.g.
+`LIBRETRANSLATE_API_KEY`) and set it in `.env`.
 
 **Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, ar, ja, ko, tr, sw
 
@@ -422,7 +426,7 @@ environment variable.
 
 ### Step 6 — Macaulay Library
 
-Discovers Macaulay Library taxon codes for all species. Birds use their eBird species code (e.g. `eurblk1`); non-birds get a `t-`prefixed numeric ID (e.g. `t-11032766`) resolved via the ML taxonomy API.
+Discovers Macaulay Library taxon codes for all species. Birds use their eBird species code (e.g. `eurbla`); non-birds get a `t-`prefixed numeric ID (e.g. `t-11032766`) resolved via the ML taxonomy API.
 
 Resolution cascade:
 1. **eBird code** — reuses existing eBird species code for birds (instant, no API call). The build always sets a bird's ML code to its validated eBird code, since cached ML codes can predate a split
@@ -511,12 +515,12 @@ the release. Prompts list each species' localized common names from
 `taxonomy.json`; the model must use them, or the scientific name where a
 language has none, instead of inventing a vernacular name. Translations record a hash of their English source, so `--retranslate-stale` can redo them when the English text changes; the build prefers native Wikipedia text added later over an older machine translation for the same locale. When the provider keeps answering HTTP 429 after retries (quota exhausted), the run stops sending requests and saves; rerun later to continue.
 
-LLM output is stored in `translate_data.json` and overlaid on Wikipedia extracts during the build step. The LLM only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
+LLM output is stored in `translate_data.json` and overlaid on Wikipedia extracts during the build step: shortened extracts replace the long originals, and translations fill missing locales or replace native stubs. A translation yields to native Wikipedia text of at least max(25, half the translation's) words, e.g. an article added after the translation was made.
 
 **Provider selection:** the provider is auto-detected from whichever key is present in `.env`, with priority `GEMINI_API_KEY` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY`. Add the relevant key(s) to `.env`:
 
 ```
-GEMINI_API_KEY=...        # gemini-2.0-flash (default for Gemini)
+GEMINI_API_KEY=...        # gemini-3.1-flash-lite (default for Gemini)
 OPENAI_API_KEY=...        # gpt-4o-mini (default for OpenAI)
 ANTHROPIC_API_KEY=...     # claude-haiku-4-5-20251001 (default for Anthropic)
 ```
@@ -528,9 +532,9 @@ python -m collectors.translate --provider gemini
 python -m collectors.translate --provider openai --model gpt-4o
 ```
 
-**Target locales:** en, de, fr, es, pt, it, nl, zh, ru, ar (subset of Wikipedia locales, configurable under `llm.locales` in `config.yml`)
+**Target locales:** de, fr, it, es, cs, pt, ru, pl, nl (configurable under `llm.locales` in `config.yml`; English fallbacks are written separately).
 
-This step is disabled by default (`llm.enabled: false`). Enable it in `config.yml` to include LLM descriptions in the build output.
+LLM descriptions are merged into the build while `llm.enabled` is true in `config.yml` (as in the current configuration and the v0.4 release); set it to `false` to build from Wikipedia and eBird texts only.
 
 | Flag | Description |
 |------|-------------|
@@ -550,37 +554,7 @@ This step is disabled by default (`llm.enabled: false`). Enable it in `config.ym
 | `--fallback-only` | Only generate English fallbacks |
 | `--dry-run` | Preview without API calls |
 
-### Step 11 — Images
-
-Batch-downloads species images as WebP files with content-aware smart cropping. Each species gets two sizes stored in subdirectories:
-
-| Size | Dimensions | Quality | Path |
-|------|-----------|---------|------|
-| thumb | 150×100 | 40 | `images/thumb/` |
-| medium | 480×320 | 60 | `images/medium/` |
-
-**Filename format:** `<scientific name>_<common name>_<author>.webp`
-
-**Cache state:** each generated image has a sidecar JSON file in `.state/` storing the effective source URL and optional manual crop anchor. This keeps filenames stable while still forcing regeneration when an override changes.
-
-**Smart cropping** uses YOLOv8-nano (ONNX) for animal detection. The model prefers COCO animal classes (bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe) and centers the crop on the detected subject. For tall subjects (e.g. a woodpecker on a trunk), the crop prefers the upper portion to keep the head visible. Falls back to center-crop if no animal is detected or if the ONNX runtime is unavailable.
-
-When `image_crop_anchor` is set in `overrides/species_overrides.csv`, smart crop is bypassed and a fixed 3×3 anchor crop is used instead.
-
-**Dummy images:** On startup, generates a grayscale dummy WebP (neutral gray background with centered BirdNET logo) for each size. When a download or conversion fails, the dummy is copied as the species' named file so every species has an image file.
-
-The collector also prunes obsolete cached `.webp` files and stale `.state` metadata left behind by older naming schemes or old fallback files.
-
-| Flag | Description |
-|------|-------------|
-| `--limit N` | Cap species to process (0 = all) |
-| `--workers N` | Parallel download threads (default: from config.yml) |
-| `--quality N` | WebP quality 1–100 (default: from config.yml) |
-| `--dev` | Save to dev/images/ instead of dist/images/ |
-| `--new-only` | Only species with no cached image files yet |
-| `--dry-run` | Preview without downloading |
-
-### Step 12 — Build
+### Step 11 — Build
 
 Merges all pre-collected data into the final metadata file. Runs purely offline — no API calls. Two phases:
 
@@ -588,7 +562,7 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 1. Cross-references iNaturalist, AviList, Wikidata, and configured sound classes to build a canonical entry list (see [Taxonomy Rules](#taxonomy-rules): retired iNat taxa are dropped, birds take their AviList name, lumped/subspecies taxa are folded into aliases)
 2. Resolves eBird codes from AviList, eBird's own scientific names, and Wikidata, validated against `raw_data/ebird_taxonomy.json` and unique per species
 3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife, Wikidata QID), Macaulay Library, Xeno-Canto (validated against other species' names), and observation.org; an identifier claimed by several species stays only with the species whose own name carries it
-4. Collects common names from iNaturalist, eBird (62 locales), and Wikidata labels; names shared between species in a locale stay with the most authoritative source
+4. Collects common names from iNaturalist, eBird (63 locales), and Wikidata labels; names shared between species in a locale stay with the most authoritative source
 5. Raw data collected under an older name (e.g. Wikipedia text keyed by the iNat name of a bird AviList renamed) is found through the species' source names
 6. Selects the best image for each species through a priority chain:
    - **iNaturalist taxon photo** — default photo if CC-licensed
@@ -602,10 +576,11 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 Assembles per-species descriptions from multiple sources with the following priority:
 - **Base layer — Wikipedia:** English extract plus all locale extracts and Wikipedia URLs
 - **Fallback — eBird:** English description only, used when Wikipedia has no English extract
-- **LLM overlay:** Disabled by default. When `llm.enabled: true`, each locale the LLM provides replaces the description for that locale. LLM locales are tracked in the `translate_locales` field
+- **LLM overlay:** While `llm.enabled` is true, each locale the LLM provides replaces the description for that locale, except that a translation yields to substantive native Wikipedia text (see Step 10). LLM locales are tracked in the `translate_locales` field
 
-The effective priority is **LLM > Wikipedia > eBird**, applied per-locale,
-when LLM translation is enabled. Default builds use only Wikipedia and eBird
+The effective priority is therefore **LLM > Wikipedia > eBird**, applied
+per-locale, with native Wikipedia text kept over a translation where it is
+substantive. With `llm.enabled: false` the build uses only Wikipedia and eBird
 descriptions.
 The JSON output also includes `description_sources`, a per-locale source map,
 and `scientific_name_aliases`, a list of clean binomial scientific names that
@@ -619,7 +594,8 @@ canonical species and fails if any alias conflict remains.
 The build also computes `metadata_quality_score` and
 `metadata_quality_flags` before BirdNET IDs are assigned. When
 `metadata_quality.enabled` is true, species below `metadata_quality.min_score`
-or matching the configured thin-record rule are dropped and listed in the
+(or a stricter per-group score under `metadata_quality.group_min_scores`, e.g.
+insects) or matching the configured thin-record rule are dropped and listed in the
 configured report CSV, defaulting to `dev/metadata_quality_report.csv`. Groups
 under `metadata_quality.keep_groups` (birds: AviList is the authority) are
 scored but never dropped, so a new AviList split stays even before other
@@ -637,12 +613,13 @@ observation counts are used only inside the build (quality score, tie-breaks)
 and are not published. The web UI labels it very common (80+), common (60+),
 moderately common (40+), uncommon (20+), or rare (below 20).
 
-The JSON output contains full multilingual descriptions and every collected common-name locale. The CSV output is a lighter export and does not include description excerpts; scientific aliases and metadata quality flags are exported as pipe-separated fields. It has one `common_name_<locale>` column per locale listed under `csv_export.locales` in `config.yml`, so the column set stays stable between builds.
+The JSON output contains full multilingual descriptions and every collected common-name locale. The CSV output is a lighter export and does not include description excerpts; scientific and common-name aliases and metadata quality flags are exported as pipe-separated fields. It has one `common_name_<locale>` column per locale listed under `csv_export.locales` in `config.yml`, so the column set stays stable between builds.
 
 Image fields in the final metadata:
 
 - JSON metadata stores an `image` object with `src`, `thumb`, and `medium`
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
+- The API moves `image_source`, `image_author`, and `image_license` into the `image` object (`source`, `author`, `license`)
 
 **BirdNET species IDs:**
 Each record receives a BirdNET ID in the format `BN{5 digits}`, stored in the git-tracked `bn_ids.json` registry. IDs fall into fixed ranges (`birdnet_ids` in `config.yml`):
@@ -680,21 +657,59 @@ Prefer Wikipedia quality refetches before optional LLM fallback:
 python -m collectors.wikipedia --quality-refetch
 ```
 
-LLM translation is disabled by default and should only be enabled deliberately
-for a release that accepts generated description text.
+LLM text is included only while `llm.enabled` is true; turn it off for a
+release that should contain no generated description text.
 
 The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
 
-### Web Server
+### Step 12 — Images
 
-Browse and search the dataset through a web UI and REST API.
+Batch-downloads species images as WebP files with content-aware smart cropping. Each species gets two sizes stored in subdirectories:
+
+| Size | Dimensions | Quality | Path |
+|------|-----------|---------|------|
+| thumb | 150×100 | 40 | `images/thumb/` |
+| medium | 480×320 | 60 | `images/medium/` |
+
+**Filename format:** `<scientific name>_<common name>_<author>.webp`
+
+**Cache state:** each generated image has a sidecar JSON file in `.state/` storing the effective source URL and optional manual crop anchor. This keeps filenames stable while still forcing regeneration when an override changes.
+
+**Smart cropping** uses YOLOv8-nano (ONNX) for animal detection. The model prefers COCO animal classes (bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe) and centers the crop on the detected subject. For tall subjects (e.g. a woodpecker on a trunk), the crop prefers the upper portion to keep the head visible. Falls back to center-crop if no animal is detected or if the ONNX runtime is unavailable.
+
+When `image_crop_anchor` is set in `overrides/species_overrides.csv`, smart crop is bypassed and a fixed 3×3 anchor crop is used instead.
+
+**Dummy images:** On startup, generates a grayscale dummy WebP (neutral gray background with centered BirdNET logo) for each size. When a download or conversion fails, the dummy is copied as the species' named file so every species has an image file.
+
+The collector also prunes obsolete cached `.webp` files and stale `.state` metadata left behind by older naming schemes or old fallback files.
+
+| Flag | Description |
+|------|-------------|
+| `--limit N` | Cap species to process (0 = all) |
+| `--workers N` | Parallel download threads (default: from config.yml) |
+| `--quality N` | WebP quality 1–100 (default: from config.yml) |
+| `--dev` | Save to dev/images/ instead of dist/images/ |
+| `--new-only` | Only species with no cached image files yet |
+| `--dry-run` | Preview without downloading |
+
+## Web Server
+
+Browse and search the dataset through a web UI and REST API:
+
+```bash
+python -m web.server            # serves dist/species_metadata.json
+python -m web.server --dev      # serves dev/species_metadata.json
+```
 
 | Flag | Description |
 |------|-------------|
 | `--host ADDR` | Bind address (default: 127.0.0.1) |
 | `--port N` | Bind port (default: 8000) |
 | `--dev` | Load metadata from dev/ instead of dist/ (with plain `uvicorn`, set `SPECIES_DATA_DEV=1`) |
+| `--workers N` | Worker processes (default: 1; not combinable with `--reload`) |
 | `--reload` | Auto-reload on code changes |
+
+The server loads the metadata at startup; restart it after a new build.
 
 Or with hot-reload during development:
 
@@ -708,8 +723,10 @@ uvicorn web.server:app --reload
 - BirdNET ID (e.g., `BN10484`)
 - Scientific alias from `scientific_name_aliases`
 - Common-name alias from `common_name_aliases`
-- eBird species code (e.g., `eurblk1`)
-- iNaturalist taxon ID (e.g., `12727`)
+- eBird species code (e.g., `eurbla`)
+- Macaulay Library taxon code (e.g., `eurbla`, or `t-…` for non-birds)
+- Xeno-Canto name (`xc_name`)
+- iNaturalist taxon ID (e.g., `12716`)
 
 HTML species pages redirect to the canonical scientific name URL when accessed via an alias.
 
@@ -719,10 +736,15 @@ HTML species pages redirect to the canonical scientific name URL when accessed v
 |-------|-------------|
 | `/` | Home page — search, browse, filter by taxon group |
 | `/species/{name}` | Species detail page (HTML) |
+| `/about` | About the dataset (HTML) |
+| `/download` | Download page (HTML) |
 | `/api/image/{name}?size=` | Image proxy — `thumb` (150×100), `medium` (480×320, default) |
 | `/api/species` | List species (JSON/CSV) with filtering, sorting, field selection; CSV omits description excerpts |
 | `/api/species/{name}` | Single species detail (JSON) with field selection |
 | `/api/search?q=` | Search species by name with full query options |
+| `/api/suggest?q=` | Autocomplete suggestions (`limit`, `lang`) |
+| `/api/locales` | List locale codes present in the dataset |
+| `/api/download/csv`, `/json`, `/zip` | Download the release files |
 | `/api/fields` | List all available field names |
 | `/api/groups` | List taxon groups with counts |
 | `/api/stats` | Dataset statistics |
@@ -730,7 +752,7 @@ HTML species pages redirect to the canonical scientific name URL when accessed v
 
 #### API Query Parameters
 
-All list/search endpoints (`/api/species`, `/api/search`) support these parameters:
+All list/search endpoints (`/api/species`, `/api/search`) support these parameters (`/api/search` requires `q`; `/api/species` accepts it as an optional search term):
 
 | Parameter | Example | Description |
 |-----------|---------|-------------|
@@ -766,15 +788,16 @@ curl '/api/species?group=Mammalia&per_page=500&format=csv' > mammals.csv
 curl '/api/search?q=eagle&fields=scientific_name,common_name&per_page=20'
 
 # Look up a species by eBird code
-curl '/api/species/eurblk1'
+curl '/api/species/eurbla'
 ```
 
 ## Data Sources
 
 - **[iNaturalist](https://www.inaturalist.org)** — Taxonomy, common names, observation counts (published only as `commonness`), and photos via the public API. Data licensed under various Creative Commons licenses by individual contributors.
-- **[eBird](https://ebird.org)** — Species descriptions, images, and common names (62 locales) from the Cornell Lab of Ornithology. Species codes from the eBird/Clements taxonomy.
+- **[GBIF](https://www.gbif.org)** — Backbone taxonomy: species keys where Wikidata has none, accepted keys for synonym keys, and synonyms used as alias bridges for Macaulay Library, Xeno-Canto, and observation.org lookups.
+- **[eBird](https://ebird.org)** — Species descriptions, images, and common names (63 locales) from the Cornell Lab of Ornithology. Species codes from the eBird/Clements taxonomy.
 - **[Wikidata](https://www.wikidata.org)** — Item IDs, external identifiers (GBIF, NCBI, Avibase, BirdLife), eBird codes, common name labels, and P18 images via SPARQL. Data available under [CC0](https://creativecommons.org/publicdomain/zero/1.0/).
-- **[Wikipedia](https://www.wikipedia.org)** — English summaries, localized article links, and optional public-service translations from English Wikipedia excerpts. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- **[Wikipedia](https://www.wikipedia.org)** — Species descriptions in 20 languages, localized article links, and optional public-service translations from English Wikipedia excerpts. Content available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2026). AviList Core Team, 2026. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2026](https://doi.org/10.2173/avilist.v2026).
 - **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.
 - **[Xeno-Canto](https://xeno-canto.org)** — Scientific name mappings for cross-referencing the world's largest shared bird and wildlife sound collection.

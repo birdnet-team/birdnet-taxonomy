@@ -43,7 +43,7 @@ GBIF_SYNONYMS_URL = "https://api.gbif.org/v1/species/{key}/synonyms"
 
 # observation.org blocks generic bot user agents; use a browser-like one
 _OBS_USER_AGENT = ("Mozilla/5.0 (compatible; BirdNET/1.0; "
-                   "+https://github.com/birdnet-team/species-data)")
+                   "+https://github.com/birdnet-team/birdnet-taxonomy)")
 
 _rate = RateLimiter(10)   # no documented rate limit
 _gbif_rate = RateLimiter(20)

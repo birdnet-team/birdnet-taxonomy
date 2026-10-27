@@ -23,10 +23,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-If you work on Claude translation features, add your API key to `.env`:
+If you work on LLM translation features, add one LLM key to `.env` (the provider
+is auto-detected in the order Gemini → OpenAI → Anthropic); Xeno-Canto lookups
+need `XC_API_KEY`:
 
 ```dotenv
-ANTHROPIC_API_KEY=...
+GEMINI_API_KEY=...      # or OPENAI_API_KEY / ANTHROPIC_API_KEY
+XC_API_KEY=...
 ```
 
 If you run the web app behind a sub-path, also set:
