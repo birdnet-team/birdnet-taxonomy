@@ -192,12 +192,18 @@ def _attributable(author: str, license_name: str) -> bool:
     return bool(author) or license_name == "pd" or license_name.startswith("cc0")
 
 
+# Commons files that show a skull or a postage stamp rather than the animal.
+_NOT_ANIMAL_IMAGE_RE = re.compile(r"\b(?:skull|skeleton|cranium|stamp)\b", re.IGNORECASE)
+
+
 def _usable_wikimedia_image(wd_rec: dict) -> dict | None:
-    """A record's Commons image, unless it is a vector file (drawings, maps)
-    or its license requires attribution and no author is known."""
+    """A record's Commons image, unless it is a vector file (drawings, maps),
+    a skull or stamp, or its license requires attribution and no author is
+    known."""
     img = wd_rec.get("image") or {}
     url = img.get("url", "")
-    if not url or url.lower().endswith(".svg"):
+    filename = unquote(url.rsplit("/", 1)[-1]).replace("_", " ")
+    if not url or url.lower().endswith(".svg") or _NOT_ANIMAL_IMAGE_RE.search(filename):
         return None
     author = _parse_image_author(img.get("attribution", ""), "wikimedia")
     return img if _attributable(author, _normalize_license(img.get("license", ""))) else None
