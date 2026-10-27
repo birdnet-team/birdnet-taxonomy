@@ -446,6 +446,16 @@ macaulay:
 xenocanto:
   rps: 2                 # max requests per second (XC returns 502s under ~5 rps)
 
+# Avicommons (https://avicommons.org): curated CC bird photos keyed by eBird
+# code. Referenced next to each bird's own image, never used as the image.
+avicommons:
+  url: "https://avicommons.org/2025.json"   # full JSON of a yearly release
+  static_url: "https://static.avicommons.org"
+  sizes:                 # pixel widths Avicommons serves: 160, 240, 320, 480, 900
+    thumb: 160
+    medium: 480
+    src: 900
+
 # observation.org settings
 observationorg:
   rps: 10                # max requests per second

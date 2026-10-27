@@ -43,13 +43,14 @@ serves the dataset (HTML UI, REST API, image proxy).
 Collectors depend on earlier output, so order matters:
 
 1. AviList → 2. iNaturalist → 3. eBird → 4. Wikidata → 5. Wikipedia →
-6. Macaulay Library → 7. Xeno-Canto → 8. observation.org → 9. Sound Classes →
-10. LLM Translation (optional) → 11. Build → 12. Images (optional)
+6. Macaulay Library → 7. Xeno-Canto → 8. observation.org → 9. Avicommons →
+10. Sound Classes → 11. LLM Translation (optional) → 12. Build → 13. Images (optional)
 
-Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 collects the
-configured sound classes; 10 optionally fills description gaps via LLM
-(Gemini/OpenAI/Anthropic); 11 merges everything (and writes `raw_data/taxonomy.json`,
-which later collector runs use); 12 generates images for the built species list.
+Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 downloads the
+Avicommons bird photo index; 10 collects the configured sound classes; 11
+optionally fills description gaps via LLM (Gemini/OpenAI/Anthropic); 12 merges
+everything (and writes `raw_data/taxonomy.json`, which later collector runs use);
+13 generates images for the built species list.
 
 ## Taxon groups
 
@@ -96,6 +97,11 @@ which later collector runs use); 12 generates images for the built species list.
   stable while still forcing regeneration when a source URL or crop anchor changes.
 - Smart cropping uses a YOLO ONNX model with center-crop fallback. Override anchors
   take precedence over smart crop.
+- Birds also reference their matching [Avicommons](https://avicommons.org) photo in
+  `avicommons_image` (URLs, author, license). It is matched by `ebird_code` and kept
+  only when Avicommons names the same species (scientific name or alias, or English
+  name). It is a reference, never the species image: do not proxy, crop, or fall
+  back to it.
 
 ## Deployment awareness
 

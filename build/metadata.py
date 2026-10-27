@@ -17,6 +17,7 @@ Input files (all in raw_data/):
   - wikidata_data.json     (from collectors/wikidata.py)
   - wikipedia_data.json    (from collectors/wikipedia.py)
   - translate_data.json    (from collectors/translate.py — optional)
+  - avicommons_data.json   (from collectors/avicommons.py — optional)
   - AviList CSV            (from collectors/avilist.py)
 
 Output:
@@ -68,6 +69,7 @@ TRANSLATE_DATA_FILE = RAW_DIR / "translate_data.json"
 MACAULAY_DATA_FILE = RAW_DIR / "macaulay_data.json"
 XC_DATA_FILE = RAW_DIR / "xc_data.json"
 OBSERVATIONORG_DATA_FILE = RAW_DIR / "observationorg_data.json"
+AVICOMMONS_FILE = RAW_DIR / "avicommons_data.json"
 SOUND_CLASSES_FILE = RAW_DIR / "sound_classes.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
@@ -252,6 +254,40 @@ def load_ebird_images() -> dict[str, dict]:
         # Pages without a photo carry a placeholder URL with no asset ID.
         if code and url and re.search(r"/asset/\d+", url):
             result[code] = {"url": url, "attribution": attr}
+    return result
+
+
+def load_avicommons(cfg: dict) -> dict[str, dict]:
+    """Load Avicommons photos → {ebird_code: {sci, name, src, thumb, medium, author, license}}.
+
+    A photo listed under several codes (e.g. both halves of a split) shows
+    only one of them, so it is dropped. CC0 has a single version; Avicommons
+    labels some "CC0 2.0" etc., which are written as plain "cc0".
+    """
+    photos = load_json(AVICOMMONS_FILE).get("photos", [])
+    av_cfg = cfg.get("avicommons", {})
+    base = av_cfg.get("static_url", "https://static.avicommons.org").rstrip("/")
+    sizes = {"src": 900, "thumb": 160, "medium": 480, **(av_cfg.get("sizes") or {})}
+    key_counts = Counter(p.get("key") for p in photos)
+    result: dict[str, dict] = {}
+    for p in photos:
+        code, key = (p.get("code") or "").strip(), (p.get("key") or "").strip()
+        if not code or not key or key_counts[key] > 1:
+            continue
+        author = re.sub(r"^\(c\)\s*", "", " ".join((p.get("by") or "").split()),
+                        flags=re.IGNORECASE)
+        lic = _normalize_license(p.get("license", ""))
+        if lic.startswith("cc0"):
+            lic = "cc0"
+        if not _attributable(author, lic):
+            continue
+        result[code] = {
+            "sci": (p.get("sciName") or "").strip(),
+            "name": (p.get("name") or "").strip(),
+            **{size: f"{base}/{code}-{key}-{px}.jpg" for size, px in sizes.items()},
+            "author": author,
+            "license": lic,
+        }
     return result
 
 
@@ -1960,13 +1996,14 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    manual_overrides: dict | None = None,
                    manual_aliases: dict[str, list[str]] | None = None,
                    reassign_ids: bool = False,
-                   quality_cfg: dict | None = None) -> list[dict]:
+                   quality_cfg: dict | None = None,
+                   avicommons: dict[str, dict] | None = None) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
     Each record:
       scientific_name, common_name, taxon_group, common_names,
       descriptions, description_source, wikipedia_urls,
-            image, image_author, image_license, image_source,
+            image, image_author, image_license, image_source, avicommons_image,
       inat_id, ebird_code, gbif_id, ncbi_id, avibase_id, birdlife_id
     """
     records = []
@@ -1989,10 +2026,13 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         manual_overrides = {}
     if manual_aliases is None:
         manual_aliases = {}
+    if avicommons is None:
+        avicommons = {}
 
     image_prefix = image_url_prefix()
     wrong_article = 0
     invalid_ids = 0
+    avicommons_rejected: list[str] = []
     canonical_set = set(taxonomy)
     # An English article linked from several species stays with the species
     # it names first (the others are usually splits linking the parent).
@@ -2204,6 +2244,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "image_license": image_license,
             "image_source": image_source,
             "image_crop_anchor": override.get("image_crop_anchor"),
+            "avicommons_image": None,
             "inat_id": tax.get("inat_id"),
             "ebird_code": tax.get("ebird_code", ""),
             "gbif_id": tax.get("gbif_id", ""),
@@ -2223,6 +2264,18 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             if record.get(field) not in (None, "") and not pattern.fullmatch(str(record[field])):
                 record[field] = ""
                 invalid_ids += 1
+        # Avicommons photo for the eBird code, kept only if it names this
+        # species: its scientific name is ours or an alias (Avicommons follows
+        # eBird, which can lag an AviList genus move), or its English name is ours.
+        av = avicommons.get(record["ebird_code"])
+        if av:
+            if av["sci"] in identity_names or av["name"].casefold() in {
+                    common_name.casefold(), common_name_alt.casefold()}:
+                record["avicommons_image"] = {
+                    k: av[k] for k in ("src", "thumb", "medium", "author", "license")
+                }
+            else:
+                avicommons_rejected.append(f"{av['sci']} ({record['ebird_code']}) ≠ {sci_name}")
         records.append(record)
 
     records = _apply_metadata_quality_filter(records, quality_cfg)
@@ -2276,6 +2329,13 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     print(f"\n  Images:")
     for src, cnt in img_sources.most_common():
         print(f"    {src}: {cnt}")
+    if avicommons:
+        n_birds = sum(1 for r in records if r["taxon_group"] == "Aves")
+        n_av = sum(1 for r in records if r.get("avicommons_image"))
+        print(f"    Avicommons references: {n_av}/{n_birds} birds "
+              f"({len(avicommons_rejected)} rejected: names another species)")
+        for line in avicommons_rejected[:5]:
+            print(f"      {line}")
 
     return records
 
@@ -2305,6 +2365,7 @@ def records_to_csv(records: list[dict], locales: list[str] | None = None) -> str
         "metadata_quality_score", "metadata_quality_flags",
         "image_url",
         "image_author", "image_license", "image_source",
+        "avicommons_image_url", "avicommons_image_author", "avicommons_image_license",
     ]
     locale_cols = [f"common_name_{loc}" for loc in top_locales]
     fieldnames = base_cols + locale_cols
@@ -2319,6 +2380,10 @@ def records_to_csv(records: list[dict], locales: list[str] | None = None) -> str
         row["common_name_aliases"] = "|".join(rec.get("common_name_aliases", []))
         row["metadata_quality_flags"] = "|".join(rec.get("metadata_quality_flags", []))
         row["image_url"] = (rec.get("image") or {}).get("medium", "")
+        av = rec.get("avicommons_image") or {}
+        row["avicommons_image_url"] = av.get("medium", "")
+        row["avicommons_image_author"] = av.get("author", "")
+        row["avicommons_image_license"] = av.get("license", "")
         for loc in top_locales:
             row[f"common_name_{loc}"] = rec.get("common_names", {}).get(loc, "")
         writer.writerow(row)
@@ -2399,6 +2464,8 @@ def main():
     translate = load_json(TRANSLATE_DATA_FILE) if llm_enabled else {}
     print(f"  eBird:     {len(ebird):>8} species")
     print(f"  Wikipedia: {len(wiki):>8} species")
+    avicommons = load_avicommons(cfg)
+    print(f"  Avicommons: {len(avicommons):>7} photos")
     if llm_enabled:
         print(f"  LLM:       {len(translate):>8} species")
     else:
@@ -2436,6 +2503,7 @@ def main():
         manual_aliases,
         reassign_ids=args.reassign_ids,
         quality_cfg=cfg.get("metadata_quality", {}),
+        avicommons=avicommons,
     )
 
     print("\nAuditing final metadata...")

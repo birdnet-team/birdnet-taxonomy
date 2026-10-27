@@ -35,10 +35,11 @@ Download the most recent version here: https://birdnet.cornell.edu/taxonomy/down
 - [Step 6 - Macaulay Library](#step-6--macaulay-library)
 - [Step 7 - Xeno-Canto](#step-7--xeno-canto)
 - [Step 8 - observation.org](#step-8--observationorg)
-- [Step 9 - Sound Classes](#step-9--sound-classes)
-- [Step 10 - LLM Translation](#step-10--llm-translation)
-- [Step 11 - Build](#step-11--build)
-- [Step 12 - Images](#step-12--images)
+- [Step 9 - Avicommons](#step-9--avicommons)
+- [Step 10 - Sound Classes](#step-10--sound-classes)
+- [Step 11 - LLM Translation](#step-11--llm-translation)
+- [Step 12 - Build](#step-12--build)
+- [Step 13 - Images](#step-13--images)
 - [Web Server](#web-server)
 - [Data Sources](#data-sources)
 - [License](#license)
@@ -59,7 +60,7 @@ For LLM-based translations, Xeno-Canto lookups, and optional public
 translation-service keys, add API keys to a `.env` file:
 
 ```
-# LLM translation (Step 10) — add whichever you have; Gemini is preferred
+# LLM translation (Step 11) — add whichever you have; Gemini is preferred
 GEMINI_API_KEY=...
 OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
@@ -113,6 +114,7 @@ build/
     metadata.py            # Merge collected sources into final metadata outputs
 collectors/
     _common.py             # Shared collector utilities (cache, JSON I/O, shutdown)
+    avicommons.py          # Avicommons bird photo index (referenced images)
     avilist.py             # Download and normalize AviList taxonomy input
     translate.py           # Optional LLM translation: shorten/translate Wikipedia extracts
     ebird.py               # eBird names and localized common-name collection
@@ -292,12 +294,13 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 6. Macaulay Library | `python -m collectors.macaulay` | `raw_data/macaulay_data.json` |
 | 7. Xeno-Canto | `python -m collectors.xenocanto` | `raw_data/xc_data.json` |
 | 8. observation.org | `python -m collectors.observationorg` | `raw_data/observationorg_data.json` |
-| 9. Sound Classes | `python -m collectors.sound_classes` | `raw_data/sound_classes.json` |
-| 10. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
-| 11. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}`, `raw_data/taxonomy.json` |
-| 12. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
+| 9. Avicommons | `python -m collectors.avicommons` | `raw_data/avicommons_data.json` |
+| 10. Sound Classes | `python -m collectors.sound_classes` | `raw_data/sound_classes.json` |
+| 11. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
+| 12. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}`, `raw_data/taxonomy.json` |
+| 13. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 10 is optional LLM-based translation and description shortening (enabled through `llm.enabled` in `config.yml`). Step 11 merges everything into the final output — no API calls, purely offline — and also writes `raw_data/taxonomy.json`, which later collector runs use as their species list. Step 12 downloads and crops images for the built species list.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with eBird descriptions, common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 downloads the Avicommons bird photo index, referenced next to each bird's own image. Step 10 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 11 is optional LLM-based translation and description shortening (enabled through `llm.enabled` in `config.yml`). Step 12 merges everything into the final output — no API calls, purely offline — and also writes `raw_data/taxonomy.json`, which later collector runs use as their species list. Step 13 downloads and crops images for the built species list.
 
 ### Step 1 — AviList
 
@@ -483,7 +486,25 @@ Resolution cascade:
 | `--recheck-shared` | Re-resolve species whose cached ID is shared with another species (e.g. after a split) |
 | `--dry-run` | Preview without API calls |
 
-### Step 9 — Sound Classes
+### Step 9 — Avicommons
+
+Downloads the full JSON index of [Avicommons](https://avicommons.org), a hand-picked set of cropped, Creative-Commons-licensed bird photos keyed by eBird species code (eBird/Clements taxonomy). Avicommons asks consumers to fetch the file once rather than on every page load, so it is cached in `raw_data/avicommons_data.json` and the build reads the local copy. Set the release file (e.g. `https://avicommons.org/2025.json`), image host, and referenced pixel widths under `avicommons` in `config.yml`; a changed URL is downloaded on the next run.
+
+The build never uses an Avicommons photo as the species image: our own image selection is unchanged, and the matching Avicommons photo is referenced alongside it in `avicommons_image` (see [Step 12](#step-12--build)). Matching:
+
+- by the bird's validated `ebird_code`, so each Avicommons photo goes to at most one species;
+- only if Avicommons names the same species: its scientific name is the species' own name or one of its aliases (Avicommons follows eBird, which can lag an AviList genus move, e.g. *Emberiza schoeniclus* → *Schoeniclus schoeniclus*), or its English name equals the species' `common_name` or `common_name_alt`. Mismatches are reported by the build and dropped;
+- species AviList lumps get no reference from the lumped taxa's photos, since those codes are not the species' own;
+- a photo Avicommons lists under several species codes is dropped, as are photos whose license needs attribution but have no photographer.
+
+Licenses are written in the iNat style used elsewhere (`CC BY-NC 2.0` → `cc-by-nc-2.0`; Avicommons' `CC0 2.0` etc. → `cc0`). Most Avicommons photos are non-commercial (`cc-by-nc*`); check `avicommons_image.license` before reuse.
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Re-download even if the configured release is cached |
+| `--dry-run` | Show what would be downloaded without fetching |
+
+### Step 10 — Sound Classes
 
 Collects configured non-species sound classes from `config.yml`. Each entry uses
 its English common name as the final `scientific_name`, fetches localized labels
@@ -501,7 +522,7 @@ wind. `Human` includes common-name aliases for `human vocal` and
 | `--new-only` | Only process sound classes not already cached |
 | `--dry-run` | Preview without fetching |
 
-### Step 10 — LLM Translation
+### Step 11 — LLM Translation
 
 Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia extracts — no content is generated from scratch:
 
@@ -554,7 +575,7 @@ LLM descriptions are merged into the build while `llm.enabled` is true in `confi
 | `--fallback-only` | Only generate English fallbacks |
 | `--dry-run` | Preview without API calls |
 
-### Step 11 — Build
+### Step 12 — Build
 
 Merges all pre-collected data into the final metadata file. Runs purely offline — no API calls. Two phases:
 
@@ -570,13 +591,15 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
    - **Wikimedia Commons** — Wikidata P18 image if CC/PD/GFDL licensed
    - **iNaturalist observation photo** — CC-licensed photo from research-grade observations (last resort)
 
+   Birds additionally get a reference to their matching Avicommons photo (`avicommons_image`), which never replaces the selected image.
+
    eBird placeholder images (no asset ID) and generic eBird page text are ignored, Wikimedia SVG files (drawings, maps) are skipped, and Wikimedia license names are written in the iNat style (`CC BY-SA 4.0` → `cc-by-sa-4.0`, `Public domain` → `pd`).
 
 **Merge phase:**
 Assembles per-species descriptions from multiple sources with the following priority:
 - **Base layer — Wikipedia:** English extract plus all locale extracts and Wikipedia URLs
 - **Fallback — eBird:** English description only, used when Wikipedia has no English extract
-- **LLM overlay:** While `llm.enabled` is true, each locale the LLM provides replaces the description for that locale, except that a translation yields to substantive native Wikipedia text (see Step 10). LLM locales are tracked in the `translate_locales` field
+- **LLM overlay:** While `llm.enabled` is true, each locale the LLM provides replaces the description for that locale, except that a translation yields to substantive native Wikipedia text (see Step 11). LLM locales are tracked in the `translate_locales` field
 
 The effective priority is therefore **LLM > Wikipedia > eBird**, applied
 per-locale, with native Wikipedia text kept over a translation where it is
@@ -620,6 +643,8 @@ Image fields in the final metadata:
 - JSON metadata stores an `image` object with `src`, `thumb`, and `medium`
 - CSV metadata flattens this to a single `image_url` column containing the local served medium image URL
 - The API moves `image_source`, `image_author`, and `image_license` into the `image` object (`source`, `author`, `license`)
+- Birds with a matching [Avicommons](#step-9--avicommons) photo also carry `avicommons_image` (`null` otherwise): `src` (900 px), `thumb` (160 px), and `medium` (480 px) URLs on `static.avicommons.org`, plus `author` and `license`. It is a reference only: these URLs are not proxied or cropped, and the species `image` is unchanged
+- CSV metadata flattens it to `avicommons_image_url` (the 480 px URL), `avicommons_image_author`, and `avicommons_image_license`
 
 **BirdNET species IDs:**
 Each record receives a BirdNET ID in the format `BN{5 digits}`, stored in the git-tracked `bn_ids.json` registry. IDs fall into fixed ranges (`birdnet_ids` in `config.yml`):
@@ -662,7 +687,7 @@ release that should contain no generated description text.
 
 The `raw_data/`, `dev/`, and `dist/` directories are all gitignored. Zip archives from `dist/` are attached to GitHub releases.
 
-### Step 12 — Images
+### Step 13 — Images
 
 Batch-downloads species images as WebP files with content-aware smart cropping. Each species gets two sizes stored in subdirectories:
 
@@ -801,6 +826,7 @@ curl '/api/species/eurbla'
 - **[AviList](https://www.avilist.org)** — The Global Avian Checklist (v2026). AviList Core Team, 2026. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). doi:[10.2173/avilist.v2026](https://doi.org/10.2173/avilist.v2026).
 - **[Macaulay Library](https://www.macaulaylibrary.org)** — Taxon codes for cross-referencing audio and visual media from the Cornell Lab of Ornithology.
 - **[Xeno-Canto](https://xeno-canto.org)** — Scientific name mappings for cross-referencing the world's largest shared bird and wildlife sound collection.
+- **[Avicommons](https://avicommons.org)** — Hand-picked, cropped bird photos keyed by eBird species code, referenced in `avicommons_image` next to each bird's own image. Compiled by Adam Jackson; each photo carries its own Creative Commons license (mostly non-commercial) and photographer credit.
 - **[observation.org](https://observation.org)** — Species IDs for cross-referencing to one of Europe's largest biodiversity recording platforms. Uses AviList taxonomy for birds.
 - **LLM providers** — Optional AI-powered translation of Wikipedia extracts to missing locales and shortening of excessively long extracts. Supported: [Google Gemini](https://ai.google.dev/) (`GEMINI_API_KEY`), [OpenAI](https://openai.com/) (`OPENAI_API_KEY`), [Anthropic Claude](https://www.anthropic.com/claude) (`ANTHROPIC_API_KEY`). Provider is auto-detected from `.env`.
 

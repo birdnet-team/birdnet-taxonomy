@@ -264,6 +264,9 @@
             {% if s.image_source %}
             <tr><td>Image source</td><td>{{ s.image_source }}</td></tr>
             {% endif %}
+            {% if s.avicommons_image %}
+            <tr><td>Avicommons</td><td><a href="{{ s.avicommons_image.src }}" target="_blank" rel="noopener">Photo</a>{% if s.avicommons_image.author %} by {{ s.avicommons_image.author }}{% endif %}{% if s.avicommons_image.license %} ({{ s.avicommons_image.license }}){% endif %}</td></tr>
+            {% endif %}
         </table>
 
         <button class="json-link" onclick="showJson()">View JSON &rarr;</button>

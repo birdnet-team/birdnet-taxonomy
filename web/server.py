@@ -72,6 +72,13 @@ _SPECIES_EXAMPLE: dict[str, Any] = {
         "author": "anonymous",
         "license": "cc-by-sa",
     },
+    "avicommons_image": {
+        "src": "https://static.avicommons.org/mallar3-442898452-900.jpg",
+        "thumb": "https://static.avicommons.org/mallar3-442898452-160.jpg",
+        "medium": "https://static.avicommons.org/mallar3-442898452-480.jpg",
+        "author": "David H. Gleit",
+        "license": "cc-by-nc-2.5",
+    },
     "description_source": "wikipedia",
     "translate_locales": ["pt"],
     "descriptions": {
@@ -147,6 +154,11 @@ class SpeciesRecord(BaseModel):
             "author": "anonymous",
             "license": "cc-by-sa",
         }],
+    )
+    avicommons_image: Optional[dict[str, str]] = Field(
+        None,
+        description="Matching Avicommons bird photo (by eBird code), referenced alongside the species image; URLs point to static.avicommons.org",
+        examples=[_SPECIES_EXAMPLE["avicommons_image"]],
     )
     description_source: Optional[str] = Field(None, examples=["wikipedia"])
     description_sources: Optional[dict[str, str]] = Field(
