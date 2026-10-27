@@ -203,20 +203,9 @@ def _process_species(rec: dict, sizes: dict[str, ImageSize],
 
     img = download_image(url)
     if img is None:
-        # Use dummy image as fallback for failed downloads
-        ok = 0
-        for size_name in sizes:
-            out_dir = base_dir / size_name
-            dummy = out_dir / "dummy.webp"
-            fname = image_filename(sci, common, "Stefan Kahl")
-            dest = out_dir / fname
-            if image_cache_is_current(dest, url, crop_anchor=crop_anchor):
-                ok += 1
-            elif dummy.exists():
-                import shutil
-                shutil.copy2(dummy, dest)
-                ok += 1
-        return ok, len(sizes) - ok
+        # Failed downloads are retried on the next run; the web server's
+        # image proxy serves the dummy image meanwhile.
+        return 0, len(sizes)
 
     fname = image_filename(sci, common, author)
     ok = 0

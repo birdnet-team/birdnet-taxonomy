@@ -301,18 +301,24 @@ def _name_fields(result: dict) -> dict:
     }
 
 
-def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
-    """Extract relevant fields from an iNat taxa API result."""
-    names = _name_fields(result)
-
-    # Photo URL — use large version
+def _photo_fields(result: dict) -> dict:
+    """Default taxon photo (large version) with attribution and license."""
     photo = result.get("default_photo") or {}
     photo_url = (
         photo.get("url", "")
         or photo.get("medium_url", "")
         or photo.get("square_url", "")
     )
-    photo_url = photo_url_large(photo_url)
+    return {
+        "image_url": photo_url_large(photo_url),
+        "image_attribution": photo.get("attribution", ""),
+        "image_license": photo.get("license_code", ""),
+    }
+
+
+def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
+    """Extract relevant fields from an iNat taxa API result."""
+    names = _name_fields(result)
 
     return {
         "inat_id": result.get("id"),
@@ -321,9 +327,7 @@ def extract_record(result: dict, group_name: str, sound_count: int) -> dict:
         "common_names": names["common_names"],
         "english_names": names["english_names"],
         "wikipedia_url": result.get("wikipedia_url", ""),
-        "image_url": photo_url,
-        "image_attribution": photo.get("attribution", ""),
-        "image_license": photo.get("license_code", ""),
+        **_photo_fields(result),
         "observations_count": result.get("observations_count", 0),
         "sound_observations_count": sound_count,
         "preferred_common_name": names["preferred_common_name"],
@@ -957,8 +961,12 @@ def refresh_taxon_status(existing: dict, delay: float, all_names: bool,
             if result is None:
                 # The ID no longer resolves on iNat: the taxon was deleted.
                 result = {"name": rec.get("inat_name", ""), "is_active": False}
-            elif refresh_names:
-                rec.update(_name_fields(result))
+            else:
+                if refresh_names:
+                    rec.update(_name_fields(result))
+                # Photos get replaced or deleted on iNat; counts grow.
+                rec.update(_photo_fields(result))
+                rec["observations_count"] = result.get("observations_count", 0)
             rec.update(_status_fields(result))
             checked += 1
         if (batch_idx + 1) % 50 == 0 or batch_idx == len(batches) - 1:

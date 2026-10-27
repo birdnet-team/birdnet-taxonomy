@@ -196,6 +196,20 @@ def _attributable(author: str, license_name: str) -> bool:
 _NOT_ANIMAL_IMAGE_RE = re.compile(r"\b(?:skull|skeleton|cranium|stamp)\b", re.IGNORECASE)
 
 
+def _file_names_other_species(url: str, sci: str, own: set[str], species: set[str]) -> bool:
+    """True if a Commons file name names another species of the taxonomy
+    ("Lesser_moorhen_(Paragallinula_angulata).jpg" as P18 of Rallicula
+    mayri). A trinomial ending in the species' epithet ("Pseudacris
+    streckeri illinoensis") is the species itself, an old subspecies name."""
+    filename = unquote(url.rsplit("/", 1)[-1]).replace("_", " ")
+    for m in re.finditer(r"\b([A-Z][a-z]+) ([a-z]{3,})(?: ([a-z]{3,}))?", filename):
+        binomial = f"{m.group(1)} {m.group(2)}"
+        if (binomial in species and binomial not in own
+                and not (m.group(3) and same_epithet_stem(m.group(3), sci.split()[-1]))):
+            return True
+    return False
+
+
 def _usable_wikimedia_image(wd_rec: dict) -> dict | None:
     """A record's Commons image, unless it is a vector file (drawings, maps),
     a skull or stamp, or its license requires attribution and no author is
@@ -1328,12 +1342,15 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
                 img_stats["ebird"] += 1
 
     # 6c: Wikimedia Commons (from wikidata_data.json)
+    all_species = set(taxonomy)
     for sci, entry in taxonomy.items():
         if entry["image_url"]:
             continue
+        own = set(_entry_names(sci, entry)) | set(entry.get("scientific_name_aliases", []))
         wd_img = next(
             (img for n in _entry_names(sci, entry)
-             if (img := _usable_wikimedia_image(wikidata.get(n, {})))),
+             if (img := _usable_wikimedia_image(wikidata.get(n, {})))
+             and not _file_names_other_species(img["url"], sci, own, all_species)),
             None,
         )
         if wd_img:

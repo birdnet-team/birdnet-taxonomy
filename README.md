@@ -267,8 +267,9 @@ names become aliases of the replacement taxon.
 A photo claimed by several species stays with one of them (the species named in
 the file, else the most observed). A photo whose license requires attribution
 (anything but public domain or CC0) is only used with a known author, and
-Commons files of a skull, skeleton, or postage stamp are skipped; otherwise the
-next image source is tried.
+Commons files of a skull, skeleton, or postage stamp, or whose file name names
+another species of the taxonomy, are skipped; otherwise the next image source
+is tried.
 
 Configured non-species sound classes live under `sound_classes` in
 `config.yml`. These records use their English display name as
@@ -310,7 +311,7 @@ Paginates the iNat taxa API to fetch all species for each taxon group. For birds
 
 Reviewed issue-specific additions can be listed in `overrides/priority_species.csv`. These species are fetched after configured groups, preferably by iNaturalist taxon ID, and keep the normal species-only validation rules.
 
-After group fetching, runs a **taxon status** phase: cached records are re-checked against the iNat taxa API (`is_active`, current name, `current_synonymous_taxon_ids`). The cache is incremental, so without this a taxon iNat retired in a swap or merge would linger next to its replacement as a duplicate species. Replacement taxa not yet cached are fetched. Records are checked once (`status_checked` date); `--refresh-status` re-checks all of them.
+After group fetching, runs a **taxon status** phase: cached records are re-checked against the iNat taxa API (`is_active`, current name, `current_synonymous_taxon_ids`). The cache is incremental, so without this a taxon iNat retired in a swap or merge would linger next to its replacement as a duplicate species. Replacement taxa not yet cached are fetched. Records are checked once (`status_checked` date); `--refresh-status` re-checks all of them and also refreshes default photos (iNat photos get replaced, deleted, or relicensed) and observation counts.
 
 Then runs an **observation photo fallback** phase: for any species whose default taxon photo is missing or not CC-licensed, queries the iNat observations API for a CC-licensed photo from a research-grade observation (sorted by community votes). The result is stored in the `obs_photo` field, and unsuccessful lookups are cached in `inat_data.json` so later runs do not repeat the same slow checks.
 
