@@ -212,9 +212,10 @@ def translate_extracts(
 
     parsed = parse_json_response(result, "translate")
     locale_set = set(locales)
+    batch = {sci for sci, _ in items}
     out: dict[str, dict[str, str]] = {}
     for sci, trans in parsed.items():
-        if isinstance(trans, dict):
+        if sci in batch and isinstance(trans, dict):
             filtered = {
                 k: v for k, v in trans.items()
                 if k in locale_set and isinstance(v, str) and v.strip()
@@ -251,8 +252,8 @@ def fallback_english_descriptions(
     for sci, sources in items:
         parts = [f"[{loc}] {_truncate(text, max_source_chars)}" for loc, text in sorted(sources.items())]
         english = (names or {}).get(sci, {}).get("en")
-        entries.append(f"- {sci}" + (f" (English name: {english})" if english else "")
-                       + ":\n" + "\n".join(parts))
+        entries.append(f"- {sci}:\n" + (f"English name: {english}\n" if english else "")
+                       + "\n".join(parts))
     user = (
         f"Create English fallback descriptions for these {len(items)} species.\n\n"
         + "\n\n".join(entries)
@@ -263,9 +264,13 @@ def fallback_english_descriptions(
         return {}
 
     parsed = parse_json_response(result, "fallback")
+    # The model sometimes keys an answer by the English name; map it back.
+    by_key = {sci: sci for sci, _ in items}
+    by_key.update({(names or {}).get(sci, {}).get("en", "").lower(): sci for sci, _ in items})
     out: dict[str, dict[str, str]] = {}
-    for sci, locales in parsed.items():
-        if not isinstance(locales, dict):
+    for key, locales in parsed.items():
+        sci = by_key.get(key) or by_key.get(str(key).lower())
+        if not sci or not isinstance(locales, dict):
             continue
         text = locales.get("en")
         if isinstance(text, str) and text.strip():
