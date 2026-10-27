@@ -91,6 +91,17 @@ Rules:
 
 The build fails on invalid anchors, duplicate rows, partial image overrides, or unknown species names.
 
+## Common-Name Aliases
+
+Reviewed common-name search aliases for species live in
+`overrides/common_name_aliases.csv` (`scientific_name`, `alias`, `notes`), one
+alias per row. Use them for search terms that are not names but should find a
+species, e.g. `human vocal` or `speech` for *Homo sapiens*. Real names belong
+in the source data, and scientific synonyms in `overrides/species_aliases.csv`.
+
+The build fails on unknown species, invalid or duplicate aliases, or an alias
+that is another species' common name.
+
 ## Priority Species
 
 Reviewed issue-specific taxonomy additions live in `overrides/priority_species.csv` and are fetched during `python -m collectors.inat`.

@@ -74,6 +74,7 @@ SOUND_CLASSES_FILE = RAW_DIR / "sound_classes.json"
 TAXONOMY_FILE = RAW_DIR / "taxonomy.json"
 MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
+MANUAL_COMMON_ALIASES_FILE = ROOT / "overrides" / "common_name_aliases.csv"
 MANUAL_SPLITS_FILE = ROOT / "overrides" / "bird_splits.csv"
 BN_IDS_FILE = ROOT / "bn_ids.json"
 
@@ -446,6 +447,41 @@ def load_manual_aliases() -> dict[str, list[str]]:
     return aliases
 
 
+def load_manual_common_aliases() -> dict[str, list[str]]:
+    """Load repo-tracked manual common-name search aliases from CSV."""
+    if not MANUAL_COMMON_ALIASES_FILE.exists():
+        return {}
+
+    aliases: dict[str, list[str]] = {}
+    seen: set[tuple[str, str]] = set()
+    with open(MANUAL_COMMON_ALIASES_FILE, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        missing = {"scientific_name", "alias"} - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(
+                f"{MANUAL_COMMON_ALIASES_FILE}: missing required columns: {', '.join(sorted(missing))}"
+            )
+        for line_no, row in enumerate(reader, start=2):
+            sci = (row.get("scientific_name") or "").strip()
+            alias = (row.get("alias") or "").strip()
+            if not is_clean_scientific_name(sci):
+                raise ValueError(
+                    f"{MANUAL_COMMON_ALIASES_FILE}: line {line_no}: invalid scientific_name '{sci}'"
+                )
+            if not is_clean_common_name(alias):
+                raise ValueError(
+                    f"{MANUAL_COMMON_ALIASES_FILE}: line {line_no}: invalid alias '{alias}'"
+                )
+            key = (sci, alias.lower())
+            if key in seen:
+                raise ValueError(
+                    f"{MANUAL_COMMON_ALIASES_FILE}: line {line_no}: duplicate alias '{alias}' for '{sci}'"
+                )
+            seen.add(key)
+            aliases.setdefault(sci, []).append(alias)
+    return aliases
+
+
 def load_bird_splits() -> dict[str, str]:
     """Load reviewed bird splits kept separate from an AviList lump.
 
@@ -499,12 +535,18 @@ def clean_common_aliases(values: list[str] | tuple[str, ...] | set[str]) -> list
 
 
 def load_sound_classes() -> dict[str, dict]:
-    """Load configured non-species sound classes collected offline."""
+    """Load configured non-species sound classes collected offline.
+
+    Cached classes no longer listed under `sound_classes` in config.yml are
+    skipped (the collector keeps them in its cache).
+    """
     classes = load_json(SOUND_CLASSES_FILE)
+    configured = {str(c.get("name") or "").strip()
+                  for c in load_config().get("sound_classes", []) or []}
     result: dict[str, dict] = {}
     for name, rec in classes.items():
         sci = str(rec.get("scientific_name") or name).strip()
-        if not is_clean_sound_class_name(sci):
+        if not is_clean_sound_class_name(sci) or sci not in configured:
             continue
         common_name = str(rec.get("common_name") or sci).strip()
         result[sci] = {
@@ -1997,7 +2039,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    manual_aliases: dict[str, list[str]] | None = None,
                    reassign_ids: bool = False,
                    quality_cfg: dict | None = None,
-                   avicommons: dict[str, dict] | None = None) -> list[dict]:
+                   avicommons: dict[str, dict] | None = None,
+                   manual_common_aliases: dict[str, list[str]] | None = None) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
     Each record:
@@ -2028,6 +2071,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         manual_aliases = {}
     if avicommons is None:
         avicommons = {}
+    if manual_common_aliases is None:
+        manual_common_aliases = {}
 
     image_prefix = image_url_prefix()
     wrong_article = 0
@@ -2230,9 +2275,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "taxon_group": tax.get("taxon_group", ""),
             "record_type": tax.get("record_type", "species"),
             "common_names": common_names,
-            "common_name_aliases": clean_common_aliases(
-                tax.get("common_name_aliases", [])
-            ),
+            "common_name_aliases": clean_common_aliases([
+                *tax.get("common_name_aliases", []),
+                *manual_common_aliases.get(sci_name, []),
+            ]),
             "descriptions": descriptions,
             "description_source": description_source,
             "description_sources": description_sources,
@@ -2283,6 +2329,16 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     print(f"  Images kept on one species only (shared photo): {_dedupe_images(records)} removed")
     renamed = _resolve_display_name_collisions(records, taxonomy)
     print(f"  Display names: {renamed} species renamed (name shared with another species)")
+    # A manual common-name alias must not be another species' display name.
+    name_owner = {r["common_name"].lower(): r["scientific_name"] for r in records}
+    for sci, values in manual_common_aliases.items():
+        for alias in values:
+            owner = name_owner.get(alias.lower(), sci)
+            if owner != sci:
+                raise ValueError(
+                    f"{MANUAL_COMMON_ALIASES_FILE}: alias '{alias}' for '{sci}' "
+                    f"is the common name of '{owner}'"
+                )
     print(f"  Localized names: {_resolve_localized_name_collisions(records)} dropped "
           "(same name on a more-observed species or the article's title species)")
     print(f"  LLM descriptions: {_align_llm_species_names(records)} aligned with the "
@@ -2492,6 +2548,14 @@ def main():
         )
     print(f"  Aliases:    {sum(len(v) for v in manual_aliases.values()):>8} manual aliases")
     print_manual_alias_stats(manual_aliases)
+    manual_common_aliases = load_manual_common_aliases()
+    unknown_common = sorted(set(manual_common_aliases) - set(taxonomy))
+    if unknown_common:
+        raise ValueError(
+            f"Manual common-name aliases reference unknown species: {', '.join(unknown_common[:10])}"
+        )
+    print(f"  Common aliases: {sum(len(v) for v in manual_common_aliases.values()):>4} manual "
+          f"common-name aliases ({len(manual_common_aliases)} species)")
 
     print("\nMerging...")
     records = build_metadata(
@@ -2504,6 +2568,7 @@ def main():
         reassign_ids=args.reassign_ids,
         quality_cfg=cfg.get("metadata_quality", {}),
         avicommons=avicommons,
+        manual_common_aliases=manual_common_aliases,
     )
 
     print("\nAuditing final metadata...")

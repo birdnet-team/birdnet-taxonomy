@@ -113,7 +113,8 @@ everything (and writes `raw_data/taxonomy.json`, which later collector runs use)
 
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`
   and the files in `overrides/` (`species_overrides.csv`, `species_aliases.csv`,
-  `bird_splits.csv`, `priority_species.csv`) are git-tracked and meaningful.
+  `common_name_aliases.csv`, `bird_splits.csv`, `priority_species.csv`) are
+  git-tracked and meaningful.
 - Secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.)
   live in `.env`, never in `config.yml` or source.
   `utils/llm.py` auto-detects which LLM key is present and uses it.

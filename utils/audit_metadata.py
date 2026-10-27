@@ -269,14 +269,14 @@ def run_self_test() -> None:
     }
     sound_class = {
         "birdnet_id": "BN00002",
-        "scientific_name": "Human",
-        "common_name": "Human",
+        "scientific_name": "Chainsaw",
+        "common_name": "Chainsaw",
         "taxon_group": "Anthropogenic",
         "record_type": "sound_class",
         "description_source": "",
         "descriptions": {},
-        "scientific_name_aliases": ["Human vocal"],
-        "common_name_aliases": ["human vocal", "human non-vocal"],
+        "scientific_name_aliases": ["Chain saw"],
+        "common_name_aliases": ["chain saw", "power saw"],
     }
     bad = {
         "birdnet_id": "",

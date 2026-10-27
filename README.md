@@ -129,9 +129,10 @@ collectors/
 dev/                       # Development metadata snapshots and local build artifacts
 dist/                      # Published metadata and generated site image assets
 overrides/
-    bird_splits.csv       # Git-tracked birds kept separate from an AviList lump
-    priority_species.csv  # Git-tracked reviewed taxonomy additions
-    species_aliases.csv   # Git-tracked manual scientific-name aliases
+    bird_splits.csv        # Git-tracked birds kept separate from an AviList lump
+    common_name_aliases.csv  # Git-tracked manual common-name search aliases
+    priority_species.csv   # Git-tracked reviewed taxonomy additions
+    species_aliases.csv    # Git-tracked manual scientific-name aliases
     species_overrides.csv  # Git-tracked manual image and crop overrides
 raw_data/                  # Cached upstream source payloads and intermediate collector output
 utils/
@@ -512,9 +513,14 @@ from Wikidata, and uses a licensed Wikimedia Commons image when available.
 Set `image_file` to a Commons filename to override the Wikidata P18 image for a
 specific class. Use `overrides/species_overrides.csv` for fixed crop anchors.
 Current classes include anthropogenic sounds such as power tools, siren, gun,
-chainsaw, engine, and human, plus geophony classes such as rain, thunder, and
-wind. `Human` includes common-name aliases for `human vocal` and
-`human non-vocal` so those searches resolve to the canonical `Human` entry.
+chainsaw, and engine, plus geophony classes such as rain, thunder, and wind.
+Each class can list common-name aliases (e.g. `chain saw` and `power saw` for
+`Chainsaw`) so those searches resolve to the canonical entry. Humans are not a
+sound class: they are the species record *Homo sapiens* (Mammalia), which
+carries the former `Human` class aliases (`human vocal`, `human non-vocal`,
+`speech`, …) as common-name aliases from `overrides/common_name_aliases.csv`. The build
+includes only classes listed in `config.yml`; a class removed there is dropped
+from the build even though the collector's cache keeps it.
 
 | Flag | Description |
 |------|-------------|
@@ -611,6 +617,11 @@ resolve to the canonical species. Non-species sound classes use
 `record_type: sound_class`; their `scientific_name_aliases` and
 `common_name_aliases` are both search fallbacks rather than biological names.
 Reviewed manual scientific-name bridges live in `overrides/species_aliases.csv`.
+Species get `common_name_aliases` only from `overrides/common_name_aliases.csv`
+(columns `scientific_name`, `alias`, `notes`): reviewed search terms that are
+not names, such as `human vocal` for *Homo sapiens*. The build fails on unknown
+species, invalid or duplicate aliases, or an alias that is another species'
+common name.
 The build also filters source-derived aliases that collide with another
 canonical species and fails if any alias conflict remains.
 
@@ -653,7 +664,7 @@ Each record receives a BirdNET ID in the format `BN{5 digits}`, stored in the gi
 |-------|---------|---------|
 | `BN00001`–`BN19999` | Birds | `BN00483` (Mallard) |
 | `BN20000`–`BN89999` | Other animals (mammals, insects, amphibians, reptiles) | `BN20827` (Coyote) |
-| `BN90000`–`BN99999` | Non-species sound classes (anthropogenic and geophony) | `BN90003` (Human) |
+| `BN90000`–`BN99999` | Non-species sound classes (anthropogenic and geophony) | `BN90000` (Chainsaw) |
 
 `--reassign-ids` numbers each range alphabetically by scientific name from its start. Normal builds preserve existing IDs and give a new record the next number after the highest ID in its range (IDs of removed records stay reserved), so alphabetical order holds only as of the last reassignment. The build fails if a range is full or a kept ID lies outside its record's range. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change.
 

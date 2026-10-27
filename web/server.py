@@ -115,8 +115,8 @@ class SpeciesRecord(BaseModel):
     )
     common_name_aliases: Optional[list[str]] = Field(
         None,
-        description="Additional common-name search aliases for non-species sound classes",
-        examples=[["human vocal", "human non-vocal"]],
+        description="Additional common-name search aliases (sound classes, and reviewed species aliases such as 'human vocal' for Homo sapiens)",
+        examples=[["chain saw", "power saw"]],
     )
     common_name: str = Field("", examples=["Mallard"])
     common_name_alt: Optional[str] = Field(None, description="Alternative English name (Clements/eBird)", examples=["Rock Pigeon"])
