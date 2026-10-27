@@ -21,6 +21,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import re
 import unicodedata
 from collections import Counter
@@ -432,9 +433,11 @@ def _init_image_config(dev: bool = False):
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    # uvicorn imports this module afresh, so --dev arrives via the environment.
+    dev = os.environ.get("SPECIES_DATA_DEV") == "1"
     if not _species_list:
-        load_data()
-    _init_image_config(dev=_dev_mode)
+        load_data(dev=dev)
+    _init_image_config(dev=dev)
     templates.env.globals["quote_path"] = _quote_path
     yield
 
@@ -1230,8 +1233,8 @@ def main():
     if args.reload and args.workers > 1:
         parser.error("--reload and --workers > 1 are mutually exclusive")
 
-    load_data(dev=args.dev)
-    _init_image_config(dev=args.dev)
+    if args.dev:
+        os.environ["SPECIES_DATA_DEV"] = "1"
     uvicorn.run(
         "web.server:app",
         host=args.host,

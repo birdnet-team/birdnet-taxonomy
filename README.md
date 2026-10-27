@@ -652,7 +652,7 @@ Browse and search the dataset through a web UI and REST API.
 |------|-------------|
 | `--host ADDR` | Bind address (default: 127.0.0.1) |
 | `--port N` | Bind port (default: 8000) |
-| `--dev` | Load metadata from dev/ instead of dist/ |
+| `--dev` | Load metadata from dev/ instead of dist/ (with plain `uvicorn`, set `SPECIES_DATA_DEV=1`) |
 | `--reload` | Auto-reload on code changes |
 
 Or with hot-reload during development:
