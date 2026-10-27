@@ -1761,6 +1761,68 @@ def _resolve_localized_name_collisions(records: list[dict]) -> int:
     return dropped
 
 
+# Locales whose LLM texts open with "[article] Name (Binomial)" in Latin or
+# Cyrillic script, so the species' name can be aligned with common_names.
+_NAME_ALIGN_LOCALES = {"de", "fr", "es", "pt", "it", "nl", "pl", "sv", "da", "no", "fi",
+                       "cs", "ru", "tr", "sw"}
+_LEAD_ARTICLE_RE = r"(?:Der|Die|Das|Le|La|Les|L['’]|El|Los|Las|Il|Lo|Gli|I|O|A|Os|As|De|Het|Een)"
+_VOWEL_START_RE = re.compile(r"[AEIOUÀ-ÆÈ-ÏÒ-ÖÙ-Ü]", re.IGNORECASE)
+
+
+def _align_llm_species_name(text: str, loc: str, canonical: str, names: list[str]) -> str:
+    """Make an LLM text call the species by its canonical localized name.
+
+    Translations often invent a vernacular name ("Der Bolivien-Schlüpfer
+    (Cranioleuca henricae)") instead of the established one ("La-Paz-
+    Baumschlüpfer"). The opening name, and later exact repeats of it, are
+    replaced; a French/Italian article is elided or restored as needed.
+    """
+    sci_alt = "|".join(re.escape(n) for n in names)
+    m = re.match(rf"\s*(?:(?P<art>{_LEAD_ARTICLE_RE})(?:\s+|(?<=['’])))?"
+                 rf"(?P<name>[^()\n]{{2,80}}?)\s*\([^()]*?\b(?:{sci_alt})\b", text)
+    if not m:
+        return text
+    name = m.group("name").strip(" ,")
+    # A longer opening phrase ("X, also known as Y") is left alone.
+    if (name.lower() == canonical.lower() or name in names
+            or "," in name or len(name.split()) > 5):
+        return text
+    art = m.group("art") or ""
+    if loc in ("fr", "it") and art:
+        vowel = bool(_VOWEL_START_RE.match(canonical))
+        if art[-1] in "'’" and not vowel:
+            art = ""
+        elif art in ("Le", "La", "Il", "Lo") and vowel:
+            art = "L'"
+    lead = canonical if art else canonical[:1].upper() + canonical[1:]
+    if art:
+        lead = art + ("" if art.endswith(("'", "’")) else " ") + lead
+    # Later repeats keep the case of their first letter (sentence starts).
+    first = re.escape(name[:1])
+    repeat = re.compile(rf"(?<!\w)(?:{first.upper()}|{first.lower()}){re.escape(name[1:])}")
+    rest = repeat.sub(lambda r: (canonical[:1].upper() + canonical[1:]
+                                 if r.group(0)[:1].isupper() else canonical),
+                      text[m.end("name"):])
+    return lead + rest
+
+
+def _align_llm_species_names(records: list[dict]) -> int:
+    """Align LLM descriptions with each species' localized common name."""
+    changed = 0
+    for rec in records:
+        names = [rec["scientific_name"], *rec.get("scientific_name_aliases", [])]
+        for loc, src in (rec.get("description_sources") or {}).items():
+            canonical = rec["common_names"].get(loc)
+            if not src.startswith("llm") or loc not in _NAME_ALIGN_LOCALES or not canonical:
+                continue
+            text = rec["descriptions"][loc]
+            aligned = _align_llm_species_name(text, loc, canonical, names)
+            if aligned != text:
+                rec["descriptions"][loc] = aligned
+                changed += 1
+    return changed
+
+
 def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                    translate: dict = None,
                    manual_overrides: dict | None = None,
@@ -2036,6 +2098,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     print(f"  Display names: {renamed} species renamed (name shared with another species)")
     print(f"  Localized names: {_resolve_localized_name_collisions(records)} dropped "
           "(same name on a more-observed species or the article's title species)")
+    print(f"  LLM descriptions: {_align_llm_species_names(records)} aligned with the "
+          "localized common name")
 
     # Assign BirdNET species IDs (persistent, append-only)
     if reassign_ids:

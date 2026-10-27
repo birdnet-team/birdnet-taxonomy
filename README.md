@@ -244,6 +244,10 @@ names become aliases of the replacement taxon.
   place. Links to rejected articles are dropped with them.
 - An English article claimed by several species stays with the species it names
   first.
+- LLM texts call the species by its localized common name: translations are
+  given the published names, and the build replaces a different opening name
+  in older translations ("Der Bolivien-Schlüpfer (*Cranioleuca henricae*)" →
+  "Der La-Paz-Baumschlüpfer …"), along with exact repeats of it.
 - A stored locale text is used only with that locale's article URL or a
   provenance label from `utils.translate`; unlabelled machine translations left
   by older runs are ignored.
@@ -494,7 +498,9 @@ Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia
 
 All phases work on Wikipedia text cleaned the way the build cleans it (no
 reference lists, subspecies lists, or markup), so stub checks and sources match
-the release. Translations record a hash of their English source, so `--retranslate-stale` can redo them when the English text changes; the build prefers native Wikipedia text added later over an older machine translation for the same locale. When the provider keeps answering HTTP 429 after retries (quota exhausted), the run stops sending requests and saves; rerun later to continue.
+the release. Prompts list each species' localized common names from
+`taxonomy.json`; the model must use them, or the scientific name where a
+language has none, instead of inventing a vernacular name. Translations record a hash of their English source, so `--retranslate-stale` can redo them when the English text changes; the build prefers native Wikipedia text added later over an older machine translation for the same locale. When the provider keeps answering HTTP 429 after retries (quota exhausted), the run stops sending requests and saves; rerun later to continue.
 
 LLM output is stored in `translate_data.json` and overlaid on Wikipedia extracts during the build step. The LLM only fills gaps — it never overwrites existing Wikipedia extracts for a locale.
 

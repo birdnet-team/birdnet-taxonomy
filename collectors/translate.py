@@ -168,10 +168,12 @@ def translate_extracts(
     target_locales: list[str],
     max_source_chars: int = 3000,
     max_tokens: int = 16384,
+    names: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Translate English extracts to missing target locales.
 
     items: [(scientific_name, english_extract)]
+    names: {scientific_name: {locale: common name}} the translation must use
     Returns: {scientific_name: {locale: translation}}
     """
     locales = [l for l in target_locales if l != "en" and l in LOCALE_NAMES]
@@ -185,11 +187,19 @@ def translate_extracts(
         "RULES:\n"
         "- Preserve meaning, tone, and approximate length\n"
         "- Use natural phrasing in each language\n"
-        "- Single flowing paragraph, no bullet points, no markdown\n\n"
+        "- Single flowing paragraph, no bullet points, no markdown\n"
+        "- Call the species by the name listed under Names for that language; "
+        "where none is listed, use the scientific name. Never invent a common name\n\n"
         "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
         '{"Scientific name": {"de": "German...", "fr": "French...", ...}, ...}'
     )
-    entries = [f"- {sci}: {_truncate(text, max_source_chars)}" for sci, text in items]
+    entries = []
+    for sci, text in items:
+        given = {l: n for l, n in (names or {}).get(sci, {}).items() if l in locales}
+        entry = f"- {sci}: {_truncate(text, max_source_chars)}"
+        if given:
+            entry += "\n  Names: " + "; ".join(f"{l}={n}" for l, n in given.items())
+        entries.append(entry)
     user = (
         f"Translate these {len(items)} species descriptions.\n"
         f"Languages: {lang_list}\n\n"
@@ -219,6 +229,7 @@ def fallback_english_descriptions(
     target_words: int = 120,
     max_source_chars: int = 5000,
     max_tokens: int = 16384,
+    names: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Create English descriptions from non-English Wikipedia sources."""
     if not items:
@@ -231,14 +242,17 @@ def fallback_english_descriptions(
         "RULES:\n"
         "- Use ONLY facts present in the provided source extracts\n"
         "- One concise paragraph, no markdown, no citations\n"
-        "- Preserve scientific uncertainty; do not add unsourced facts\n\n"
+        "- Preserve scientific uncertainty; do not add unsourced facts\n"
+        "- Call the species by the English name given, else by its scientific name\n\n"
         "OUTPUT FORMAT — return ONLY valid JSON, no markdown fences:\n"
         '{"Scientific name": {"en": "English fallback text..."}, ...}'
     )
     entries = []
     for sci, sources in items:
         parts = [f"[{loc}] {_truncate(text, max_source_chars)}" for loc, text in sorted(sources.items())]
-        entries.append(f"- {sci}:\n" + "\n".join(parts))
+        english = (names or {}).get(sci, {}).get("en")
+        entries.append(f"- {sci}" + (f" (English name: {english})" if english else "")
+                       + ":\n" + "\n".join(parts))
     user = (
         f"Create English fallback descriptions for these {len(items)} species.\n\n"
         + "\n\n".join(entries)
@@ -562,6 +576,15 @@ def main() -> None:
         for name in [tax_sci, *entry.get("source_names", [])]:
             names_for[name] = own
 
+    # The localized common names the build publishes; translations use them.
+    common_for: dict[str, dict[str, str]] = {}
+    for tax_sci, entry in taxonomy.items():
+        common = {loc: n for loc, n in (entry.get("common_names") or {}).items() if n}
+        if entry.get("preferred_common_name") and entry["preferred_common_name"] != tax_sci:
+            common["en"] = entry["preferred_common_name"]
+        for name in [tax_sci, *entry.get("source_names", [])]:
+            common_for[name] = common
+
     def usable_wiki_extracts(sci: str, rec: dict) -> dict[str, str]:
         return {loc: t for loc, t in rec.get("extracts", {}).items()
                 if not names_other_species(t, names_for.get(sci, [sci]), canonical)}
@@ -693,6 +716,7 @@ def main() -> None:
             return translate_extracts(
                 batch, list(missing_locales),
                 max_source_chars=max_source_chars, max_tokens=max_tokens,
+                names=common_for,
             )
 
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -751,6 +775,7 @@ def main() -> None:
             results = fallback_english_descriptions(
                 batch, target_words=target_words,
                 max_source_chars=max_source_chars, max_tokens=max_tokens,
+                names=common_for,
             )
             updates: dict[str, dict[str, str]] = {}
             for sci, extracts in results.items():
