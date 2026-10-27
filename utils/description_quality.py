@@ -170,9 +170,29 @@ _BIB_VENUE_RE = re.compile(
     r"Verlag|texte intégral|Full text|Handbook|\bSoc(?:iety|iété)?\b|\bActa\b|\bZool", re.IGNORECASE)
 
 
+# A subspecies with its author ("C. a. aequabilis Ripley, 1945"); a paragraph
+# with several is a subspecies list.
+_LATIN_END = r"(?:us|a|um|i|ae|is|ii|ensis|oides|or|er|ix|ax|ex|os|es|on)"
+_TRINOMIAL_AUTHOR_RE = re.compile(
+    rf"\b[A-Z][a-z]*\.? (?:[a-z]\.|[a-z]+{_LATIN_END}) [a-z]{{2,}}{_LATIN_END},? "
+    r"\(?(?:[A-ZÀ-Þ][\w'’.-]+(?: (?:&|and|et|y|und) |, ?| )?)+,? ?(?:1[789]|20)\d{2}\)?")
+# A sentence of bare scientific names (a synonym list).
+_NAME_LIST_RE = re.compile(r"(?:[A-Z][a-z]+ [a-z]{3,}[,;]?\s*){2,}")
+_CATEGORY_RE = re.compile(r"\b(?:[KkL]ategori[ae]?|Category|Catégorie|Categoría|Categoria):\S")
+
+
+def _drop_list_intro(paragraph: str) -> str:
+    """Drop a closing sentence that introduces a list ("Three subspecies are
+    recognised:") whose items are gone."""
+    while paragraph.rstrip().endswith((":", "：")):
+        parts = re.split(r"(?<=[.!?。])\s+", paragraph.rstrip())
+        paragraph = " ".join(parts[:-1])
+    return paragraph
+
+
 def _starts_citation(sentence: str, rest: str) -> bool:
     """True if a sentence begins reference-list text (rest: it and what follows)."""
-    return bool(_BIB_MARKER_RE.search(sentence)
+    return bool(_BIB_MARKER_RE.search(sentence) or _CATEGORY_RE.search(sentence)
                 or _BIB_AUTHOR_LIST_RE.fullmatch(sentence.strip())
                 or (_BIB_AUTHORS_RE.match(rest) and _BIB_VENUE_RE.search(rest)))
 
@@ -196,7 +216,8 @@ def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
         if _starts_citation(sentence, " ".join(sentences[i:])):
             break
         key = sentence.strip().lower()
-        if (not key or _MARKUP_RE.search(sentence) or re.match(r"[,;:)\]}|]", key)
+        if (not key or _MARKUP_RE.search(sentence) or re.match(r"[,;:)\]{}|]", key)
+                or _NAME_LIST_RE.fullmatch(sentence.strip())
                 or (len(key) > 30 and key in seen)):
             continue
         seen.add(key)
@@ -206,8 +227,8 @@ def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
 
 def clean_description_text(text: str) -> str:
     """Clean stored descriptions: drop section headings, reference-type
-    tails and reference-list text, citation marks, sentences with leftover
-    wiki markup, and repeated sentences."""
+    tails and reference-list text, subspecies and synonym lists, citation
+    marks, sentences with leftover wiki markup, and repeated sentences."""
     if not text:
         return text
     kept: list[str] = []
@@ -216,10 +237,17 @@ def clean_description_text(text: str) -> str:
         if heading and _END_SECTIONS.match(heading):
             break
         for paragraph in re.split(r"\n{2,}", body):
+            subspecies = [m.group(0) for m in _TRINOMIAL_AUTHOR_RE.finditer(paragraph)]
+            if (kept and len(subspecies) >= 2
+                    and sum(map(len, subspecies)) >= 0.12 * len(paragraph)):
+                kept[-1] = _drop_list_intro(kept[-1])
+                continue
             cleaned = _clean_paragraph(paragraph, seen)
             if cleaned:
                 kept.append(cleaned)
-    return "\n\n".join(kept).strip()
+    if kept:
+        kept[-1] = _drop_list_intro(kept[-1])
+    return "\n\n".join(p for p in kept if p).strip()
 
 
 def select_description_text(full_text: str, min_words: int, target_words: int,
