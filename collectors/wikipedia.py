@@ -188,6 +188,48 @@ def _sitelink_only_species(existing: dict, taxonomy: dict, wikidata: dict,
     return items
 
 
+def _name_title_species(species: dict[str, str], existing: dict,
+                        taxonomy: dict) -> dict[str, str]:
+    """English articles for species no source links (typically new AviList
+    splits), looked up under the species' English or scientific name.
+
+    A page counts only if its title, after redirects, is one of those names
+    (a split's name often redirects to the parent species' article) and its
+    intro names the species. Returns scientific name -> article URL.
+    """
+    candidates: list[tuple[str, str]] = []
+    accepted_titles: dict[str, set[str]] = {}
+    for sci, entry in taxonomy.items():
+        names = [sci, *entry.get("source_names", [])]
+        if entry.get("record_type") == "sound_class" or any(
+                n in species or existing.get(n) for n in names):
+            continue
+        english = entry.get("preferred_common_name", "")
+        if english == sci:
+            english = ""
+        accepted_titles[sci] = {sci.lower(), english.lower()} - {""}
+        for title in dict.fromkeys([english, english[:1] + english[1:].lower(), sci]):
+            if title:
+                candidates.append((sci, title))
+    found: dict[str, str] = {}
+    for batch in _chunks(candidates, 20):  # intro extracts: up to 20 pages per request
+        if is_shutting_down():
+            break
+        pages = _batch_query(EN_API, [t for _, t in batch], props="extracts|pageprops",
+                             extra_params={"exintro": "1", "explaintext": "1",
+                                           "exlimit": "max", "ppprop": "disambiguation"})
+        for sci, title in batch:
+            page = _lookup_page(pages, title)
+            if sci in found or not page or _is_disambiguation_page(page):
+                continue
+            resolved = page.get("title", "")
+            if (resolved.lower() in accepted_titles[sci]
+                    and contains_species_identity(page.get("extract", ""),
+                                                  _identity_names(sci, taxonomy))):
+                found[sci] = "https://en.wikipedia.org/wiki/" + quote(resolved.replace(" ", "_"))
+    return found
+
+
 def _fetch_sitelink_extracts(items: list[tuple[str, dict[str, str]]], existing: dict,
                              min_words: int, target_words: int, extra_sections: int,
                              min_paragraphs: int, max_words: int) -> int:
@@ -1033,6 +1075,10 @@ def main():
     existing = load_json(OUTPUT_FILE)
     print(f"  Already have Wikipedia data for {len(existing)} species")
     taxonomy = load_json(TAXONOMY_FILE)
+    if not args.dry_run and not args.quality_refetch:
+        by_name = _name_title_species(species, existing, taxonomy)
+        species.update(by_name)
+        print(f"  Found {len(by_name)} more English articles by species name")
 
     quality_work = []
     if args.quality_refetch:
