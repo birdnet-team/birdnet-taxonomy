@@ -212,7 +212,11 @@ names become aliases of the replacement taxon.
 - When two species carry the same localized name, the more authoritative source
   (AviList > eBird > iNat > Wikidata) keeps it.
 - Never used as a localized common name (the next source's name is used
-  instead): a known scientific name; a Latin-only name in a locale written in
+  instead): a known scientific name, or (from iNat or Wikidata) an unrecorded
+  synonym — a known genus with the species' epithet or a gender variant of it
+  ("Leptodactylus andreae" for *Adenomera andreae*), unless the genus word
+  heads longer vernacular names in that locale ("Colibri à gorge rubis"); a
+  Latin-only name in a locale written in
   another script (an untranslated English fallback, e.g. in `zh`); a multi-word
   English name copied into another locale (eBird `pt_BR` lists untranslated
   species in lower-case English); file names, catalogue numbers, or names
@@ -221,8 +225,10 @@ names become aliases of the replacement taxon.
   whose English Wikipedia lead gives that name keeps it (then one with no other
   English name, then the more-observed one). The others take an unused English
   name from their Wikipedia lead or iNat (spelling variants of the shared name
-  don't count), else fall back to the scientific name. All-lowercase names get
-  AviList-style capitalisation.
+  don't count), else fall back to the scientific name.
+- Non-bird English names get AviList-style capitalisation ("Heart-nosed Bat");
+  bird names stay as AviList writes them. The English entry in `common_names`
+  is always the display name, and absent when that is the scientific name.
 
 ### Descriptions
 

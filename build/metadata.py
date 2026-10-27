@@ -736,8 +736,33 @@ def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = 
         scientific.update(a.lower() for a in entry.get("scientific_name_aliases", []))
         scientific.update(a.lower() for a in entry.get("xc_aliases", []))
 
-    def is_scientific(sci: str, entry: dict, name: str) -> bool:
-        return " ".join(name.replace("\xa0", " ").split()).lower() in scientific
+    genera = {n.split()[0] for n in scientific if " " in n}
+    # Words that head longer vernacular names in a locale ("Colibri à gorge
+    # rubis", "Rana di Lataste") are nouns there, not genera.
+    heads: dict[str, Counter] = {}
+    for entry in taxonomy.values():
+        for loc, cands in entry.get("_name_candidates", {}).items():
+            for _, name in cands:
+                words = name.lower().split()
+                if len(words) >= 3:
+                    heads.setdefault(loc, Counter())[words[0]] += 1
+
+    def is_scientific(sci: str, entry: dict, name: str, loc: str = "", rank: int = 0) -> bool:
+        clean = " ".join(name.replace("\xa0", " ").split())
+        if clean.lower() in scientific:
+            return True
+        # An unrecorded synonym from iNat or Wikidata: a known genus (or the
+        # species' own) with the species' epithet or a gender variant
+        # ("Leptodactylus andreae" for Adenomera andreae, "Acanthidops
+        # bairdii" for A. bairdi). Curated AviList/eBird names are kept.
+        if rank < NAME_SOURCE_RANK["inat"] or not _BINOMIAL_SHAPE_RE.fullmatch(clean):
+            return False
+        genus, epithet = clean.lower().split()
+        if heads.get(loc, Counter())[genus] >= 2:
+            return False
+        own = [sci] + entry.get("scientific_name_aliases", [])
+        return ((genus in genera or genus == sci.split()[0].lower())
+                and any(same_epithet_stem(epithet, n.split()[-1]) for n in own))
 
     def english_copy(entry: dict, loc: str, name: str) -> bool:
         # An untranslated English name in another locale (eBird pt_BR lists
@@ -756,7 +781,8 @@ def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = 
     for sci, entry in taxonomy.items():
         for loc, cands in entry.get("_name_candidates", {}).items():
             for rank, name in cands:
-                if is_scientific(sci, entry, name) or wrong_script(loc, name) or english_copy(entry, loc, name):
+                if (is_scientific(sci, entry, name, loc, rank) or wrong_script(loc, name)
+                        or english_copy(entry, loc, name)):
                     continue
                 k = (loc, name.strip().lower())
                 best[k] = min(best.get(k, rank), rank)
@@ -767,7 +793,8 @@ def _resolve_name_conflicts(taxonomy: dict, extra_scientific: set[str] | None = 
         for loc, cands in cands_by_loc.items():
             chosen = None
             for rank, name in sorted(cands, key=lambda c: c[0]):
-                if is_scientific(sci, entry, name) or wrong_script(loc, name) or english_copy(entry, loc, name):
+                if (is_scientific(sci, entry, name, loc, rank) or wrong_script(loc, name)
+                        or english_copy(entry, loc, name)):
                     continue
                 if rank <= best[(loc, name.strip().lower())]:
                     chosen = (rank, name)
@@ -1559,15 +1586,17 @@ ID_FORMATS = {
     "avibase_id": re.compile(r"[0-9A-F]{16}"),
     "ebird_code": re.compile(r"[a-z0-9]+"),
 }
+_BINOMIAL_SHAPE_RE = re.compile(r"[A-Z][a-z]+ [a-z][a-z-]+")
 # Localized "names" that are file names, catalogue numbers, or carry a
 # disambiguation number ("कालो धनेश २") (Wikidata labels).
 _JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}|\s\d+$", re.IGNORECASE)
-_SMALL_WORDS = {"a", "an", "and", "of", "the", "de", "del", "du", "la", "le", "von", "van", "di", "da"}
+_SMALL_WORDS = {"a", "an", "and", "of", "the", "in", "on", "or", "de", "del", "des", "du", "la", "le",
+                "el", "al", "von", "van", "der", "den", "di", "da", "do", "dos", "das", "y"}
 
 
 def _title_case(name: str) -> str:
-    """AviList-style capitalisation for all-lowercase English names
-    ("chestnut short-tailed bat" → "Chestnut Short-tailed Bat")."""
+    """AviList-style capitalisation for English names ("chestnut short-tailed
+    bat" → "Chestnut Short-tailed Bat"); never lowercases a letter."""
     words = name.split(" ")
     return " ".join(
         w if (i and w in _SMALL_WORDS) else w[:1].upper() + w[1:]
@@ -1653,7 +1682,8 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
             lead = (_lead_english_names(rec["descriptions"].get("en", ""), sci)
                     if rec.get("description_source") == "wikipedia" else [])
             attested[sci] = [_title_case(n) for n in lead]
-            names = attested[sci] + taxonomy.get(sci, {}).get("english_names", [])
+            inat_names = taxonomy.get(sci, {}).get("english_names", [])
+            names = attested[sci] + [_title_case(n) for n in inat_names]
             candidates[sci] = [n for n in names if is_clean_common_name(n)]
         # Spelling variants ("Northern Freetail Bat") count as the shared name.
         def variant(n: str) -> bool:
@@ -1859,7 +1889,9 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             }
 
         raw_common_name = " ".join(tax.get("preferred_common_name", "").replace("\xa0", " ").split())
-        if raw_common_name and raw_common_name == raw_common_name.lower() and tax.get("record_type") != "sound_class":
+        # Non-bird names (iNat) follow AviList-style capitalisation too.
+        if (raw_common_name and tax.get("record_type") != "sound_class"
+                and (raw_common_name == raw_common_name.lower() or tax.get("taxon_group") != "Aves")):
             raw_common_name = _title_case(raw_common_name)
         common_name = raw_common_name if is_clean_common_name(raw_common_name) else sci_name
         raw_common_name_alt = tax.get("common_name_alt", "")
@@ -1874,8 +1906,15 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             )
             if is_clean_common_name(name) and not _JUNK_NAME_RE.search(name)
         }
-        if common_names.get("en", "").lower() == common_name.lower():
+        # The English entry is the display name (none when that falls back to
+        # the scientific name: such entries are synonyms or other languages).
+        if is_sound_class_record(tax):
+            if common_names.get("en", "").lower() == common_name.lower():
+                common_names["en"] = common_name
+        elif common_name != sci_name:
             common_names["en"] = common_name
+        else:
+            common_names.pop("en", None)
         if is_sound_class_record(tax):
             aliases = clean_common_aliases(tax.get("scientific_name_aliases", []))
         else:
