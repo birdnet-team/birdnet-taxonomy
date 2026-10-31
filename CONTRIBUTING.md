@@ -87,6 +87,7 @@ Rules:
 - `scientific_name` is required and must match a known species exactly.
 - If any of `image_url`, `image_author`, `image_license`, or `image_source` is set, all four are required.
 - `image_crop_anchor` is optional and must be an integer from `1` to `9`: a 3×3 grid position that bypasses smart crop, where `5` is center crop, `3` is top-right, `7` is bottom-left, etc.
+- `gbif_id` is optional and replaces a wrong GBIF key, such as a homonym in another kingdom. Say why in `notes`.
 - `source_url` and `notes` are optional but useful for review.
 
 The build fails on invalid anchors, duplicate rows, partial image overrides, or unknown species names.

@@ -64,7 +64,7 @@ Then runs an **observation photo fallback** phase: for any species whose default
 
 Collects eBird species data in two phases:
 
-- **Phase 1 — Scraper:** Scrapes eBird species pages for Macaulay Library images (`og:image`). Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps). Only for bird species with an eBird code; codes come from the built `raw_data/taxonomy.json` when present (validated against eBird), and each code is scraped once.
+- **Phase 1 — Scraper:** Scrapes eBird species pages for Macaulay Library images (`og:image`). It also stores the English description (`og:description`), which is never published. Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps). Only for bird species with an eBird code; codes come from the built `raw_data/taxonomy.json` when present (validated against eBird), and each code is scraped once.
 - **Phase 2 — Common names:** Downloads the eBird taxonomy CSV for 63 locales to collect common names in all available languages, and saves `raw_data/ebird_taxonomy.json` (eBird code → scientific name). Downloads are cached per eBird taxonomy version, so a new eBird release is fetched on the next run.
 
 The build only assigns eBird codes that exist in `ebird_taxonomy.json`. AviList can carry codes eBird has not published yet, and it leaves the code empty where its species concept has no 1:1 eBird match; the build then falls back to eBird's own scientific name (e.g. `Tyto furcata` → `brnowl`) and finally Wikidata, never giving one code to two species.
@@ -285,7 +285,7 @@ python -m collectors.translate --provider openai --model gpt-4o
 
 **Target locales:** de, fr, it, es, cs, pt, ru, pl, nl (configurable under `llm.locales` in `config.yml`; English fallbacks are written separately).
 
-LLM descriptions are merged into the build while `llm.enabled` is true in `config.yml` (as in the current configuration and the v0.5 release); set it to `false` to build from Wikipedia and eBird texts only.
+LLM descriptions are merged into the build while `llm.enabled` is true in `config.yml` (as in the current configuration and the v0.5 release); set it to `false` to build from Wikipedia texts only.
 
 | Flag | Description |
 |------|-------------|
@@ -311,7 +311,7 @@ LLM descriptions are merged into the build while `llm.enabled` is true in `confi
 Merges all pre-collected data into the final metadata file. Runs purely offline — no API calls. Two phases:
 
 **Taxonomy phase:**
-1. Cross-references iNaturalist, AviList, Wikidata, and configured sound classes to build a canonical entry list (see [Taxonomy Rules](taxonomy.md): retired iNat taxa are dropped, birds take their AviList name, lumped/subspecies taxa are folded into aliases)
+1. Cross-references iNaturalist, AviList, Wikidata, and the reviewed sound classes to build a canonical entry list (see [Taxonomy Rules](taxonomy.md): retired iNat taxa are dropped, birds take their AviList name, lumped/subspecies taxa are folded into aliases)
 2. Resolves eBird codes from AviList, eBird's own scientific names, and Wikidata, validated against `raw_data/ebird_taxonomy.json` and unique per species
 3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife, Wikidata QID), Macaulay Library, Xeno-Canto (validated against other species' names), and observation.org; an identifier claimed by several species stays only with the species whose own name carries it
 4. Collects common names from iNaturalist, eBird (63 locales), and Wikidata labels; names shared between species in a locale stay with the most authoritative source

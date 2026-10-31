@@ -196,7 +196,7 @@ class SpeciesRecord(BaseModel):
 class PaginatedSpecies(BaseModel):
     """Paginated list of species records."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
-    total: int = Field(..., examples=[18094])
+    total: int = Field(..., examples=[18093])
     page: int = Field(..., examples=[1])
     per_page: int = Field(..., examples=[50])
     results: list[dict[str, Any]] = Field(...)
@@ -205,7 +205,7 @@ class PaginatedSpecies(BaseModel):
         "json_schema_extra": {
             "examples": [{
                 "taxonomy_version": _taxonomy_version,
-                "total": 18094,
+                "total": 18093,
                 "page": 1,
                 "per_page": 2,
                 "results": [_SPECIES_LIST_EXAMPLE],
@@ -235,7 +235,7 @@ class SearchResponse(PaginatedSpecies):
 class StatsResponse(BaseModel):
     """Dataset statistics."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
-    total_species: int = Field(..., examples=[18094])
+    total_species: int = Field(..., examples=[18093])
     groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2196, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 5, "Geophony": 3}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
 
@@ -861,7 +861,7 @@ def _filter_species(data: list[dict], *,
 
     if has_image:
         want = has_image.lower() in ("true", "1", "yes")
-        result = [r for r in result if bool((r.get("image") or {}).get("medium") or r.get("image_url")) == want]
+        result = [r for r in result if bool((r.get("image") or {}).get("src") or r.get("image_url")) == want]
 
     if has_description:
         want = has_description.lower() in ("true", "1", "yes")
@@ -1004,7 +1004,10 @@ async def api_model_labels(
     if not path.exists():
         raise HTTPException(404, f"No model labels for '{model}'")
     with open(path, encoding="utf-8", newline="") as f:
-        rows = [row for row in csv.DictReader(f) if row["status"] != "remove"]
+        reader = csv.DictReader(f)
+        if "status" not in (reader.fieldnames or []):
+            raise HTTPException(404, f"No model labels for '{model}'")
+        rows = [row for row in reader if row["status"] != "remove"]
     return [
         {key: value for key, value in row.items()
          if key not in ("rename_to", "reason", "reason_text")}

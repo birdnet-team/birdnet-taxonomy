@@ -88,8 +88,9 @@ everything (and writes `raw_data/taxonomy.json`, which later collector runs use)
 - If any image field (`image_url`, `image_author`, `image_license`, `image_source`)
   is set, **all four are required**.
 - `image_crop_anchor` is an optional `1`–`9` 3×3 grid position that bypasses smart
-  crop. Build validation is strict and fails on duplicate rows, partial image
-  overrides, invalid anchors, or unknown species.
+  crop. `gbif_id` is an optional replacement for a wrong GBIF key. Build validation
+  is strict and fails on duplicate rows, partial image overrides, invalid anchors,
+  or unknown species.
 
 ## Model labels
 

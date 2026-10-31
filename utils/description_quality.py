@@ -239,6 +239,27 @@ def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
     return normalize_space(" ".join(kept))
 
 
+_INVISIBLE_RE = re.compile("[\u00ad\u200b\ufeff]")
+_SENTENCE_END_RE = re.compile(r"[.!?…)\"”»。！？]$")
+_AUTHOR_YEAR_RE = re.compile(r"\([A-Z][^()]*,\s*\d{4}\)")
+# A sentence ends after a word or number: "E. a. minor" is an abbreviation.
+_LAST_SENTENCE_RE = re.compile(r"^.*(?:[^\W_]{2}|[)\"”»])[.!?…。！？](?=\s)", re.DOTALL)
+_LIST_TAIL_RE = re.compile(r"^[A-Z]\. [a-z]\. |^[A-Z][a-z]{3,} [a-z]{4,} [a-z]{4,} [A-Z(]|\bClick Here\b")
+
+
+def _finish_last_sentence(text: str) -> str:
+    """Drop a subspecies list after the last full sentence; a plain sentence
+    that only lacks its full stop gets one."""
+    text = text.rstrip(" :;,")
+    if not text or ord(text[-1]) >= 0x2E80:
+        return text
+    head = _LAST_SENTENCE_RE.match(text)
+    tail = text[head.end():].strip() if head else ""
+    if tail and (_AUTHOR_YEAR_RE.search(tail) or _LIST_TAIL_RE.search(tail)):
+        return head.group(0).strip()
+    return text if _SENTENCE_END_RE.search(text) else f"{text}."
+
+
 def clean_description_text(text: str) -> str:
     """Clean stored descriptions: drop hatnotes, section headings, reference-type
     tails and reference-list text, subspecies and synonym lists, citation
@@ -263,7 +284,8 @@ def clean_description_text(text: str) -> str:
                 kept.append(cleaned)
     if kept:
         kept[-1] = _drop_list_intro(kept[-1])
-    return "\n\n".join(p for p in kept if p).strip()
+    cleaned_text = "\n\n".join(p for p in kept if p).strip()
+    return _INVISIBLE_RE.sub("", _finish_last_sentence(cleaned_text))
 
 
 def select_description_text(full_text: str, min_words: int, target_words: int,

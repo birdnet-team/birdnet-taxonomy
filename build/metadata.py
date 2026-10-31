@@ -8,7 +8,7 @@ Combines two phases:
             images, and external identifiers. All data is read from
             pre-collected JSON files — no API calls.
   Phase 2 — Merge: Enrich each species with a single description using the
-            priority Claude > Wikipedia > eBird, then write the final output.
+            priority LLM > Wikipedia, then write the final output.
 
 Input files (all in raw_data/):
   - inat_data.json         (from collectors/inat.py)
@@ -38,6 +38,7 @@ import io
 import json
 import os
 import re
+import unicodedata
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -52,7 +53,8 @@ from collectors._common import (
 )
 from utils.audit_metadata import audit_records, has_failures, print_report
 from utils.description_quality import (
-    clean_description_text, describes_species, is_disambiguation_text, names_other_species,
+    clean_description_text, contains_species_identity, describes_species,
+    is_disambiguation_text, names_other_species,
     word_count,
 )
 
@@ -160,11 +162,27 @@ XC_EPITHET_GROUPS = {"Aves", "Mammalia", "Amphibia"}
 # Image helpers
 # ---------------------------------------------------------------------------
 
+def _fix_mojibake(text: str) -> str:
+    """Repair UTF-8 text that was decoded as Latin-1 ("JÃ¶rg" for "Jörg")."""
+    if "Ã" not in text and "â€" not in text:
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
 def _parse_image_author(attribution: str, source: str = "") -> str:
     """Extract author name from attribution strings."""
     if not attribution:
         return ""
-    text = html.unescape(attribution).strip()
+    text = _fix_mojibake(html.unescape(attribution).strip())
+    uploader = re.search(r"(?:original uploader was|photograph was taken by)\s+(.+?)"
+                         r"(?:\s+at\s+(?:\w+\s+)?\S*wikipedia|\s+and released|\.(?:\s|$)|$)",
+                         text, re.IGNORECASE)
+    if uploader:
+        text = uploader.group(1)
+    text = re.sub(r"\s+at\s+(?:\w+\s+)?wikipedia\b.*$", "", text, flags=re.IGNORECASE)
 
     if source == "ebird" or (" - " in text and not text.startswith("(")):
         text = text.split(" - ", 1)[-1].strip()
@@ -178,7 +196,7 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
         # "uploaded by X" → keep only X  (+ multilingual variants)
         m = re.search(
             r",?\s*(?:uploaded\s+by|uploadet\s+af|subido\s+por"
-            r"|carregado\s+por|загрузил|lähettänyt|feltöltötte:"
+            r"|carregado\s+por|загрузил|lähettänyt|feltöltötte:|yükleyen:|hochgeladen\s+von"
             r"|によって投稿されました"
             r"|由\s*.+?\s*上传"
             r")\s*(.+)",
@@ -190,6 +208,12 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
             r",?\s*(?:"
             r"(?:no|some|all)\s+(?:known\s+)?(?:copy)?rights?\s+(?:reserved|restrictions)"
             r"|alcuni\s+diritti\s+riservati"
+            r"|algunos\s+derechos\s+reservados"
+            r"|alguns\s+direitos\s+reservados"
+            r"|einige\s+Rechte\s+vorbehalten"
+            r"|bazı\s+hakları\s+saklıdır"
+            r"|sin\s+restricciones\s+conocidas\s+de\s+derechos"
+            r"|sem\s+restrições\s+de\s+direitos\s+autorais\s+conhecidas"
             r"|certains\s+droits\s+réservés"
             r"|kai\s+kurios\s+teisės\s+saugomos"
             r"|visos\s+teisės\s+saugomos"
@@ -319,7 +343,7 @@ def load_avicommons(cfg: dict) -> dict[str, dict]:
             "sci": (p.get("sciName") or "").strip(),
             "name": (p.get("name") or "").strip(),
             **{size: f"{base}/{code}-{key}-{px}.jpg" for size, px in sizes.items()},
-            "author": author,
+            "author": _fix_mojibake(html.unescape(author)),
             "license": lic,
         }
     return result
@@ -434,6 +458,7 @@ def load_manual_overrides() -> dict[str, dict]:
             overrides[sci] = {
                 **image_fields,
                 "image_crop_anchor": crop_anchor,
+                "gbif_id": (row.get("gbif_id") or "").strip(),
                 "source_url": (row.get("source_url") or "").strip(),
                 "notes": (row.get("notes") or "").strip(),
             }
@@ -1225,14 +1250,24 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     # Pass 0: taxa iNat has retired (swaps/merges). Their names become
     # aliases of the replacement taxon instead of duplicate species.
     retired_names: dict[int, list[str]] = {}
+    split_names: set[str] = set()
     for key, rec in inat.items():
         if rec.get("inat_id") is None or rec.get("is_active", True):
             continue
         stats["excluded_inactive"] += 1
-        for tid in rec.get("current_synonymous_taxon_ids") or []:
+        replacements = rec.get("current_synonymous_taxon_ids") or []
+        if len(replacements) > 1:
+            split_names.update(n for n in (key, rec.get("inat_name")) if n)
+        for tid in replacements:
             retired_names.setdefault(tid, []).extend(
                 n for n in (key, rec.get("inat_name")) if n
             )
+
+    def retired_source_names(inat_id: int, name: str) -> list[str]:
+        """Retired names whose raw data belongs to this species. After a split
+        that is only the species keeping the epithet."""
+        return [n for n in retired_names.get(inat_id, [])
+                if n not in split_names or same_epithet_stem(n.split()[-1], name.split()[-1])]
 
     # Pass 1: resolve active iNat species to canonical names. Birds resolve to
     # their AviList species (AviList is the bird authority); several iNat
@@ -1301,6 +1336,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             if other_key != key:
                 aliases.extend(claim_names(other_key))
             aliases.extend(retired_names.get(inat_id, []))
+            source_names.extend(retired_source_names(inat_id, target))
         avilist_en = avi_row["common_name_avilist"] or avi_row["common_name_clements"]
         clements_en = avi_row["common_name_clements"]
         pref_name = avilist_en or rec.get("preferred_common_name", "")
@@ -1336,6 +1372,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             if other_key != key:
                 aliases.extend(claim_names(other_key))
             aliases.extend(retired_names.get(inat_id, []))
+            source_names.extend(retired_source_names(inat_id, sci))
         # No AviList English name exists for a lumped taxon: use eBird's
         # (Clements) name for the same scientific name, else iNat's.
         ebird_en = next((ebird_tax[c].get("common_name", "") for c in ebird_by_sci.get(sci, [])
@@ -1375,6 +1412,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             if other_key != key:
                 aliases.extend(claim_names(other_key))
             aliases.extend(retired_names.get(inat_id, []))
+            source_names.extend(retired_source_names(inat_id, name))
         common_names = _inat_common_names(rec)
         taxonomy[name] = _new_entry(
             inat_id=rec["inat_id"],
@@ -1385,6 +1423,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             common_names=common_names,
             common_name_sources={loc: "inat" for loc in common_names},
             observations_count=rec.get("observations_count", 0),
+            gbif_id=str(rec.get("priority_gbif_id") or ""),
             match_source="non_bird",
             english_names=rec.get("english_names", []),
             source_names=source_names,
@@ -2042,25 +2081,104 @@ ID_FORMATS = {
 _BINOMIAL_SHAPE_RE = re.compile(r"[A-Z][a-z]+ [a-z][a-z-]+")
 # Localized "names" that are file names, catalogue numbers, or carry a
 # disambiguation number ("कालो धनेश २") (Wikidata labels).
-_JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}|\s\d+$", re.IGNORECASE)
+_JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}|\s\d+$|\bspp?\.(?:$|\s)", re.IGNORECASE)
 _SMALL_WORDS = {"a", "an", "and", "of", "the", "in", "on", "or", "de", "del", "des", "du", "la", "le",
                 "el", "al", "von", "van", "der", "den", "di", "da", "do", "dos", "das", "y"}
 
 
+def _foreign_script_name(loc: str, name: str, sound_class: bool) -> bool:
+    """A sound class label left in Latin script, or a Latin word inside an
+    Arabic or Hebrew name, is an untranslated fragment."""
+    primary = re.split(r"[-_]", loc)[0]
+    if primary in ("ar", "fa", "he") and re.search(r"[A-Za-z]", name):
+        return True
+    return sound_class and primary in NON_LATIN_LOCALES and bool(_LATIN_ONLY_RE.fullmatch(name.strip()))
+
+
+def _name_key(name: str) -> str:
+    """Compare display names ignoring case, spaces and hyphens, so "Tree Frog"
+    and "Treefrog" count as one name."""
+    return re.sub(r"[\s-]", "", name).lower()
+
+
 def _title_case(name: str) -> str:
     """AviList-style capitalisation for English names ("chestnut short-tailed
-    bat" → "Chestnut Short-tailed Bat"); never lowercases a letter."""
+    bat" → "Chestnut Short-tailed Bat"), with "13-year" in lower case."""
     words = name.split(" ")
-    return " ".join(
+    titled = " ".join(
         w if (i and w in _SMALL_WORDS) else w[:1].upper() + w[1:]
         for i, w in enumerate(words)
     )
+    return re.sub(r"(?<=\d-)[A-Z]", lambda m: m.group().lower(), titled)
+
+
+# Openings of a genus article in the main description languages.
+_GENUS_TEXT_RE = re.compile(
+    r"^[^.\n]{0,70}(?:\b(?:is|are) a genus of\b|\bist eine (?:\w+ )?Gattung\b"
+    r"|\best un genre\b|\bes un género\b|\bè un genere\b|\bé um género\b|\bé um gênero\b"
+    r"|\bis een geslacht\b|\bär ett (?:\w+ )?släkte\b|\b(?:on|ovat) [^.\n]{0,40}\bsuku\b"
+    r"|\bто род\b|— род\b|下的一个属|属の総称|\bjest rodzajem\b|\bje rod\b|\bbir cinsidir\b)",
+)
+
+
+def _drop_description(rec: dict, loc: str) -> None:
+    """Remove one locale's description and everything that points at it."""
+    rec["descriptions"].pop(loc, None)
+    rec["description_sources"].pop(loc, None)
+    rec["wikipedia_urls"].pop(loc, None)
+    if loc in rec.get("translate_locales", []):
+        rec["translate_locales"].remove(loc)
+
+
+def _drop_misplaced_texts(records: list[dict]) -> int:
+    """Drop texts that do not belong on one species record.
+
+    A genus article on a species of a genus with several species is not about
+    that species, and translations of it go too. A text shared by several
+    species stays with those it names. LLM text needs a Wikipedia article to
+    credit, since the license requires it.
+    """
+    species = [r for r in records if not is_sound_class_record(r)]
+    genus_size = Counter(r["scientific_name"].split()[0] for r in species)
+    shared: dict[tuple[str, str], list[dict]] = {}
+    dropped = 0
+    for rec in species:
+        multiple = genus_size[rec["scientific_name"].split()[0]] > 1
+        for loc, text in list(rec["descriptions"].items()):
+            if multiple and _GENUS_TEXT_RE.search(text[:160]):
+                translations = [
+                    other for other, src in rec["description_sources"].items()
+                    if loc == "en" and other != "en" and src == "llm"
+                ] if rec["description_sources"].get(loc) else []
+                for gone in (loc, *translations):
+                    _drop_description(rec, gone)
+                    dropped += 1
+            elif loc in rec["descriptions"]:
+                shared.setdefault((loc, text), []).append(rec)
+    for (loc, text), group in shared.items():
+        if len(group) < 2:
+            continue
+        named = [r for r in group if contains_species_identity(
+            text, [r["scientific_name"], *r.get("scientific_name_aliases", [])])]
+        for rec in group if named else []:
+            if rec not in named:
+                _drop_description(rec, loc)
+                dropped += 1
+    for rec in species:
+        if not rec["wikipedia_urls"]:
+            for loc, src in list(rec["description_sources"].items()):
+                if src.startswith("llm"):
+                    _drop_description(rec, loc)
+                    dropped += 1
+        sources = rec["description_sources"]
+        rec["description_source"] = sources.get("en") or next(iter(sources.values()), "")
+    return dropped
 
 
 def _mark_low_resource(records: list[dict]) -> int:
     """Mark records without a real image or English description.
 
-    Sound classes have no descriptions, so only their image counts. A record
+    A sound class needs only an image. A record
     without a real image gets proxy URLs, which serve the dummy image.
     """
     image_prefix = image_url_prefix()
@@ -2142,8 +2260,9 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
     for rec in records:
         if rec.get("record_type") == "sound_class" or rec["common_name"] == rec["scientific_name"]:
             continue
-        groups.setdefault(rec["common_name"].lower(), []).append(rec)
-    used = {rec["common_name"].lower() for rec in records}
+        groups.setdefault(_name_key(rec["common_name"]), []).append(rec)
+    used = {_name_key(rec["common_name"]) for rec in records}
+    genera = {rec["scientific_name"].split()[0] for rec in records}  # "Litoria Genimaculata"
     renamed = 0
     for name, group in groups.items():
         if len(group) < 2:
@@ -2158,12 +2277,14 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
             inat_names = taxonomy.get(sci, {}).get("english_names", [])
             names = attested[sci] + [_title_case(n) for n in inat_names]
             candidates[sci] = [n for n in names if is_clean_common_name(n)]
+        shared = group[0]["common_name"].lower()
         # Spelling variants ("Northern Freetail Bat") count as the shared name.
         def variant(n: str) -> bool:
-            return difflib.SequenceMatcher(None, n.lower(), name).ratio() >= 0.9
+            return difflib.SequenceMatcher(None, n.lower(), shared).ratio() >= 0.9
 
         def unused(sci: str) -> list[str]:
-            return [n for n in candidates[sci] if n.lower() not in used and not variant(n)]
+            return [n for n in candidates[sci] if _name_key(n) not in used and not variant(n)
+                    and not (len(n.split()) == 2 and n.split()[0] in genera)]
 
         group.sort(key=lambda r: (
             r.get("taxon_group") != "Aves",
@@ -2481,7 +2602,9 @@ def build_metadata(taxonomy: dict, wiki: dict,
                 for loc, name in (tax.get("common_names", {}) or {}).items()
             )
             if is_clean_common_name(name) and not _JUNK_NAME_RE.search(name)
+            and not _foreign_script_name(loc, name, is_sound_class_record(tax))
         }
+        common_names = {loc: unicodedata.normalize("NFC", n) for loc, n in common_names.items()}
         # The English entry is the display name (none when that falls back to
         # the scientific name: such entries are synonyms or other languages).
         if is_sound_class_record(tax):
@@ -2530,20 +2653,20 @@ def build_metadata(taxonomy: dict, wiki: dict,
             "wikipedia_urls": wikipedia_urls,
             "scientific_name_aliases": aliases,
             "image": image,
-            "image_author": image_author,
+            "image_author": _fix_mojibake(html.unescape(html.unescape(image_author))),
             "image_license": image_license,
             "image_source": image_source,
             "image_crop_anchor": override.get("image_crop_anchor"),
             "avicommons_image": None,
             "inat_id": tax.get("inat_id"),
             "ebird_code": tax.get("ebird_code", ""),
-            "gbif_id": tax.get("gbif_id", ""),
+            "gbif_id": override.get("gbif_id") or tax.get("gbif_id", ""),
             "ncbi_id": tax.get("ncbi_id", ""),
             "avibase_id": tax.get("avibase_id", ""),
             "birdlife_id": tax.get("birdlife_id", ""),
             "ml_taxon_code": tax.get("ml_taxon_code", ""),
             "xc_name": tax.get("xc_name", ""),
-            "observationorg_id": tax.get("observationorg_id", ""),
+            "observationorg_id": tax.get("observationorg_id") or None,
             "wikidata_qid": tax.get("wikidata_qid", ""),
             "commonness": None,  # set once the final species set is known
             # iNat observation count: build-internal (quality score and
@@ -2571,6 +2694,8 @@ def build_metadata(taxonomy: dict, wiki: dict,
                 avicommons_rejected.append(f"{av['sci']} ({record['ebird_code']}) ≠ {sci_name}")
         records.append(record)
 
+    print(f"  Texts dropped: {_drop_misplaced_texts(records)} (genus articles, "
+          "shared texts, LLM text without a source link)")
     records = _apply_metadata_quality_filter(records, quality_cfg, model_species)
     print(f"  Identifiers dropped for an invalid format: {invalid_ids}")
     print(f"  Images kept on one species only (shared photo): {_dedupe_images(records)} removed")

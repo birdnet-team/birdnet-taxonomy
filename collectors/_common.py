@@ -107,7 +107,7 @@ def save_json(data, path: Path):
 
 
 _FULL_SPECIES_NAME_RE = re.compile(r"^[A-Z][A-Za-z.-]+ [a-z][A-Za-z.-]+$")
-_BAD_DISPLAY_NAME_CHARS_RE = re.compile(r"[\(\)\[\]\{\}/\\<>|]")
+_BAD_DISPLAY_NAME_CHARS_RE = re.compile(r"[\(\)\[\]\{\}/\\<>|=（）［］／＝]")
 
 
 def is_full_species_name(name: str) -> bool:
@@ -118,7 +118,7 @@ def is_full_species_name(name: str) -> bool:
 def is_clean_scientific_name(name: str) -> bool:
     """Return True for final scientific names allowed in metadata."""
     clean = (name or "").strip()
-    if not clean or _BAD_DISPLAY_NAME_CHARS_RE.search(clean):
+    if not clean or "." in clean or _BAD_DISPLAY_NAME_CHARS_RE.search(clean):
         return False
     return is_full_species_name(clean)
 

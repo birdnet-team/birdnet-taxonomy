@@ -122,6 +122,9 @@ names become aliases of the replacement taxon.
 - A stored locale text is used only with that locale's article URL or a
   provenance label from `utils.translate`; unlabelled machine translations left
   by older runs are ignored.
+- A genus article on a species of a genus with several species is dropped, with its
+  translations. A text shared by several species stays with those it names. LLM text
+  needs a Wikipedia article to credit.
 - Wikipedia pages that only announce a split are not descriptions, and hatnotes
   ("The name X can also refer to Y") are removed.
 - Texts are cleaned of citation marks, sentences with leftover wiki markup,

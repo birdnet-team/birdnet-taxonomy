@@ -84,7 +84,7 @@ HTML species pages redirect to the canonical scientific name URL when accessed v
 
 ## API Query Parameters
 
-All list/search endpoints (`/api/species`, `/api/search`) support these parameters (`/api/search` requires `q`; `/api/species` accepts it as an optional search term):
+All list/search endpoints (`/api/species`, `/api/search`) support these parameters (both accept `q` as a search term; without it they return every record):
 
 | Parameter | Example | Description |
 |-----------|---------|-------------|
