@@ -496,6 +496,8 @@ def main() -> None:
                         help="Only translate locales without any text (leave native stubs)")
     parser.add_argument("--retranslate-stale", action="store_true",
                         help="Also redo LLM translations made from an older English source")
+    parser.add_argument("--species-file", default="",
+                        help="Only process the species in this file, one name per line")
     parser.add_argument(
         "--provider", default="",
         choices=provider_choices,
@@ -546,6 +548,10 @@ def main() -> None:
                            for loc, t in rec.get("extracts", {}).items() if t and loc in known}
     if not wiki:
         raise SystemExit("ERROR: wikipedia_data.json not found. Run collectors/wikipedia.py first.")
+    if args.species_file:
+        with open(args.species_file, encoding="utf-8") as fh:
+            selected = {line.strip() for line in fh if line.strip()}
+        wiki = {sci: rec for sci, rec in wiki.items() if sci in selected}
 
     existing = _load_existing_outputs()
 

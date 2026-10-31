@@ -1077,6 +1077,26 @@ def load_priority_species() -> list[dict]:
     return rows
 
 
+def priority_record_without_taxon(row: dict) -> dict:
+    """Record for a reviewed species that iNaturalist does not list."""
+    sci = row["scientific_name"]
+    common_name = row.get("common_name", "")
+    return {
+        "inat_id": None,
+        "inat_name": sci,
+        "taxon_group": row["taxon_group"],
+        "iconic_taxon_name": row["taxon_group"],
+        "common_names": {"en": common_name} if common_name else {},
+        "preferred_common_name": common_name,
+        "observations_count": 0,
+        "sound_observations_count": 0,
+        "is_active": True,
+        "priority_source": row.get("source", ""),
+        "priority_reason": row.get("reason", ""),
+        "priority_gbif_id": row.get("gbif_id", ""),
+    }
+
+
 def fetch_priority_species(existing: dict, cfg: dict, delay: float,
                            all_names: bool, limit: int = 0,
                            save_every: int = 200,
@@ -1122,12 +1142,18 @@ def fetch_priority_species(existing: dict, cfg: dict, delay: float,
                 not_found.append(row["scientific_name"])
             time.sleep(delay)
 
-    if not_found:
-        print(f"  Not found: {', '.join(not_found)}")
-    if not found_taxa:
-        return 0
-
     new_count = 0
+    if not_found:
+        print(f"  Not on iNaturalist, kept from the reviewed list: {', '.join(not_found)}")
+        for row in missing:
+            sci = row["scientific_name"]
+            if sci in not_found and sci not in existing:
+                existing[sci] = priority_record_without_taxon(row)
+                new_count += 1
+        save_json(existing, OUTPUT_FILE)
+    if not found_taxa:
+        return new_count
+
     batches = [
         found_taxa[i:i + TAXA_BATCH_SIZE]
         for i in range(0, len(found_taxa), TAXA_BATCH_SIZE)
@@ -1438,6 +1464,9 @@ def main():
         if not groups:
             print(f"ERROR: Unknown group '{args.group}'. Available: {', '.join(group_names)}")
             raise SystemExit(1)
+    # priority_only groups are never bulk-fetched: their species come from
+    # overrides/priority_species.csv.
+    groups = [g for g in groups if not g.get("priority_only")]
 
     existing = load_json(OUTPUT_FILE)
     print(f"Loaded {len(existing)} existing species records")

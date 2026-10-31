@@ -135,6 +135,12 @@ class SpeciesRecord(BaseModel):
     commonness: Optional[float] = Field(
         None, description="How often the species is observed on iNaturalist, as a percentile (0-100) within its taxon group; not abundance",
         examples=[100.0])
+    audioset_id: Optional[str] = Field(None, description="AudioSet ontology ID (sound classes)", examples=["/m/09x0r"])
+    parent: Optional[str] = Field(None, description="Nearest broader sound class in the AudioSet hierarchy (sound classes)", examples=["Speech"])
+    low_resource: Optional[bool] = Field(
+        None,
+        description="true when the record has no real image or English description; image URLs then serve the dummy image",
+        examples=[False])
     found: Optional[bool] = Field(
         None,
         description="false on the placeholder returned for an unknown name (fallback=true); absent on real records",
@@ -982,6 +988,30 @@ async def api_fields():
     return sorted(_ALL_FIELDS)
 
 
+@app.get("/api/model-labels/{model}", tags=["API"], response_model=list[dict[str, str]],
+         responses={404: {"description": "Unknown model"}})
+async def api_model_labels(
+    model: str,
+    status: str = Query("", description="Filter by status: keep, pending, or review"),
+):
+    """List an audio model's labels and how each maps onto the taxonomy.
+
+    One row per surviving model output: its taxonomy record and the
+    `redirect_to` label it merges into, if any. Removed labels and the
+    reasons given to the model developer are not published.
+    """
+    path = _data_dir() / "model_labels" / f"{Path(model).name}.csv"
+    if not path.exists():
+        raise HTTPException(404, f"No model labels for '{model}'")
+    with open(path, encoding="utf-8", newline="") as f:
+        rows = [row for row in csv.DictReader(f) if row["status"] != "remove"]
+    return [
+        {key: value for key, value in row.items()
+         if key not in ("rename_to", "reason", "reason_text")}
+        for row in rows if not status or row["status"] == status
+    ]
+
+
 @app.get("/api/search", tags=["API"],
          response_model=SearchResponse,
          response_model_exclude_none=True)
@@ -990,7 +1020,7 @@ async def api_search(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (wikipedia, ebird, llm, llm_fallback)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, audioset, llm, llm_fallback)"),
     min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
     max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
     sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),
@@ -1064,7 +1094,7 @@ async def api_species_list(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (wikipedia, ebird, llm, llm_fallback)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, audioset, llm, llm_fallback)"),
     min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
     max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
     sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),

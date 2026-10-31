@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw_data"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
+MANUAL_SOUND_CLASSES_FILE = ROOT / "overrides" / "sound_classes.csv"
 
 USER_AGENT = "BirdNET Species Metadata Crawler (https://github.com/birdnet-team/birdnet-taxonomy)"
 
@@ -257,6 +258,29 @@ def shared_id_species(existing: dict, field: str) -> set[str]:
         if value not in (None, ""):
             owners.setdefault(str(value), []).append(sci)
     return {sci for names in owners.values() if len(names) > 1 for sci in names}
+
+
+def load_manual_sound_classes() -> list[dict]:
+    """Load the reviewed non-species sound classes.
+
+    `aliases` and `scientific_aliases` are `|`-separated in the CSV.
+    """
+    rows: list[dict] = []
+    with MANUAL_SOUND_CLASSES_FILE.open(encoding="utf-8", newline="") as f:
+        for line_no, raw in enumerate(csv.DictReader(f), start=2):
+            row = {key: (value or "").strip() for key, value in raw.items()}
+            if not row.get("name") or not row.get("group"):
+                raise ValueError(
+                    f"{MANUAL_SOUND_CLASSES_FILE}: line {line_no}: name and group are required"
+                )
+            if not is_clean_common_name(row["name"]):
+                raise ValueError(
+                    f"{MANUAL_SOUND_CLASSES_FILE}: line {line_no}: invalid name '{row['name']}'"
+                )
+            for field in ("aliases", "scientific_aliases"):
+                row[field] = [value for value in row.get(field, "").split("|") if value]
+            rows.append(row)
+    return rows
 
 
 def load_manual_species_aliases() -> dict[str, list[str]]:

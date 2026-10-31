@@ -26,6 +26,7 @@ Anser rossii,Chen rossii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms s
 Anurolimnas castaneiceps,Rufirallus castaneiceps,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Apalis flavida,Apalis flavocincta,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Ardea coromanda,Bubulcus coromandus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Arizelocichla striifacies,Arizelocichla olivaceiceps,manual,AviList v2026 subspecies
 Arremon flavirostris,Arremon polionotus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Astur atricapillus,Accipiter atricapillus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Astur gentilis,Accipiter gentilis,https://github.com/birdnet-team/species-data/issues/1,Previous genus combination; prevents old-name lookup from resolving to Accipiter nisus
@@ -66,6 +67,7 @@ Chloropsis hardwickii,Chloropsis lazulina,raw_data/label_v05_reconciled.csv,Labe
 Chordeiles nacunda,Podager nacunda,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Chordeiles pusillus,Nannochordeiles pusillus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Chroicocephalus philadelphia,Larus philadelphia,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Cinnyris stuhlmanni,Cinnyris whytei,manual,AviList v2026 subspecies
 Circaetus spectabilis,Dryotriorchis spectabilis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Cnephaeus nilssonii,Eptesicus nilssonii,https://github.com/birdnet-team/birdnet-taxonomy/issues/2,GBIF backbone accepts Eptesicus nilssonii (7261816); iNat/XC use the Cnephaeus combination
 Cnephaeus serotinus,Eptesicus serotinus,https://github.com/birdnet-team/birdnet-taxonomy/issues/2,GBIF backbone accepts Eptesicus serotinus (2432359); iNat/XC use the Cnephaeus combination
@@ -106,10 +108,11 @@ Dryophytes cinereus,Hyla cinerea,raw_data/label_v05_reconciled.csv,Labels_v05 sc
 Dryophytes eximius,Hyla eximia,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Dryophytes femoralis,Hyla femoralis,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Dryophytes gratiosus,Hyla gratiosa,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes immaculatus,Hyla suweonensis,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Dryophytes japonicus,Hyla japonica,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Dryophytes squirellus,Hyla squirella,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Dryophytes suweonensis,Hyla suweonensis,manual,iNaturalist synonym
 Dryophytes versicolor,Hyla versicolor,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Egretta garzetta,Egretta dimorpha,manual,AviList v2026 subspecies
 Eleothreptus anomalus,Hydropsalis anomala,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Eleothreptus candicans,Hydropsalis candicans,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Emblema modestum,Emblema modesta,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
@@ -148,10 +151,11 @@ Horizocerus albocristatus,Tropicranus albocristatus,raw_data/label_v05_reconcile
 Horornis acanthizoides,Cettia acanthizoides,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Hydrochoerus hydrochaeris,Hydrochoeris hydrochaeris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Hylarana nicobariensis,Amnirana nicobariensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Hylexetastes perrotii,Hylexetastes brigidai,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Hylexetastes uniformis,Hylexetastes brigidai,manual,AviList v2026 subspecies
 Hypocharmosyna placentis,Charmosyna placentis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Ichthyaetus ichthyaetus,Larus ichthyaetus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Icterus cayanensis,Icterus chrysocephalus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Icterus laudabilis,Icterus laudablis,manual,Misspelling in the English Wikipedia article
 Ixos leucogrammicus,Pycnonotus leucogrammicus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Lagothrix lagothricha,Lagothrix lagotricha,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Laterallus flaviventer,Hapalocrex flaviventer,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
@@ -216,10 +220,13 @@ Onychostruthus taczanowskii,Montifringilla taczanowskii,raw_data/label_v05_recon
 Otospermophilus beecheyi,Spermophilus beecheyi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Otospermophilus variegatus,Spermophilus variegatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Otus senegalensis,Otus feae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Pachycephala pectoralis,Pachycephala fuliginosa,manual,AviList v2026 subspecies
 Pachyglossa vincens,Dicaeum vincens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Pantherophis alleghaniensis,Pantherophis spiloides,manual,iNaturalist synonym
 Paradoxornis heudei,Calamornis heudei,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Pelophylax esculentus,Rana esculenta,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Pelophylax perezi,Rana perezi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Pelophylax ridibundus,Pelophylax cypriensis,manual,iNaturalist synonym; epithet matching must not give it to Bufotes cypriensis
 Pengilleyia tyleri,Litoria tyleri,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Phonipara canora,Tiaris canorus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Picus canus,Picus dedemi,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
@@ -253,6 +260,7 @@ Radjah radjah,Tadorna radjah,raw_data/label_v05_reconciled.csv,Labels_v05 synony
 Ramphastos ambiguus,Ramphastos swainsonii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Ramphiculus gularis,Ptilinopus epius,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Ramphiculus gularis,Ptilinopus gularis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Rawlinsonia ewingii,Litoria ewingii,manual,iNaturalist synonym; the split-off R. calliscelis must not claim it
 Rhabdotorrhinus corrugatus,Aceros corrugatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Rhinella diptycha,Rhinella schneideri,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Rhinella dorbignyi,Rhinella fernandezae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
@@ -342,5 +350,5 @@ Xiphorhynchus ocellatus,Xiphorhynchus beauperthuysii,raw_data/label_v05_reconcil
 Xiphorhynchus ocellatus,Xiphorhynchus chunchotambo,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Zhangixalus moltrechti,Rhacophorus moltrechti,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Zhangixalus taipeianus,Rhacophorus taipeianus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Zimmerius chrysops,Zimmerius flavidifrons,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Zimmerius chrysops,Zimmerius minimus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Zimmerius viridiflavus,Zimmerius flavidifrons,manual,AviList v2026 subspecies

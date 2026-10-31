@@ -68,8 +68,8 @@ Stale shared IDs in cached raw data can be re-resolved with
 `python -m collectors.macaulay --recheck-shared`, and
 `python -m collectors.xenocanto --revalidate`.
 
-Non-species sound classes are the only exception. Add them under
-`sound_classes` in `config.yml`, not in biological taxonomy or priority-species
+Non-species sound classes are the only exception. Add them to
+`overrides/sound_classes.csv`, not in biological taxonomy or priority-species
 overrides. These records use the English display name as `scientific_name` and
 must carry `record_type: sound_class` in built metadata.
 
@@ -80,16 +80,18 @@ part of the accepted name.
 
 ## Manual Overrides
 
-Community-maintained manual overrides live in `overrides/species_overrides.csv` and are applied during `python -m build.metadata`.
+Community-maintained manual overrides live in `overrides/species_overrides.csv` and are applied during `python -m build.metadata`. They are tracked in Git and always take precedence over fetched image data. Current support covers image replacement and manual crop anchoring.
 
 Rules:
 
 - `scientific_name` is required and must match a known species exactly.
 - If any of `image_url`, `image_author`, `image_license`, or `image_source` is set, all four are required.
-- `image_crop_anchor` is optional and must be an integer from `1` to `9`.
+- `image_crop_anchor` is optional and must be an integer from `1` to `9`: a 3×3 grid position that bypasses smart crop, where `5` is center crop, `3` is top-right, `7` is bottom-left, etc.
 - `source_url` and `notes` are optional but useful for review.
 
 The build fails on invalid anchors, duplicate rows, partial image overrides, or unknown species names.
+
+If an override changes the effective image URL or crop anchor, the image pipeline regenerates the same named `.webp` file in place. Cache freshness is tracked separately in per-image JSON sidecars under `dev/images/*/.state/` or `dist/images/*/.state/`.
 
 ## Common-Name Aliases
 
@@ -100,13 +102,29 @@ species, e.g. `human vocal` or `speech` for *Homo sapiens*. Real names belong
 in the source data, and scientific synonyms in `overrides/species_aliases.csv`.
 
 The build fails on unknown species, invalid or duplicate aliases, or an alias
-that is another species' common name.
+that is another species' common name (unless that record redirects to this one
+in a model crosswalk).
+
+## Model Labels
+
+`overrides/model_labels/<model>.csv` maps each output of an audio model onto the
+taxonomy. [docs/model-labels.md](docs/model-labels.md) describes the columns. Keep the taxonomy lean: a label that is
+a duplicate, sketchy, or not useful stays out, with status `remove`, and the export
+tells the model developer to prune it.
+
+- Give every `remove` and `review` row a `reason`, so the CSV for the model developer can
+  say why. Use `note` for specifics the standard wording misses. Reasons stay out of
+  taxonomy records, the release zip and the API.
+- Set `redirect_to` only if the target is a surviving label with training samples.
+- Set `status` to `pending` when a label's record is planned, and to `keep` once the
+  record exists. The build fails if either no longer matches the records.
+- Never rename a species to fit a label. Model names become aliases.
 
 ## Priority Species
 
 Reviewed issue-specific taxonomy additions live in `overrides/priority_species.csv` and are fetched during `python -m collectors.inat`.
 
-Use this only for species that should be included even if they need special review outside the normal group thresholds. Prefer an iNaturalist taxon ID whenever possible.
+Use this only for species that should be included even if they need special review outside the normal group thresholds. Prefer an iNaturalist taxon ID whenever possible. A species iNaturalist does not list stays in as a record without an iNat taxon, so first confirm it in GBIF or Catalogue of Life and name that source in `source`.
 
 Required columns:
 
@@ -150,7 +168,9 @@ justified: every row is a deliberate deviation from AviList.
 ## Scientific Aliases
 
 Reviewed manual scientific-name bridges live in `overrides/species_aliases.csv`
-and are applied during `python -m build.metadata`.
+and are applied during `python -m build.metadata`. A reviewed alias outranks any
+source that gives the same name to another species, which fixes a synonym that
+followed the wrong half of a split.
 
 Required columns:
 
@@ -195,4 +215,6 @@ If you add or change:
 - image handling
 - contributor workflow
 
-update [README.md](README.md) and this file in the same change.
+update the matching file in [docs/](docs/), and this file, in the same change. Keep
+[README.md](README.md) lean: it holds the overview and quick start, and detail and
+reasoning belong in `docs/`.

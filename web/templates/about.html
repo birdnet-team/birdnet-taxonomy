@@ -162,8 +162,7 @@
     cleaned of headings, reference lists, and subspecies lists. Where a
     language has no article, or only a stub, the language model translates the
     English description, using the species' established common name in that
-    language. If no Wikipedia English text exists, the eBird species
-    description is used, and as a last resort the model writes an English
+    language. If no Wikipedia English text exists, the model writes an English
     description strictly from the species' other-language Wikipedia articles.
 </p>
 
@@ -183,15 +182,42 @@
     cleanup requires it; after 1.0 they are meant to remain constant.
 </p>
 
-<h2>Licensing and reuse</h2>
+<h2 id="license">Licensing and reuse</h2>
 
 <p>
-    The metadata itself (names, descriptions, identifiers) is available under
-    the project's open-source license. Images, however, carry their own
-    individual licenses: most are Creative Commons in various flavors, and
-    Macaulay Library images are copyrighted by their photographers and used
-    under Cornell's terms. The license for each image is recorded in the
-    dataset so you can filter or attribute accordingly.
+    The data, the images, and the code each have different terms.
+</p>
+
+<ul>
+    <li>
+        <strong>Taxonomy data:</strong> the CSV and JSON files are licensed under
+        <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>.
+        You may share and adapt them, including commercially, if you give credit,
+        indicate any changes, and distribute your adaptations under the same license.
+    </li>
+    <li>
+        <strong>Images:</strong> these are not part of the data files, which only
+        link to them, and they are not covered by that license. Each image has its
+        own: most are Creative Commons in various flavors, many of them
+        non-commercial, and Macaulay Library images are copyrighted by their
+        photographers and used under Cornell's terms. The license for each image is
+        recorded in the dataset, so please check it before adding an image to your
+        own codebase or product. For birds, the referenced Avicommons photos are an
+        alternative: all are Creative Commons, although most are non-commercial.
+    </li>
+    <li>
+        <strong>Code:</strong> the code in the
+        <a href="https://github.com/birdnet-team/birdnet-taxonomy">GitHub repository</a>
+        is licensed under the MIT License.
+    </li>
+</ul>
+
+<p>
+    When you use the data, please credit the version you used:
+    <em>BirdNET+ Taxonomy {{ taxonomy_version }},
+    https://birdnet.cornell.edu/taxonomy, CC BY-SA 4.0</em>. The
+    <a href="https://github.com/birdnet-team/birdnet-taxonomy/blob/main/LICENSE-DATA.md">data license file</a>,
+    also included in the ZIP download, lists the sources to credit.
 </p>
 
 <p>

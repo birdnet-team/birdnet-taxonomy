@@ -1,0 +1,135 @@
+name,group,wikidata_qid,audioset_id,parent,image_file,aliases,scientific_aliases,description
+Power tools,Anthropogenic,Q1327701,/m/0_ksk,,,power tool,Power tool,Sounds of tools that employ a power source other than the manual labor used with hand tools. The most common types of power tools use electric motors.
+Siren,Anthropogenic,Q205234,/m/03kmc9,,,warning siren|emergency siren|police siren|ambulance siren|air raid siren,Warning siren|Emergency siren|Police siren|Ambulance siren|Air raid siren,The sound of a loud noise-making device used to provide warnings to people nearby. A siren typically consists of a single pitch that changes either smoothly or abruptly on timescales around one second.
+Gun,Anthropogenic,Q12796,,,,firearm|gunshot|gun shot|gunfire|shooting|shot|shots|rifle|pistol|handgun|hunting|poaching,Firearm|Gunshot|Gun shot|Gunfire|Shooting|Shot|Shots|Rifle|Pistol|Handgun|Hunting|Poaching,
+Chainsaw,Anthropogenic,Q208040,/m/01j4z9,,,chain saw|power saw|motor saw|saw,Chain saw|Power saw|Motor saw|Saw,The sound of a portable mechanical saw which cuts with a set of teeth attached to a rotating chain. Chainsaws are commonly powered by a small two-stroke internal combustion engine.
+Engine,Anthropogenic,Q44167,/m/02mk9,,Renault_4cv_engine_1961.jpg,motor|cars|car engine|carengine|vehicle|automobile|machinery,Motor|Cars|Car engine|Carengine|Vehicle|Automobile|Machinery,"The sound of a machine designed to produce mechanical energy. Combustion engines burn a fuel to create heat, which then creates a force. Electric motors convert electrical energy into mechanical motion. Other classes of engines include pneumatic motors and clockwork motors."
+Rain,Geophony,Q7925,/m/06mb1,,,rainfall|raining|drizzle|downpour|precipitation|shower|rain shower,Rainfall|Raining|Drizzle|Downpour|Precipitation|Shower|Rain shower,The sound of droplets of liquid water that have condensed from atmospheric water vapor and then fallen under gravity.
+Thunder,Geophony,Q83301,/m/0ngt1,,Lightning_over_Oradea_Romania_zoom.jpg,thunderclap|thunder clap|thunderstorm|storm|lightning,Thunderclap|Thunder clap|Thunderstorm|Storm|Lightning,"The sound caused by lightning. Depending on the distance and nature of the lightning, thunder can range from a sharp, loud crack to a long, low rumble."
+Wind,Geophony,Q8094,/m/03m9d0z,,Tall_Grass_in_the_Wind_(Unsplash).jpg,windy|breeze|gale|gust|wind gust|storm wind,Windy|Breeze|Gale|Gust|Wind gust|Storm wind,"Sounds caused by the large-scale flow of gases, especially the air flowing over the surface of the Earth. Long-duration winds have various names associated with their average strength, such as breeze, gale, storm, and hurricane."
+Noise,Soundscape,Q179448,/m/096m7z,,,,,A sound that has no perceptible structure and that typically interferes with the perception of more interesting or important sounds.
+Biophony,Soundscape,,,,,,,
+Geophony,Soundscape,,,,,,,
+Anthropophony,Soundscape,,,,,,,
+Accordion,Music,Q79838,/m/0mkg,Music,,,,"The sound of a family of box-shaped bellows-driven musical instruments played by pressing buttons or keys which allow air to flow across strips of brass or steel, called reeds, that vibrate to produce sound inside the body."
+Acoustic guitar,Music,Q31561,/m/042v_gx,Guitar,,,,"Sounds of a guitar that produces sound acoustically by transmitting the vibration of the strings from its body to the air. Includes guitars with both nylon (or gut) strings, and those with steel strings."
+Alarm,Anthropogenic,,/m/07pp_mv,,,,,The sound of an automatic signal warning of danger.
+Applause,Human,Q814696,/m/028ght,,,,,Group expression of approval by the collective act of clapping by a group.
+Bass drum,Music,Q211028,/m/0bm02,Drum,,,,The sound of a large drum that produces a note of low definite or indefinite pitch.
+Bass guitar,Music,Q46185,/m/018vs,Guitar,,,,Sounds of a relative of the electric guitar with a longer neck and 4 to 6 strings. The common 4-string bass is usually tuned one octave lower than the four lowest pitched strings of a guitar.
+Bathtub,Anthropogenic,Q152095,/m/03dnzn,,,,,Sounds originating from a large container for holding water in which a person may bathe.
+Bell,Music,Q101401,/m/0395lw,Music,,,,"The sound of a simple instrument usually consisting of metal cast in the shape of a hollow cup, whose sides form a resonator which vibrates in a single tone upon being struck by a ""clapper"" suspended within, or by a separate mallet or hammer."
+Bicycle,Anthropogenic,Q11442,/m/0199g,,,,,"Sounds of a human-powered, pedal-driven vehicle, having two wheels attached to a frame, one behind the other."
+Bicycle bell,Anthropogenic,Q508113,/m/0gy1t2s,Bell,,,,The sound of a percussive signaling instrument mounted on a bicycle for warning pedestrians and other cyclists.
+Boat,Anthropogenic,Q35872,/m/019jd,,,Water vehicle,,"Sounds of watercraft designed to float, plane, work, or travel on water."
+Boiling,Anthropogenic,Q41716,/m/0dv3j,,,,,"The sound of a liquid that is reaching the temperature at which it transitions to a vapor, resulting in bubbles emerging at the surface."
+Breathing,Human,Q9530,/m/0lyf6,,,,,Air being moved in and out of the lungs in order to sustain life.
+Burping,Human,Q209789,/m/03q5_w,,,,,The release of gas from the digestive tract through the mouth.
+Bus,Anthropogenic,Q5638,/m/01bjv,,,,,Interior and exterior sounds of a road vehicle designed to carry many passengers.
+Camera,Anthropogenic,Q15328,/m/0dv5r,,,,,Sounds of mechanical or electronic instruments that employ optics to record or capture images.
+Car,Anthropogenic,Q1144312,/m/0k4j,,,,,"Sounds of a self-powered motor vehicle with usually four wheels used for transportation of one to eight people, designed to run primarily on roads."
+Chatter,Human,,/m/07rkbfh,,,,,The combined sound of casual speech by many people in individual simultaneous conversations.
+Cheering,Human,Q15729215,/m/053hz1,,,,,"Encouraging, stimulating, or exciting vocalizations indicating approval or welcoming persons, announcements, etc."
+Chewing,Human,Q827742,/m/03cczk,,,,,Food being crushed and ground by teeth.
+Child speech,Human,,/m/0ytgt,Speech,,,,"Speech uttered by a human child, i.e. a human whose voice does not yet resemble that of an adult."
+Chuckle,Human,,/m/07rgt08,Laughter,,,,Laugh quietly or with restraint.
+Church bell,Music,Q3500690,/m/03w41f,Bell,,,,The sound of a large bell usually encountered in churches where it used either to signify the hour or the time for worshippers to go to church.
+Clapping,Human,Q1322478,/m/0l15bq,,,,,"A percussive sound made by a human striking together the palms of their two hands, often quickly and repeatedly to express appreciation or approval. This category is to be used for distinct claps by a single person; for a group of people clapping together, use Applause."
+Clock,Anthropogenic,Q376,/m/01x3z,,,,,Sounds made by an instrument designed to keep and indicate time.
+Coin,Anthropogenic,Q41207,/m/0242l,,,,,"The sound of a small, flat, round piece of hard material such as metal or plastic colliding with or bouncing on a hard surface."
+Computer keyboard,Anthropogenic,Q250,/m/01m2v,,,,,Sounds created by a typewriter-style device which uses an arrangement of buttons or keys controlling switches to enter text or other information into a computer or other electronic device.
+Conversation,Human,Q52943,/m/01h8n0,Speech,,,,"Interactive, spontaneous spoken communication between two or more people."
+Cough,Human,Q35805,/m/01b_21,,,,,"A sudden and often repetitively occurring reflex which consists of an inhalation, a forced exhalation against a closed glottis, and a violent release of air following opening of the glottis."
+Cowbell,Music,Q775570,/m/0239kh,Percussion,,,,A simple metal bell historically tied around the necks of cattle to keep track of their whereabouts.
+Crash cymbal,Music,Q93985,/m/0bm0k,Cymbal,,,,"The sound of a cymbal that produces a loud, sharp ""crash"" used for occasional accents."
+Crowd,Human,Q13430821,/m/03qtwd,,,,,The sound of a large group of people gathered together.
+Crying,Human,Q152247,/m/0463cq4,,,,,"Sound associated with the shedding of tears in response to an emotional state, arising from slow but erratic inhalation, occasional instances of breath holding and muscular tremor."
+Cupboard,Anthropogenic,Q5662058,/m/0642b4,,,,,The sound of the door to a storage cabinet being opened or closed.
+Cutlery,Anthropogenic,Q81944,/m/023pjk,,,silverware,,"The sounds of hand implements such as knife, fork, and spoon, that are typically made of steel and are used in preparing, serving, and eating food in the Western world."
+Cymbal,Music,Q190172,/m/01qbl,Percussion,,,,"The sound of a percussion instrument consisting of thin, normally round plates of various alloys. They may be used in pairs, struck together, or as single cymbals struck with sticks."
+Dishes,Anthropogenic,Q851782,/m/04brg2,,,pots|pans,,"The sound of non-destructive collisions between plates, dishes, glassware, cooking vessels, and kitchen and eating utensils."
+Doorbell,Anthropogenic,Q384459,/m/03wwcy,Alarm,,,,The sound of a signaling device typically placed near a building's entrance with which a visitor can announce their presence to occupants.
+Drawer,Anthropogenic,Q223575,/m/0fqfqc,,,,,The sound of the opening or closing of a box-shaped container that fits into a piece of furniture in such a way that it can be drawn out horizontally to reach its contents.
+Power drill,Anthropogenic,Q58964,/m/01d380,Power tools,,electric drill,Electric drill,Sounds of a tool used for making holes in various materials via a rotating drill bit.
+Drum,Music,Q11404,/m/026t6,Percussion,,,,"The sound of an instrument consisting of at least one membrane, called a drumhead or drum skin, that is stretched over a shell and struck, either directly with the player's hands, or with a drum stick, to produce sound."
+Drum kit,Music,Q128309,/m/02hnl,Percussion,,,,"Sounds of a collection of drums and other percussion instruments, typically cymbals, which are set up on stands to be played by a single player with drumsticks held in both hands and the feet operating pedals that control the hi-hat cymbal and the beater for the bass drum."
+Electric guitar,Music,Q78987,/m/02sgy,Guitar,,,,"Sounds of a guitar that uses a pickup to convert the vibration of its strings (which are typically made of metal, and which occurs when a guitarist strums, plucks, or fingerpicks the strings) into electrical impulses, which are then amplified and converted to sound."
+Explosion,Anthropogenic,Q179057,/m/014zdl,,,,,"The sound of a rapid increase in volume and release of energy in an extreme manner, usually with the generation of high temperatures and the release of gases."
+Fart,Human,Q5436447,/m/02_nn,,,,,The release of gasses produced by digestion through the anus; flatulence.
+Female singing,Human,,/t/dd00004,Singing,,,,Singing produced by an adult human female.
+Female speech,Human,,/m/02zsn,Speech,,,,Speech uttered by an adult female human.
+Finger snapping,Human,Q3269139,/m/025_jnm,,,,,A snapping or clicking sound usually caused by building tension between the thumb and another finger and then moving the other finger forcefully downward to hits the palm at high speed.
+Fire,Geophony,Q3196,/m/02_41,,,,,"Sounds resulting from  the rapid oxidation of a material in the exothermic chemical process of combustion, releasing heat, light, and various reaction products."
+Fireworks,Anthropogenic,Q127933,/m/0g6b5,Explosion,,,,Sounds of a class of low explosive pyrotechnic devices used for aesthetic and entertainment purposes.
+Airplane,Anthropogenic,Q2875704,/m/0cmf2,,,Fixed-wing aircraft,,Sounds of an aircraft capable of flight using wings that generate lift caused by the vehicle's forward airspeed and the shape of the wings.
+Frying,Anthropogenic,Q300472,/m/0dxrf,,,,,The sound of cooking food in oil or another fat.
+Gasp,Human,,/m/07s0dtb,Breathing,,,,A short labored intake of breath with the mouth open. Often indicates shock or surprise.
+Giggle,Human,,/m/07r660_,Laughter,,,,A foolish or nervous laugh.
+Glockenspiel,Music,Q626035,/m/0dwtp,Percussion,,,,Sounds of a percussion instrument composed of a set of tuned metal plates or tubes laid out like the keyboard of a piano.
+Gong,Music,Q208320,/m/0mbct,Percussion,,,,"The sound of a musical percussion instrument consisting of a flat, circular metal disc which is hit with a mallet."
+Guitar,Music,Q6607,/m/0342h,Plucked string instrument,,,,"Sounds of a string instrument with between 4 and 18 strings (typically 6) running over a fretboard, typically played by strumming or plucking the strings with the right hand while fretting the strings with the fingers of the left hand."
+Hammer,Anthropogenic,Q25294,/m/03l9g,,,,,"Sounds made by a tool or device that delivers a blow to an object. Most hammers are hand tools used to drive nails, fit parts, forge metal, and break apart objects."
+Harmonica,Music,Q51290,/m/03qjg,Music,,,,"The sound of a wind instrument played by using the mouth to direct air into or out of one or more holes along a mouthpiece. Behind each hole is a chamber containing at least one reed, producing a specific note or notes."
+Harp,Music,Q47369,/m/03m5k,Music,,,,"The sound of a stringed musical instrument with a number of individual strings, plucked with the fingers, running at an angle to its soundboard."
+Hi-hat,Music,Q963334,/m/03qtq,Cymbal,,,,"The sound of a mating pair of small cymbals mounted atop one-another on a stand, the bottom fixed and the top activated up and down by a foot pedal. The rate of decay of the sound is changed between a shimmering and sharp effect by pressing on the pedal."
+Musical keyboard,Music,Q52954,/m/05148p4,Music,,Keyboard,,"Sounds of a musical instrument played using a keyboard, most commonly the piano, organ, and various electronic keyboards, including synthesizers and digital pianos."
+Keys,Anthropogenic,Q132041,/m/03v3yw,,,,,"Sounds made by the mutual collision of small pieces of metal, which are often linked on a ring, used to operate locks."
+Laughter,Human,Q170579,/m/01j3sz,,,,,"The sound of rhythmical contractions of the diaphragm in response to stimuli such as tickling, or from humorous stories or thoughts."
+Livestock,Soundscape,Q103459,/m/0ch8v,,,,,Sound made by animals associated with farms and agriculture.
+Male singing,Human,,/t/dd00003,Singing,,,,Singing produced by an adult human male.
+Male speech,Human,,/m/05zppz,Speech,,,,Speech uttered by an adult male human.
+Xylophone,Music,Q165666,/m/0dwsp,Percussion,,,,Sounds of a percussion instrument consisting of a set of wooden bars struck with mallets to produce musical tones. Resonators suspended underneath the bars may amplify their sound.
+Mechanical fan,Anthropogenic,Q6498398,/m/02x984l,,,,,Sounds of a machine used to create air flow via the motion of a rotating arrangement of vanes or blades.
+Microwave oven,Anthropogenic,Q127956,/m/0fx9l,,,,,"Sounds made by a kitchen appliance that heats food by exposing it to microwave radiation, including the noise of the fan, rotation mechanism, and microwave source, as well as the alert sound used to indicate that cooking is complete."
+Motorcycle,Anthropogenic,Q34493,/m/04_sv,,,,,"Sounds of a small motor vehicle, usually with only two wheels. Motorcycles typically lack an external shell and seat riders astride the engine."
+Music,Music,Q638,/m/04rlf,,,,,"Music is an art form and cultural activity whose medium is sound and silence. The common elements of music are pitch, rhythm, dynamics, and the sonic qualities of timbre and texture."
+Organ,Music,Q1444,/m/013y1f,Musical keyboard,,,,"Sounds of a keyboard instrument of one or more pipe divisions, each played with its own keyboard, played either with the hands on a keyboard or with the feet using pedals. Unlike the piano, organ notes typically sustain while the key is depressed, rather than dying away."
+Packing tape,Anthropogenic,Q4951474,/m/05mxj0q,,,duct tape,,Sounds associated with self-adhesive tape from wide rolls used to seal cardboard boxes and other temporary attachments. Specifically includes the distinctive noise of the tape being dispensed from a roll.
+Piano,Music,Q5994,/m/05r5c,Musical keyboard,,,,"Sounds of a musical instrument played via a row of keys that the performer presses down or strikes with the fingers and thumbs of both hands, to trigger a decaying note whose loudness reflects the vigor of the press."
+Printer,Anthropogenic,Q82,/m/01m4t,,,,,Sounds of a computer peripheral which makes a persistent human readable representation of graphics or text on paper or similar physical media.
+Race car,Anthropogenic,Q673687,/m/0ltv,Car,,auto racing,,"The sound of one or more motor vehicles engaged in a competition to complete a course as quickly as possible. Specialized race cars include many modifications, often making them much louder than common street vehicles."
+Ratchet,Anthropogenic,Q11171014,/m/02bm9n,,,pawl,,The sound of a mechanical device that allows continuous linear or rotary motion in only one direction while preventing motion in the opposite direction.
+Musical rattle,Music,Q2132068,/m/05r5wn,Percussion,,Rattle,,"The sound of an instrument that produces a sound when shaken, usually consisting of a closed rigid shell containing numerous small particles that strike the shell when shaken."
+Ringtone,Anthropogenic,Q690856,/m/01hnzm,Telephone,,,,The synthesized or pre-recorded sounds made by contemporary electronic telephones to indicate an incoming call or text message.
+Running,Human,Q105674,/m/06h7j,,,,,Move fast by using one's feet.
+Sawing,Anthropogenic,Q125356,/m/01b82r,,,,,"Sounds of a tool consisting of a tough blade, wire, or chain with a hard toothed edge, used to cut through material, most often wood.  Includes both manual and motorized saws."
+Scissors,Anthropogenic,Q40847,/m/01lsmm,,,,,The sound of hand-operated shearing tools consisting of a pair of metal blades pivoted so that the sharpened edges slide against each other when the handles opposite to the pivot are closed.
+Turntable scratching,Music,Q1413166,/m/01hgjl,Music,,Scratching,,The sound of a technique of moving a vinyl record back and forth on a turntable while optionally manipulating the crossfader on a DJ mixer.
+Screaming,Human,Q1932016,/m/03qc9zr,,,,,"A sharp, high-pitched human vocalization; often an instinctive action indicating fear, pain, surprise, joy, anger, etc. Verbal content is absent or overwhelmed, unlike Shout and Yell."
+Shout,Human,,/m/07p6fty,,,,,Talk in a loud voice to deliberately command attention or overcome interfering sounds. Does not have the stronger emotional connotations of Yell or Scream.
+Sigh,Human,,/m/07plz5l,,,,,An utterance made by exhaling audibly.
+Singing,Human,Q27939,/m/015lz1,,,,,"Musical sounds produced with the human voice, including sustained tonality, rhythm, and a variety of other vocal techniques."
+Sink,Anthropogenic,Q140565,/m/0130jx,,,,,"Sounds originating from a bowl-shaped plumbing fixture that stores and drains water and that is used for washing hands, dishwashing, and other purposes."
+Skateboard,Anthropogenic,Q15783,/m/06_fw,,,,,"Sounds of a type of sports equipment consisting of a board mounted on two pairs of wheels. A skateboard is typically propelled by pushing with one foot while the other remains on the board, or by simply standing on the deck while on a downward slope and allowing gravity to propel the board and rider."
+Sliding door,Anthropogenic,Q2234382,/m/02y_763,,,,,"The sound of a type of door which opens horizontally by sliding, usually parallel to a wall."
+Snare drum,Music,Q208421,/m/06rvn,Drum,,,,"The sound of a drum that produces a sharp staccato sound by virtue of metal coils (the ""snare"") stretched across one of the membranes."
+Sneeze,Human,Q35830,/m/01hsr_,,,,,"A convulsive expulsion of air from the lungs through the nose and mouth, usually caused by foreign particles irritating the nasal mucous."
+Speech,Human,Q52946,/m/09x0r,,,,,"Speech is the vocalized form of human communication, created out of the phonetic combination of a limited set of vowel and consonant speech sound units."
+Stream,Geophony,Q47521,/m/0j6m2,,,,,"Sounds of a body of water with a current, confined within a bed and banks."
+Subway,Anthropogenic,Q5503,/m/0195fx,,,metro|underground,,"Sounds of high-capacity electric railways that serve as public transport, generally in urban areas."
+Tabla,Music,Q213100,/m/01p970,Drum,,,,"The sound of a classical Hindustani percussion instrument consisting of a pair of hand drums of contrasting sizes and timbres, producing distinct pitches when struck. The larger drum has a pitch that can be manipulated with the player's hand."
+Tambourine,Music,Q193666,/m/07brj,Percussion,,,,"The sound of a musical instrument consisting of a frame with pairs of small metal jingles. There is often a drumhead stretched across the frame, and the instrument is usually played by striking the frame or head with the hand."
+Telephone,Anthropogenic,Q11035,/m/07cx4,Alarm,,,,"The sound of a telecommunications device that permits two or more users to conduct a conversation when they are too far apart to be heard directly.  This class covers sounds associated with the device itself, not voice that has been carried via the telephone network."
+Toilet flush,Anthropogenic,Q268534,/m/01jt3m,,,,,The sound of a toilet flushing water along with any waste through a drainpipe.
+Traffic,Anthropogenic,Q4323994,/m/0btp2,,,roadway noise,,The combined sounds of many motor vehicles traveling on roads.
+Train,Anthropogenic,Q870,/m/07jdr,,,,,"The sound of one or more coupled vehicles running on a rail track to transport cargo or passengers, propelled by a separate locomotive or individual motors in each railroad car."
+Truck,Anthropogenic,Q43193,/m/07r04,,,,,Sounds of large motor vehicles designed to transport cargo on roads.
+Trumpet,Music,Q8338,/m/07gql,Brass instrument,,,,"The sound of a high-pitched brass instruments played by blowing air through almost-closed lips, producing a ""buzzing"" sound that starts a standing wave vibration in the air column inside the instrument."
+Typewriter sound,Anthropogenic,Q46335,/m/0c2wf,,,Typewriter,,Sounds of a mechanical or electromechanical machine for printing characters by means of keyboard-operated types striking a ribbon to transfer ink or carbon impressions onto paper.
+Car horn,Anthropogenic,Q1146163,/m/0912c9,Car,,honking,,The sound of a motor vehicle accessory whose purpose is to provide an audible alert of the vehicle's presence.
+Footsteps,Human,,/m/07pbtc8,,,,,The sound of feet or shoes contacting the ground in conventional human locomotion.
+Faucet,Anthropogenic,Q656656,/m/02jz0l,,,,,"The sound of a hand-operated valve controlling the release of water, for instance as fitted to a sink or bath, and the resulting water flow."
+Whispering,Human,Q1434962,/m/02rtxlg,,,,,"Unvoiced speech, usually intended to be quieter to avoid causing disturbance or being overheard."
+Wind chime,Music,Q1621499,/m/026fgl,Bell,,,,"The sound of an instrument constructed from suspended tubes, rods, bells, or other objects that are often made of metal or wood along with some type of weight the tubes or rods can strike when they or another wind-catching surface are blown by the natural movement of air outside."
+Writing,Anthropogenic,Q37260,/m/081rb,,,,,"The sound of inscribing signs and symbols, most often by using a purpose-made hand-held device, such as a pen or pencil, directly upon paper or similar media."
+Yell,Human,,/m/07sr1lc,Shout,,,,"Utter or declare in a very loud voice that seems excessive or involuntary, or that is deliberately startling in order to command attention, as distinct from the pragmatically raised voice of Shout."
+Zipper,Anthropogenic,Q101761,/m/01s0vc,,,,,"The sound of a device consisting of two rows of small interlocking teeth for binding the edges of an opening of fabric or other flexible material, like on a garment or a bag."
+Bowed string instrument,Music,Q192096,/m/0l14_3,Music,,,,"Sounds of the subcategory of string instruments that are usually played by a bow rubbing the strings.  Examples may include other playing techniques for these instruments, such as plucking."
+Brass instrument,Music,Q180744,/m/01kcd,Music,,,,The sound of a musical instrument that produces sound by vibration of air in a tubular resonator in sympathy with the vibration of the player's lips.
+Drip,Anthropogenic,,/m/07r5v4s,,,,,The sound of liquid falling in drops.
+Knock,Anthropogenic,,/m/07r4wb8,,,,,"A sharp noise of a rigid surface being struck, usually without damage and deliberately, most often with the knuckles of the hand."
+Percussion,Music,Q133163,/m/0l14md,Music,,,,"The sound of a musical instrument that is sounded by being struck or scraped by a beater; struck, scraped or rubbed by hand; or struck against another similar instrument."
+Plucked string instrument,Music,Q230262,/m/0fx80y,Music,,,,"Sounds of a musical instrument using tensioned strings to produce tones, where the usual mode of playing is to pull and release the strings to cause them to vibrate."
+Shatter,Anthropogenic,,/m/07rn7sz,,,,,The sound of a brittle rigid substance rapidly breaking into many pieces.
+Waves,Geophony,Q165848,/m/034srq,,,surf,,"Sounds caused by the surface waves that occur on the free surface of oceans, seas, lakes, rivers, etc., resulting from the wind blowing over the surface."
+Woodwind instrument,Music,Q181247,/m/085jw,Music,,Wind instrument,,Sounds of a family of musical instruments in which a column of air within a resonator is set into vibration by the player blowing into a mouthpiece set at the end of the resonator.
