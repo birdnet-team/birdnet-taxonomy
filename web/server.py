@@ -196,7 +196,7 @@ class SpeciesRecord(BaseModel):
 class PaginatedSpecies(BaseModel):
     """Paginated list of species records."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
-    total: int = Field(..., examples=[16536])
+    total: int = Field(..., examples=[18094])
     page: int = Field(..., examples=[1])
     per_page: int = Field(..., examples=[50])
     results: list[dict[str, Any]] = Field(...)
@@ -205,7 +205,7 @@ class PaginatedSpecies(BaseModel):
         "json_schema_extra": {
             "examples": [{
                 "taxonomy_version": _taxonomy_version,
-                "total": 16536,
+                "total": 18094,
                 "page": 1,
                 "per_page": 2,
                 "results": [_SPECIES_LIST_EXAMPLE],
@@ -235,7 +235,7 @@ class SearchResponse(PaginatedSpecies):
 class StatsResponse(BaseModel):
     """Dataset statistics."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
-    total_species: int = Field(..., examples=[16536])
+    total_species: int = Field(..., examples=[18094])
     groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2196, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 5, "Geophony": 3}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
 

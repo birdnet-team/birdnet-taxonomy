@@ -4,7 +4,7 @@
 # locales, taxon groups, API settings, etc.
 
 taxonomy:
-  version: "v0.4-Oct2026"
+  version: "v0.5-Oct2026"
 
 # BirdNET ID ranges (BN + 5 digits, inclusive). --reassign-ids numbers each
 # range alphabetically by scientific name; normal builds append new species

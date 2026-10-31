@@ -14,7 +14,7 @@
 
 Pipeline for collecting and merging species metadata from multiple sources. Covers birds, mammals, insects, reptiles, amphibians, fish, spiders, crustaceans, and reviewed non-species sound classes.
 
-Current working taxonomy version: `v0.4-Oct2026`.
+Current working taxonomy version: `v0.5-Oct2026`.
 
 **Important note: While still in development (i.e., all releases prior to 1.0), species IDs may change. We will freeze species IDs upon official release.**
 

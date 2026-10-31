@@ -22,7 +22,7 @@ A group with `priority_only: true` is never bulk-fetched and holds only the spec
 `overrides/priority_species.csv`. Species added this way skip the sound observation
 threshold, so a group can follow a model's labels.
 
-Mammals can define nested sub-taxa for focused coverage. The current v0.4
+Mammals can define nested sub-taxa for focused coverage. The current v0.5
 configuration includes `Chiroptera` (iNat taxon ID `40268`) under `Mammalia`
 to include bat species with at least one sound observation, plus species with
 at least 100 total iNaturalist observations.

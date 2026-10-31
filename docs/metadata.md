@@ -77,9 +77,9 @@ Each record receives a BirdNET ID in the format `BN{5 digits}`, stored in the gi
 | Range | Records | Example |
 |-------|---------|---------|
 | `BN00001`–`BN19999` | Birds | `BN00483` (Mallard) |
-| `BN20000`–`BN89999` | Other animals | `BN20827` (Coyote) |
-| `BN90000`–`BN99999` | Non-species sound classes | `BN90000` (Chainsaw) |
+| `BN20000`–`BN89999` | Other animals | `BN21007` (Coyote) |
+| `BN90000`–`BN99999` | Non-species sound classes | `BN90000` (Accordion) |
 
 `--reassign-ids` numbers each range alphabetically by scientific name from its start. Normal builds preserve existing IDs and give a new record the next number after the highest ID in its range (IDs of removed records stay reserved), so alphabetical order holds only as of the last reassignment. The build fails if a range is full or a kept ID lies outside its record's range. Before the 1.0 release, IDs may be intentionally reassigned with `--reassign-ids` as a documented breaking change.
 
-Downstream consumers should not use `birdnet_id` as a join key across pre-1.0 taxonomy versions; match on `scientific_name`, `scientific_name_aliases`, or an external identifier instead. IDs were last reassigned for v0.4-Oct2026, which introduced the ranges above (AviList v2026, retired iNat taxa removed, AviList lumps folded, extinct birds excluded, and the `Human` sound class removed: humans are the species record *Homo sapiens*).
+Downstream consumers should not use `birdnet_id` as a join key across pre-1.0 taxonomy versions; match on `scientific_name`, `scientific_name_aliases`, or an external identifier instead. IDs were last reassigned for v0.5-Oct2026, after mapping the BirdNET v3.0 audio model added 1,558 records (fish, sharks and rays, arachnids, crabs and relatives, more species in other groups, and new sound classes). Bird IDs did not change; 7,068 other IDs did. The ranges above date from v0.4-Oct2026.

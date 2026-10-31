@@ -15830,7 +15830,7 @@ mario_id,model_label,train_count,status,scientific_name,taxon_group,redirect_to,
 17225,Turdus nigriceps,827,keep,Turdus nigriceps,Aves,,,,
 17226,Turdus nigrorum,3,keep,Turdus nigrorum,Aves,,,,
 17227,Turdus niveiceps,193,keep,Turdus niveiceps,Aves,,,,
-17228,Turdus poliocephalus,48,remove,,,,,extinct,"AviList limits this name to the extinct Tasman Sea Island Thrush. These recordings likely belong to living island thrushes, so re-sort them by location"
+17228,Turdus poliocephalus,48,remove,,,,,extinct,"AviList now uses this name only for the extinct Norfolk Island form, so these recordings belong to the island thrush species split from it. The label is ambiguous as it stands."
 17229,Turdus nudigenis,637,keep,Turdus nudigenis,Aves,,,,
 17230,Turdus obscurus,395,keep,Turdus obscurus,Aves,,,,
 17231,Turdus obsoletus,139,keep,Turdus obsoletus,Aves,,,,

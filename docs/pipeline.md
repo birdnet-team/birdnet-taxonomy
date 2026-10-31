@@ -285,7 +285,7 @@ python -m collectors.translate --provider openai --model gpt-4o
 
 **Target locales:** de, fr, it, es, cs, pt, ru, pl, nl (configurable under `llm.locales` in `config.yml`; English fallbacks are written separately).
 
-LLM descriptions are merged into the build while `llm.enabled` is true in `config.yml` (as in the current configuration and the v0.4 release); set it to `false` to build from Wikipedia and eBird texts only.
+LLM descriptions are merged into the build while `llm.enabled` is true in `config.yml` (as in the current configuration and the v0.5 release); set it to `false` to build from Wikipedia and eBird texts only.
 
 | Flag | Description |
 |------|-------------|

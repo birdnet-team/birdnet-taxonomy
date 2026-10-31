@@ -20,7 +20,7 @@ credit, indicate any changes, and distribute your adaptations under the same lic
 ## Credit
 
 Please credit the version you used, for example:
-*BirdNET+ Taxonomy v0.4-Oct2026, https://birdnet.cornell.edu/taxonomy, CC BY-SA 4.0*.
+*BirdNET+ Taxonomy v0.5-Oct2026, https://birdnet.cornell.edu/taxonomy, CC BY-SA 4.0*.
 
 The data draws on these sources:
 
