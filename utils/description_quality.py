@@ -35,9 +35,20 @@ _DISAMBIGUATION_RE = re.compile(
 )
 
 
+# English notice pages left after a split ("Tropical pewee has been split into three species:").
+_SPLIT_NOTICE_RE = re.compile(r"^[^\n]{0,80}\b(?:has|have) been split into\b", re.IGNORECASE)
+# Hatnotes at the start of an article ("The name X can also refer to Y.").
+_HATNOTE_RE = re.compile(
+    r"^(?:The name |In [^,\n]{0,40}, |For |This article discusses )[^\n]{0,200}?"
+    r"(?:can also (?:refer to|mean)|, see |is distinct from)[^\n]{0,160}?\.\s+(?=[A-Z])"
+)
+
+
 def is_disambiguation_text(text: str) -> bool:
-    """Return True for Wikipedia disambiguation-page text (a list, not a description)."""
-    return bool(_DISAMBIGUATION_RE.search((text or "").strip()))
+    """Return True for Wikipedia disambiguation or split-notice text (not a description)."""
+    text = (text or "").strip()
+    return bool(_DISAMBIGUATION_RE.search(text)
+                or (len(text.split()) <= 60 and _SPLIT_NOTICE_RE.search(text)))
 
 
 def normalize_space(text: str) -> str:
@@ -229,13 +240,14 @@ def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
 
 
 def clean_description_text(text: str) -> str:
-    """Clean stored descriptions: drop section headings, reference-type
+    """Clean stored descriptions: drop hatnotes, section headings, reference-type
     tails and reference-list text, subspecies and synonym lists, citation
     marks, sentences with leftover wiki markup, and repeated sentences."""
     if not text:
         return text
     kept: list[str] = []
     seen: set[str] = set()
+    text = _HATNOTE_RE.sub("", text.lstrip(), count=1)
     for heading, body in _split_sections(text.replace("\r\n", "\n")):
         if heading and _END_SECTIONS.match(heading):
             break

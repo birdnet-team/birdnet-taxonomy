@@ -122,6 +122,8 @@ names become aliases of the replacement taxon.
 - A stored locale text is used only with that locale's article URL or a
   provenance label from `utils.translate`; unlabelled machine translations left
   by older runs are ignored.
+- Wikipedia pages that only announce a split are not descriptions, and hatnotes
+  ("The name X can also refer to Y") are removed.
 - Texts are cleaned of citation marks, sentences with leftover wiki markup,
   section headings, repeated sentences, and reference-list text (author–year
   citations, ISBNs, URLs, archive-link notes, link lists) that survived

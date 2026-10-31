@@ -89,10 +89,10 @@ MODEL_LABEL_EXPORT_COLUMNS = ("mario_id", "model_label", "train_count", "status"
 # Reason codes and the wording relayed to the model developer; a row's own
 # note replaces the wording. Every removed or undecided label needs a reason.
 MODEL_LABEL_REASONS = {
-    "duplicate": "Same species as the redirect target in our taxonomy",
+    "duplicate": "Duplicate of another label",
     "near_identical_sound": "Same sound as the redirect target",
     "not_single_class": "Not a single class: it could be several different sounds or sources",
-    "no_training_data": "No training samples and no taxonomy record",
+    "no_training_data": "No training samples",
     "extinct": "Extinct, and the taxonomy excludes extinct species",
     "plant": "A plant, and the taxonomy covers animals and sound classes",
     "not_species": "Not a species or a usable sound class",
@@ -672,7 +672,11 @@ def model_label_exports(model_labels: dict[str, list[dict]],
             exports[model].append({
                 **{key: row[key] for key in MODEL_LABEL_COLUMNS if key in MODEL_LABEL_EXPORT_COLUMNS},
                 "redirect_mario_id": row["_target"]["mario_id"] if "_target" in row else "",
-                "reason_text": row["note"] or MODEL_LABEL_REASONS.get(row["reason"], ""),
+                "reason_text": row["note"] or (
+                    f"Duplicate of {row['redirect_to']}"
+                    if row["reason"] == "duplicate" and row["redirect_to"]
+                    else MODEL_LABEL_REASONS.get(row["reason"], "")
+                ),
                 "rename_to": row["scientific_name"] if (
                     row["status"] in ("keep", "pending")
                     and row["reason"] not in MODEL_LABEL_NO_RENAME_REASONS
@@ -2365,7 +2369,7 @@ def build_metadata(taxonomy: dict, wiki: dict,
             wrong_article += 1
 
         # Descriptions: locale → text.
-        # Base layer: Wikipedia (multi-locale) or eBird (English-only).
+        # Base layer: Wikipedia (multi-locale).
         # Claude overlay: replaces only the locales it provides.
         descriptions: dict[str, str] = {}
         description_sources: dict[str, str] = {}
