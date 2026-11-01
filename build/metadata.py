@@ -2742,7 +2742,7 @@ def build_metadata(taxonomy: dict, wiki: dict,
     for sci, values in manual_common_aliases.items():
         for alias in values:
             owner = name_owner.get(alias.lower(), sci)
-            if owner != sci and redirects.get(owner) != sci:
+            if owner != sci and redirects and redirects.get(owner) != sci:
                 raise ValueError(
                     f"{MANUAL_COMMON_ALIASES_FILE}: alias '{alias}' for '{sci}' "
                     f"is the common name of '{owner}'"
@@ -2978,6 +2978,10 @@ def main():
         manual_aliases[sci] = [*manual_aliases.get(sci, []), *values]
     for sci, values in model_common.items():
         manual_common_aliases[sci] = [*manual_common_aliases.get(sci, []), *values]
+    if not model_labels:
+        print("  WARNING: no model crosswalk in overrides/model_labels/ (it is not in the "
+              "repo). Species kept only for a model label are dropped, so this build "
+              "differs from the published release.")
     print(f"  Model labels: {len(model_labels)} crosswalks, "
           f"{sum(len(v) for v in model_scientific.values())} scientific and "
           f"{sum(len(v) for v in model_common.values())} common-name aliases")

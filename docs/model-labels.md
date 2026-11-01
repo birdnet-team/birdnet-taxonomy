@@ -3,7 +3,9 @@
 How an audio model's outputs map onto the taxonomy. Contributor rules are in [CONTRIBUTING.md](../CONTRIBUTING.md#model-labels).
 
 `overrides/model_labels/<model>.csv` holds one row per output of an audio model
-and maps it onto the taxonomy, so a model can keep its own labels:
+and maps it onto the taxonomy, so a model can keep its own labels. These files are
+private and not in the repository: the folder is gitignored. Without a crosswalk the
+build warns, and species kept only for a model label are dropped.
 
 | Column | Meaning |
 |--------|---------|

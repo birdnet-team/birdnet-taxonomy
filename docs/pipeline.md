@@ -426,7 +426,7 @@ overrides/
     bird_splits.csv        # Git-tracked birds kept separate from an AviList lump
     common_name_aliases.csv  # Git-tracked manual common-name search aliases
     description_overrides.csv  # Git-tracked rejected articles and text fixes
-    model_labels/          # Git-tracked crosswalks from audio model outputs to the taxonomy
+    model_labels/          # Private, gitignored crosswalks from audio model outputs to the taxonomy
     priority_species.csv   # Git-tracked reviewed taxonomy additions
     sound_classes.csv      # Git-tracked reviewed non-species sound classes
     species_aliases.csv    # Git-tracked manual scientific-name aliases
