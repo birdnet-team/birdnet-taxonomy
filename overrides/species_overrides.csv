@@ -1,4 +1,7 @@
 scientific_name,image_url,image_author,image_license,image_source,image_crop_anchor,gbif_id,source_url,notes
+Actenoides bougainvillei,https://inaturalist-open-data.s3.amazonaws.com/photos/141358611/large.jpg,J. G. Keulemans,pd,iNaturalist,,,https://commons.wikimedia.org/wiki/File:ActenoidesBougainvilleiKeulemans_(cropped).jpg,Author from the photo's Commons page
+Asthenes humilis,https://inaturalist-open-data.s3.amazonaws.com/photos/13131366/large.jpg,"Dominic Sherony, MPF",cc-by-sa,iNaturalist,,,https://commons.wikimedia.org/wiki/File:Asthenes_humilis_Peru_1_cropped.jpg,Author from the photo's Commons page
+Bos grunniens,https://upload.wikimedia.org/wikipedia/commons/f/f9/Yak_Himalayas_King.jpg,Sujan.official,cc0,Wikimedia,,,https://commons.wikimedia.org/wiki/File:Yak_Himalayas_King.jpg,Previous source photo is a truncated file
 Buteo jamaicensis,,,,,5,,,Center crop override for Red-tailed Hawk
 Callogaeana viridula,,,,,,7511268,,Stored key no longer exists
 Chainsaw,,,,,2,,,Top-center crop override for Chainsaw
@@ -6,12 +9,21 @@ Circaetus spectabilis,,,,,,2480724,,Stored key no longer exists; GBIF uses Dryot
 Corypha africana,,,,,,9389539,,Stored key was the palm Corypha; this is the GBIF name of the lark
 Eleutherodactylus feichtingeri,,,,,,7577910,,Stored key was E. fitzingeri
 Eupsophulus castaneus,,,,,,9798254,,Stored key was the genus
+Funambulus sublineatus,https://inaturalist-open-data.s3.amazonaws.com/photos/566724/large.jpg,N. A. Nazeer,cc-by-sa,iNaturalist,,,https://commons.wikimedia.org/wiki/File:Dusky_striped_squirrel_by_N_A_Nazeer.jpg,Author from the photo's Commons page
 Homo sapiens,https://upload.wikimedia.org/wikipedia/commons/7/77/0_The_Vitruvian_Man_-_by_Leonardo_da_Vinci.jpg,Leonardo da Vinci,pd,Wikimedia,,,https://commons.wikimedia.org/wiki/File:0_The_Vitruvian_Man_-_by_Leonardo_da_Vinci.jpg,Manual image override for Human
+Laliostoma labrosum,https://upload.wikimedia.org/wikipedia/commons/3/33/Laliostoma_labrosum.jpg,Franco Andreone,cc-by-sa-2.5,Wikimedia,,,https://commons.wikimedia.org/wiki/File:Laliostoma_labrosum.jpg,Author from the photo's Commons page
+Lissotriton italicus,https://upload.wikimedia.org/wikipedia/commons/8/88/Lissotriton_italicus.jpg,Franco Andreone,cc-by-sa-2.5,Wikimedia,,,https://commons.wikimedia.org/wiki/File:Lissotriton_italicus.jpg,Author from the photo's Commons page
 Locustella caudata,,,,,,7913235,,Stored key was the grasshopper Locusta caudata
 Locustella thoracica,,,,,,8234327,,Stored key was the katydid Glyphonotus thoracicus
+Lorius domicella,https://inaturalist-open-data.s3.amazonaws.com/photos/63563327/large.jpg,kwang chong,cc-by-sa,iNaturalist,,,"https://commons.wikimedia.org/wiki/File:Lorius_domicella_-Jurong_Bird_Park,_Singapore-8a-2c.jpg",Author from the photo's Commons page
+Mantella cowanii,https://upload.wikimedia.org/wikipedia/commons/1/1c/Mantella_cowanii01.jpg,Franco Andreone,cc-by-sa-2.5,Wikimedia,,,https://commons.wikimedia.org/wiki/File:Mantella_cowanii01.jpg,Author from the photo's Commons page
 Megatibicen figuratus,,,,,,9265699,,Stored key no longer exists
 Merinus laevis,,,,,,7488521,,Stored key was the genus
+Mustelirallus cerverai,https://inaturalist-open-data.s3.amazonaws.com/photos/7631839/large.jpg,Allan Brooks,pd,iNaturalist,,,https://commons.wikimedia.org/wiki/File:Cyanolimnas_cerverai_by_Allan_Brooks_cropped.jpg,Author from the photo's Commons page
+Paraclaravis geoffroyi,https://inaturalist-open-data.s3.amazonaws.com/photos/247513158/large.jpg,Pauline Knip,pd,iNaturalist,,,https://commons.wikimedia.org/wiki/File:Colomba_Godefrida.jpg,Author from the photo's Commons page
+Pelobates fuscus,https://upload.wikimedia.org/wikipedia/commons/3/32/Pelobates_fuscus_fuscus.jpg,Franco Andreone,cc-by-sa-2.5,Wikimedia,,,https://commons.wikimedia.org/wiki/File:Pelobates_fuscus_fuscus.jpg,Author from the photo's Commons page
 Platydracus maculosus,,,,,,8000551,,Stored key was P. oculosus
 Psilopogon australis,,,,,,8110522,,Stored key was the plant Pteropogon australis
 Pterorhinus woodi,,,,,,10739382,,Stored key no longer exists
+Spinomantis peraccae,https://upload.wikimedia.org/wikipedia/commons/d/d5/Spinomantis_peraccae01.jpg,Franco Andreone,cc-by-sa-2.5,Wikimedia,,,https://commons.wikimedia.org/wiki/File:Spinomantis_peraccae01.jpg,Author from the photo's Commons page
 Stictia signata,,,,,,7953252,,Stored key was the bryozoan Pleurocodonellina signata

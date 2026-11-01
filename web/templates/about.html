@@ -64,17 +64,21 @@
     searchable as alternative names, except for a short reviewed list of
     forms kept as separate species (for example Hooded Crow). Species listed on AviList but not yet on
     iNaturalist are still included so that coverage stays as complete as
-    possible. Species AviList lists as extinct are excluded.
+    possible. Species AviList lists as extinct are excluded. AviList also
+    supplies each bird's Avibase ID.
 </p>
 
 <p>
     For all other groups, we include species that have at least one sound
     recording documented on <a href="https://www.inaturalist.org">iNaturalist</a>.
     Bats are an exception: they also qualify with at least 100 observations of
-    any kind, since their calls are rarely recorded. Species with too little
-    metadata (no image, no description, and hardly any external identifiers)
-    are left out. Species flagged as extinct on iNaturalist are excluded from
-    all groups.
+    any kind, since their calls are rarely recorded. A reviewed list adds
+    further species without a recording requirement, and fish, sharks and rays,
+    spiders and their relatives, and crabs and their relatives come only from
+    that list. New species with too little metadata (no image, no description,
+    and hardly any external identifiers) are left out, while species already
+    in the database stay and are marked as low-resource. Species flagged as
+    extinct on iNaturalist are excluded from all groups.
 </p>
 
 <h2>Where do the data come from?</h2>
@@ -85,7 +89,7 @@
     identifiers, common names in dozens of languages, default taxon photos, and
     the observation counts behind each species' commonness score. eBird contributes species pages, Macaulay Library
     images, and common names in over sixty regional language variants. Wikidata
-    supplies its item IDs, external identifiers (GBIF, NCBI, Avibase, BirdLife),
+    supplies its item IDs, external identifiers (GBIF, NCBI, BirdLife),
     and Wikimedia Commons images with licensing information. Wikipedia provides
     species descriptions in about twenty languages, and a large language model
     (Gemini, OpenAI, or Claude, whichever is configured) translates or shortens
@@ -199,8 +203,8 @@
         <strong>Images:</strong> these are not part of the data files, which only
         link to them, and they are not covered by that license. Each image has its
         own: most are Creative Commons in various flavors, many of them
-        non-commercial, and Macaulay Library images are copyrighted by their
-        photographers and used under Cornell's terms. The license for each image is
+        non-commercial, and Macaulay Library images are © Macaulay Library. The
+        license for each image is
         recorded in the dataset, so please check it before adding an image to your
         own codebase or product. For birds, the referenced Avicommons photos are an
         alternative: all are Creative Commons, although most are non-commercial.

@@ -51,7 +51,7 @@ HOST_NAME=https://birdnet.cornell.edu
 
 avilist.org can refuse automated downloads. If step 1 stops with HTTP 403, download the file it names in a browser, save it in `raw_data/`, and run the step again.
 
-Run the steps in order, since later steps depend on earlier output. Rerunning a step skips species it has already processed. `--limit N` caps new items and `--dry-run` previews a run.
+Run the steps in order, since later steps depend on earlier output. Rerunning a step skips species it has already processed. Most steps also take `--limit N`, which caps new items, and `--dry-run`, which previews a run.
 
 | Step | Command |
 |------|---------|

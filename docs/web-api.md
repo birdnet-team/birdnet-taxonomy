@@ -59,7 +59,7 @@ is built so that visitors talk to it and nobody else:
   tell the other site where the visitor came from.
 - **No cookies or browser storage.** The linked policy says the site uses no cookies and
   names only two uses of browser storage, neither of them here.
-- **No visitor data in logs.** `python -m web.server` prints one line per request to the
+- **No visitor data in logs.** The server prints one line per request to the
   console, for example `2026-11-01 10:15:02 200 GET /species/Turdus merula (3 ms)`: time,
   status, method, path, duration. It has no address, user agent, or query string, and
   nothing is written to disk. Image, static, and uptime check requests appear only when they fail. The
@@ -81,11 +81,11 @@ in the linked policy.
 - Xeno-Canto name (`xc_name`)
 - iNaturalist taxon ID (e.g., `12716`)
 
-HTML species pages redirect to the canonical scientific name URL when accessed via an alias. An unknown name renders a placeholder page (dummy image, a not-found note, and a search link) instead of a 404, like the API.
+Codes are checked before common names, so a code wins when a name in another language happens to equal it. HTML species pages redirect to the canonical scientific name URL when accessed via an alias. An unknown name renders a placeholder page (dummy image, a not-found note, and a search link) instead of a 404, like the API.
 
 ## Image Proxy
 
-**Image proxy** (`/api/image/{name}?size=thumb|medium`) serves species images with on-demand downloading, smart cropping, and caching. Returns a dummy image (BirdNET logo on gray background) for unknown species or failed downloads. All images cached with 24-hour `Cache-Control` headers.
+**Image proxy** (`/api/image/{name}?size=thumb|medium`) serves species images with on-demand downloading, smart cropping, and caching. Returns a dummy image (BirdNET logo on gray background; after a failed download or conversion it is cached for only 5 minutes, since the failure may be temporary) for unknown species or failed downloads. Other images are cached with 24-hour `Cache-Control` headers.
 
 ## Routes
 
@@ -101,23 +101,26 @@ HTML species pages redirect to the canonical scientific name URL when accessed v
 | `/api/species/{name}` | Single species detail (JSON) with field selection; an unknown name returns a placeholder record (see below) |
 | `/api/search?q=` | Search species by name with full query options |
 | `/api/suggest?q=` | Autocomplete suggestions (`limit`, `lang`) |
-| `/api/locales` | List locale codes present in the dataset |
+| `/api/locales` | List the locales in the dataset as `code` and `name` objects; `en` is not listed |
 | `/api/download/csv`, `/json`, `/zip` | Download the release files, named `BirdNET_Taxonomy_<version>.csv` and so on |
 | `/api/fields` | List all available field names |
 | `/api/groups` | List taxon groups with counts |
 | `/api/stats` | Dataset statistics |
 | `/docs` | Interactive API docs (Swagger UI) |
 
+`gbif_id`, `ncbi_id`, and `birdlife_id` are strings in `/api/species` and `/api/search`,
+and integers in `/api/species/{name}`. The release files always hold strings.
+
 ## API Query Parameters
 
-All list/search endpoints (`/api/species`, `/api/search`) support these parameters (both accept `q` as a search term; without it they return every record):
+All list/search endpoints (`/api/species`, `/api/search`) support these parameters (both accept `q` as a search term, of which the first 200 characters count; without it they return every record):
 
 | Parameter | Example | Description |
 |-----------|---------|-------------|
 | `fields` | `?fields=scientific_name,common_name` | Return only specified fields (comma-separated) |
 | `exclude` | `?exclude=common_names,descriptions` | Return all fields except these |
 | `locale` | `?locale=en,de,fr` | Filter `common_names` and `descriptions` to specific locales |
-| `sort` | `?sort=-commonness` | Sort by field; prefix `-` for descending |
+| `sort` | `?sort=-commonness` | Sort by field; prefix `-` for descending. Records without a value come last |
 | `group` | `?group=Aves` | Filter by taxon group |
 | `has_image` | `?has_image=true` | Filter species with/without images |
 | `has_description` | `?has_description=true` | Filter species with/without English description |
@@ -141,7 +144,7 @@ curl '/api/species?group=Aves&has_image=true&sort=-commonness&per_page=10&fields
 # German and French names/descriptions for a species
 curl '/api/species/Anas%20platyrhynchos?locale=de,fr&fields=scientific_name,common_names,descriptions'
 
-# Export all mammals as CSV
+# Export the first 500 mammals as CSV (500 is the page limit; add page=2 for the next)
 curl '/api/species?group=Mammalia&per_page=500&format=csv' > mammals.csv
 
 # Search with field selection

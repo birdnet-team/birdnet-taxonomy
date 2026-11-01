@@ -18,7 +18,6 @@ Provider is auto-detected from whichever key is present.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import threading
 import time
@@ -33,7 +32,7 @@ from collectors._common import (
 )
 from utils.description_quality import (
     clean_description_text, is_disambiguation_text, names_other_species,
-    word_count as _word_count,
+    source_hash as _source_hash, word_count as _word_count,
 )
 from utils.llm import call_llm, detect_provider, parse_json_response, PROVIDERS
 
@@ -354,11 +353,6 @@ def _merge_updates(target: dict, updates: dict[str, dict[str, str]],
         for loc, text in extracts.items():
             if loc not in existing_extracts or (sci, loc) in (replace or ()):
                 existing_extracts[loc] = text
-
-
-def _source_hash(text: str) -> str:
-    """Fingerprint of the English source a translation was made from."""
-    return hashlib.sha1(" ".join((text or "").split()).encode("utf-8")).hexdigest()[:12]
 
 
 def _stale_translation_locales(entry: dict, en_text: str, wiki_extracts: dict[str, str],

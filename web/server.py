@@ -6,7 +6,7 @@ Provides:
   - HTML pages: home/search, species detail
   - REST API: /api/species, /api/species/{name}, /api/search, /api/stats
   - Image proxy: /api/image/{scientific_name}?size=  (WebP, cached)
-  - Auto-generated docs at /docs (Swagger) and /redoc
+  - Auto-generated docs at /docs (Swagger)
 
 Usage:
     python -m web.server                   # start on port 8000
@@ -36,7 +36,9 @@ from fastapi import FastAPI, HTTPException, Query, Request as FRequest
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator
 from utils.images import ImageSize, save_species_image
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
+)
 from fastapi.templating import Jinja2Templates
 
 from config import (
@@ -239,7 +241,7 @@ class StatsResponse(BaseModel):
     """Dataset statistics."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
     total_species: int = Field(..., examples=[18093])
-    groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2196, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 5, "Geophony": 3}])
+    groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Insecta": 2842, "Amphibia": 2302, "Mammalia": 1369, "Reptilia": 215, "Actinopterygii": 155, "Anthropogenic": 56}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
 
 
@@ -247,6 +249,9 @@ class GroupCount(BaseModel):
     """Taxon group with species count."""
     name: str = Field(..., examples=["Aves"])
     count: int = Field(..., examples=[11022])
+
+MAX_PER_PAGE = 500
+MAX_QUERY_CHARS = 200
 
 WEB_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = WEB_DIR / "templates"
@@ -311,10 +316,6 @@ def _find_species(identifier: str) -> dict | None:
     rec = _species_by_alias.get(identifier.lower())
     if rec:
         return rec
-    # Common name (case-insensitive)
-    rec = _species_by_common.get(identifier.lower())
-    if rec:
-        return rec
     # BirdNET ID (case-insensitive)
     rec = _species_by_birdnet.get(identifier.upper())
     if rec:
@@ -329,6 +330,11 @@ def _find_species(identifier: str) -> dict | None:
         return rec
     # XC scientific name (case-insensitive)
     rec = _species_by_xc.get(identifier.lower())
+    if rec:
+        return rec
+    # Common name (case-insensitive), after the codes: a name in a small
+    # locale can equal another species' code.
+    rec = _species_by_common.get(identifier.lower())
     if rec:
         return rec
     # iNat taxon ID (numeric string)
@@ -467,6 +473,17 @@ def _init_image_config(dev: bool = False):
 # FastAPI app
 # ---------------------------------------------------------------------------
 
+class _NoWebSocketLog(logging.Filter):
+    """Drop uvicorn's lines on WebSocket upgrades, which name the client.
+    `python -m web.server` switches WebSocket off; plain `uvicorn` may not."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "WebSocket" not in str(record.msg)
+
+
+_websocket_log_filter = _NoWebSocketLog()
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     # uvicorn imports this module afresh, so --dev arrives via the environment.
@@ -477,6 +494,7 @@ async def lifespan(application: FastAPI):
     templates.env.globals["quote_path"] = _quote_path
     # uvicorn's access log prints client addresses; privacy_middleware replaces it.
     logging.getLogger("uvicorn.access").disabled = True
+    logging.getLogger("uvicorn.error").addFilter(_websocket_log_filter)
     yield
 
 
@@ -536,6 +554,15 @@ async def normalize_root_path(request: FRequest, call_next):
     return await call_next(request)
 
 
+@app.exception_handler(Exception)
+async def server_error(request: FRequest, exc: Exception):
+    """Unhandled errors bypass the middleware, so this response sets its own headers."""
+    return PlainTextResponse("Internal Server Error", status_code=500, headers={
+        "Content-Security-Policy": _CONTENT_SECURITY_POLICY,
+        "Referrer-Policy": "same-origin",
+    })
+
+
 def _template_context(request: FRequest, **context: Any) -> dict[str, Any]:
     """Inject common template values that must respect the deployment prefix."""
     return {
@@ -589,9 +616,12 @@ def _source_image_url(rec: dict) -> str:
 @app.get("/api/image/{scientific_name:path}",
          tags=["Images"],
          responses={200: {"content": {"image/webp": {}}}})
-async def image_proxy(scientific_name: str,
-                      size: str = Query("medium", description="Image size: thumb or medium")):
+def image_proxy(scientific_name: str,
+                size: str = Query("medium", description="Image size: thumb or medium")):
     """Serve a species image as WebP.
+
+    A plain def: FastAPI runs it in a thread, so a slow image source does not
+    block other requests.
 
     Sizes: thumb (150x100), medium (480x320).  Default is medium.
     Images are fetched from the original source, smart-cropped with YOLO,
@@ -649,13 +679,13 @@ async def image_proxy(scientific_name: str,
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    # Serve dummy fallback image
+    # Serve dummy fallback image, briefly: the failure may be temporary
     dummy = _image_base / size / "dummy.webp"
     if dummy.exists():
         return Response(
             content=dummy.read_bytes(),
             media_type="image/webp",
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers={"Cache-Control": "public, max-age=300"},
         )
 
     raise HTTPException(502, "Failed to fetch or convert source image")
@@ -673,6 +703,8 @@ async def home(request: FRequest, q: str = "", group: str = "",
     Without a chosen sort, browsing shows the most common species first and a
     search keeps its best-match order.
     """
+    page = max(1, page)
+    per_page = min(max(1, per_page), MAX_PER_PAGE)
     results = _search(q, group)
 
     def _name_sort_key(r):
@@ -698,7 +730,7 @@ async def home(request: FRequest, q: str = "", group: str = "",
 
     groups = sorted(set(r.get("taxon_group", "") for r in _species_list if r.get("taxon_group")))
 
-    return templates.TemplateResponse("home.html", _template_context(
+    return templates.TemplateResponse(request, "home.html", _template_context(
         request,
         species=page_results,
         query=q,
@@ -732,7 +764,7 @@ async def download_page(request: FRequest):
     """Download page."""
     dd = _data_dir()
     locale_count = len(_all_locales)
-    return templates.TemplateResponse("download.html", _template_context(
+    return templates.TemplateResponse(request, "download.html", _template_context(
         request,
         total_species=len(_species_list),
         locale_count=locale_count,
@@ -745,7 +777,7 @@ async def download_page(request: FRequest):
 @app.get("/about", response_class=HTMLResponse, include_in_schema=False)
 async def about_page(request: FRequest):
     """About page."""
-    return templates.TemplateResponse("about.html", _template_context(request))
+    return templates.TemplateResponse(request, "about.html", _template_context(request))
 
 
 @app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
@@ -783,7 +815,7 @@ async def species_page(request: FRequest, scientific_name: str, lang: str = ""):
         return RedirectResponse(url=redirect_url, status_code=302)
 
     lang_name = dict(_all_locales).get(lang, lang) if lang else ""
-    return templates.TemplateResponse("species.html", _template_context(
+    return templates.TemplateResponse(request, "species.html", _template_context(
         request,
         s=rec,
         lang=lang,
@@ -949,13 +981,13 @@ def _sort_species(data: list[dict], sort: str) -> list[dict]:
 
     def sort_key(r: dict):
         v = r.get(key)
-        if v is None:
-            return (1, "")  # nones last
         if isinstance(v, (int, float)):
             return (0, v)
         return (0, str(v).lower())
 
-    return sorted(data, key=sort_key, reverse=desc)
+    # Records without a value go last in either direction.
+    present = [r for r in data if r.get(key) is not None]
+    return sorted(present, key=sort_key, reverse=desc) + [r for r in data if r.get(key) is None]
 
 
 def _to_csv(records: list[dict], fields: str | None = None) -> str:
@@ -1070,7 +1102,7 @@ async def api_search(
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
     format: str = Query("json", description="Response format: json or csv"),
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(50, ge=1, le=500, description="Results per page"),
+    per_page: int = Query(50, ge=1, le=MAX_PER_PAGE, description="Results per page"),
 ):
     """Search species by name with full filtering, sorting, and field selection."""
     results = _search(q, group)
@@ -1144,7 +1176,7 @@ async def api_species_list(
     locale: Optional[str] = Query(None, description="Comma-separated locale codes for common_names/descriptions"),
     format: str = Query("json", description="Response format: json or csv"),
     page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(50, ge=1, le=500, description="Results per page"),
+    per_page: int = Query(50, ge=1, le=MAX_PER_PAGE, description="Results per page"),
 ):
     """List all species with filtering, sorting, field selection, and pagination."""
     base_list = _search(q, group) if q else _species_list
@@ -1243,7 +1275,7 @@ def _search(q: str, group: str = "") -> list[dict]:
     if not q:
         return results
 
-    q_norm = _normalise(q)
+    q_norm = _normalise(q[:MAX_QUERY_CHARS])
     terms = q_norm.split()
 
     scored = []

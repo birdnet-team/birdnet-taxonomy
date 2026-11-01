@@ -4,7 +4,7 @@ What the taxonomy includes, and how names, identifiers, descriptions, and images
 
 ## Taxon Groups
 
-Configured in `config.yml`. Birds include all species; other groups are limited to species with sound observations on iNaturalist.
+Configured in `config.yml`. Birds include all species; other groups are limited to species with sound observations on iNaturalist, plus the reviewed species in `overrides/priority_species.csv`, which need none.
 
 | Group | iNat Taxon ID | Mode | Min sound observations |
 |-------|---------------|------|------------------------|
@@ -20,7 +20,7 @@ Configured in `config.yml`. Birds include all species; other groups are limited 
 
 A group with `priority_only: true` is never bulk-fetched and holds only the species in
 `overrides/priority_species.csv`. Species added this way skip the sound observation
-threshold, so a group can follow a model's labels.
+threshold, so a group can hold a reviewed species list.
 
 Mammals can define nested sub-taxa for focused coverage. The current v0.5
 configuration includes `Chiroptera` (iNat taxon ID `40268`) under `Mammalia`
@@ -47,8 +47,8 @@ are part of the accepted name.
   names. Every iNaturalist bird resolves to its AviList species (by exact name,
   English name within the same genus or epithet stem, eBird code, or as an
   AviList subspecies) and the AviList scientific name becomes canonical.
-- iNat taxa that AviList lumps or treats as subspecies (e.g. *Corvus cornix* →
-  *Corvus corone*) are folded into that species as `scientific_name_aliases`.
+- iNat taxa that AviList lumps or treats as subspecies (e.g. *Acanthis hornemanni*
+  → *Acanthis flammea*) are folded into that species as `scientific_name_aliases`.
 - Reviewed exceptions in `overrides/bird_splits.csv` stay separate species
   (e.g. Hooded Crow *Corvus cornix*): they keep their own name, iNat data, eBird
   code, and English name (looked up by scientific name in the eBird taxonomy).
@@ -104,9 +104,11 @@ names become aliases of the replacement taxon.
   species in lower-case English); file names, catalogue numbers, names ending
   in a disambiguation number, wiki pages in a namespace ("Category:..."), or
   `sp.`/`ssp.` placeholders.
-- Localized names are one name: a comma list keeps its first alternative, and
-  words mixing look-alike letters of two scripts (a Latin "c" in a Russian
-  name) are repaired.
+- Localized names are one name: a comma list keeps its first alternative, a
+  `〔…〕` note is dropped, and words mixing look-alike letters of two scripts (a
+  Latin "c" in a Russian name) are repaired. Stray invisible characters are
+  removed, but not the zero-width joiners that some scripts spell with, and a name
+  with private-use or unassigned characters is rejected.
 - When two non-bird species share an English display name on iNat, the one
   whose English Wikipedia lead gives that name keeps it (then one with no other
   English name, then the more-observed one). The others take an unused English
@@ -155,8 +157,8 @@ the file, else the most commonly observed). A photo whose license requires attri
 (anything but public domain or CC0) is only used with a known author, and
 Commons files of a skull, skeleton, or postage stamp, or whose file name names
 another species of the taxonomy, are skipped; otherwise the next image source
-is tried. Credits are reduced to the name: rights notes, account prefixes, and
-upload notes are removed, and a URL alone becomes its account, site, or DOI.
+is tried. Credits are reduced to the name: rights notes, account prefixes, upload
+notes, and email addresses are removed, and a URL alone becomes its account, site, or DOI.
 
 ### Sound classes
 

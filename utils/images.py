@@ -29,11 +29,14 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
+import threading
 import time
 import unicodedata
 import json
 from dataclasses import dataclass
+from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -412,7 +415,7 @@ def download_image(url: str, timeout: int = 30, retries: int = 3) -> Image.Image
         except HTTPError as exc:
             if exc.code != 429 and exc.code < 500 or attempt == retries:
                 return None
-        except (URLError, TimeoutError):
+        except (OSError, HTTPException):  # also a connection lost mid-download
             if attempt == retries:
                 return None
         time.sleep(2 ** (attempt + 1))
@@ -434,8 +437,11 @@ def fetch_and_convert(url: str, size: ImageSize,
     if img is None:
         return None
 
-    img = crop_and_resize(img, size, crop_anchor=crop_anchor)
-    return to_webp(img, quality)
+    try:
+        img = crop_and_resize(img, size, crop_anchor=crop_anchor)
+        return to_webp(img, quality)
+    except Exception:  # Image.open reads lazily: a damaged file fails only here
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -501,18 +507,24 @@ def image_cache_is_current(dest: Path, source_url: str,
     return state == _expected_image_state(source_url, crop_anchor)
 
 
+def _write_atomic(path: Path, data: bytes) -> None:
+    """Replace a file in one step. Each writer has its own temp file, since
+    concurrent requests can save the same image."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
 def _write_image_state(dest: Path, source_url: str,
                        crop_anchor: int | None = None):
     """Persist the effective image inputs alongside the cached WebP file."""
     state_dir = _image_state_dir(dest.parent)
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_path = _image_state_path(dest)
-    tmp = state_path.with_suffix(".tmp")
-    tmp.write_text(
-        json.dumps(_expected_image_state(source_url, crop_anchor), ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    _write_atomic(
+        _image_state_path(dest),
+        json.dumps(_expected_image_state(source_url, crop_anchor),
+                   ensure_ascii=False, indent=2).encode("utf-8"),
     )
-    tmp.replace(state_path)
 
 
 def write_image_cache_state(dest: Path, source_url: str,
@@ -541,8 +553,6 @@ def save_species_image(url: str, scientific_name: str, common_name: str,
         return None
 
     image_dir.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(".tmp")
-    tmp.write_bytes(webp_bytes)
-    tmp.replace(dest)
+    _write_atomic(dest, webp_bytes)
     _write_image_state(dest, url, crop_anchor=crop_anchor)
     return dest

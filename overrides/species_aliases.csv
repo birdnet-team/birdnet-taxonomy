@@ -1,354 +1,354 @@
 scientific_name,alias,source,notes
-Acanthis flammea,Acanthis cabaret,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Acanthis flammea,Carduelis flammea,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Acheta domesticus,Acheta domestica,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Acritillas indica,Iole indica,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Acrochordopus burmeisteri,Tyranniscus burmeisteri,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Aenigmatolimnas marginalis,Amaurornis marginalis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Afrotis afra,Eupodotis afra,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Afrotis afraoides,Eupodotis afraoides,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Agelasticus cyanopus,Agelasticus atroolivaceus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Aglaothorax ovatus,Aglaothorax ovata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Ailuroedus melanotis,Ailuroedus arfakianus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Ailuroedus melanotis,Ailuroedus astigmaticus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Ailuroedus melanotis,Ailuroedus jobiensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Ailuroedus melanotis,Ailuroedus melanocephalus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Alces alces,Alces americanus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Amazilis amazilia,Amazilia amazilia,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Amazona farinosa,Amazona guatemalae,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Amirafra angolensis,Mirafra angolensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Anarhynchus mongolus,Charadrius mongolus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Anarhynchus sanctaehelenae,Charadrius sanctaehelenae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Anser caerulescens,Chen caerulescens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Anser canagicus,Chen canagica,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Anser cygnoides,Anser cygnoid,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Anser rossii,Chen rossii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Anurolimnas castaneiceps,Rufirallus castaneiceps,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Apalis flavida,Apalis flavocincta,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Ardea coromanda,Bubulcus coromandus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Acanthis flammea,Acanthis cabaret,manual,Reviewed synonym
+Acanthis flammea,Carduelis flammea,manual,Reviewed synonym
+Acheta domesticus,Acheta domestica,manual,Reviewed synonym
+Acritillas indica,Iole indica,manual,Reviewed synonym
+Acrochordopus burmeisteri,Tyranniscus burmeisteri,manual,Reviewed synonym
+Aenigmatolimnas marginalis,Amaurornis marginalis,manual,Reviewed synonym
+Afrotis afra,Eupodotis afra,manual,Reviewed synonym
+Afrotis afraoides,Eupodotis afraoides,manual,Reviewed synonym
+Agelasticus cyanopus,Agelasticus atroolivaceus,manual,Reviewed synonym
+Aglaothorax ovatus,Aglaothorax ovata,manual,Reviewed synonym
+Ailuroedus melanotis,Ailuroedus arfakianus,manual,Reviewed synonym
+Ailuroedus melanotis,Ailuroedus astigmaticus,manual,Reviewed synonym
+Ailuroedus melanotis,Ailuroedus jobiensis,manual,Reviewed synonym
+Ailuroedus melanotis,Ailuroedus melanocephalus,manual,Reviewed synonym
+Alces alces,Alces americanus,manual,Reviewed synonym
+Amazilis amazilia,Amazilia amazilia,manual,Reviewed synonym
+Amazona farinosa,Amazona guatemalae,manual,Reviewed synonym
+Amirafra angolensis,Mirafra angolensis,manual,Reviewed synonym
+Anarhynchus mongolus,Charadrius mongolus,manual,Reviewed synonym
+Anarhynchus sanctaehelenae,Charadrius sanctaehelenae,manual,Reviewed synonym
+Anser caerulescens,Chen caerulescens,manual,Reviewed synonym
+Anser canagicus,Chen canagica,manual,Reviewed synonym
+Anser cygnoides,Anser cygnoid,manual,Reviewed synonym
+Anser rossii,Chen rossii,manual,Reviewed synonym
+Anurolimnas castaneiceps,Rufirallus castaneiceps,manual,Reviewed synonym
+Apalis flavida,Apalis flavocincta,manual,Reviewed synonym
+Ardea coromanda,Bubulcus coromandus,manual,Reviewed synonym
 Ardea intermedia,Egretta intermedia,AviList v2026,"Older genus of this species, not of its split Ardea brachyrhyncha"
 Arizelocichla striifacies,Arizelocichla olivaceiceps,manual,AviList v2026 subspecies
-Arremon flavirostris,Arremon polionotus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Astur atricapillus,Accipiter atricapillus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Arremon flavirostris,Arremon polionotus,manual,Reviewed synonym
+Astur atricapillus,Accipiter atricapillus,manual,Reviewed synonym
 Astur gentilis,Accipiter gentilis,https://github.com/birdnet-team/species-data/issues/1,Previous genus combination; prevents old-name lookup from resolving to Accipiter nisus
-Astur melanoleucus,Accipiter melanoleucus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Austronomus australis,Tadarida australis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Boana bischoffi,Hypsiboas bischoffi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Boana boans,Hypsiboas boans,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Boana calcarata,Hypsiboas calcaratus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Boana cinerascens,Hypsiboas cinerascens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Boana faber,Hypsiboas faber,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Boana pulchella,Hypsiboas pulchellus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Boana punctata,Hypsiboas punctatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Botaurus eurhythmus,Ixobrychus eurhythmus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Botaurus flavicollis,Dupetor flavicollis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Bucco macrodactylus,Cyphos macrodactylus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Bucco tamatia,Tamatia tamatia,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Bufotes viridis,Bufo viridis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Buteogallus lacernulatus,Amadonastur lacernulatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Buteogallus meridionalis,Heterospizias meridionalis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Buteogallus urubitinga,Urubitinga urubitinga,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Cacicus chrysonotus,Cacicus leucoramphus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Cacicus uropygialis,Cacicus microrhynchus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Calidris falcinellus,Limicola falcinellus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Campylorhamphus probatus,Campylorhamphus cardosoi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Carpodacus sibiricus,Uragus sibiricus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Catharus ustulatus,Catharus swainsoni,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Astur melanoleucus,Accipiter melanoleucus,manual,Reviewed synonym
+Austronomus australis,Tadarida australis,manual,Reviewed synonym
+Boana bischoffi,Hypsiboas bischoffi,manual,Reviewed synonym
+Boana boans,Hypsiboas boans,manual,Reviewed synonym
+Boana calcarata,Hypsiboas calcaratus,manual,Reviewed synonym
+Boana cinerascens,Hypsiboas cinerascens,manual,Reviewed synonym
+Boana faber,Hypsiboas faber,manual,Reviewed synonym
+Boana pulchella,Hypsiboas pulchellus,manual,Reviewed synonym
+Boana punctata,Hypsiboas punctatus,manual,Reviewed synonym
+Botaurus eurhythmus,Ixobrychus eurhythmus,manual,Reviewed synonym
+Botaurus flavicollis,Dupetor flavicollis,manual,Reviewed synonym
+Bucco macrodactylus,Cyphos macrodactylus,manual,Reviewed synonym
+Bucco tamatia,Tamatia tamatia,manual,Reviewed synonym
+Bufotes viridis,Bufo viridis,manual,Reviewed synonym
+Buteogallus lacernulatus,Amadonastur lacernulatus,manual,Reviewed synonym
+Buteogallus meridionalis,Heterospizias meridionalis,manual,Reviewed synonym
+Buteogallus urubitinga,Urubitinga urubitinga,manual,Reviewed synonym
+Cacicus chrysonotus,Cacicus leucoramphus,manual,Reviewed synonym
+Cacicus uropygialis,Cacicus microrhynchus,manual,Reviewed synonym
+Calidris falcinellus,Limicola falcinellus,manual,Reviewed synonym
+Campylorhamphus probatus,Campylorhamphus cardosoi,manual,Reviewed synonym
+Carpodacus sibiricus,Uragus sibiricus,manual,Reviewed synonym
+Catharus ustulatus,Catharus swainsoni,manual,Reviewed synonym
 Cecropis daurica,Cecropis striolata,AviList v2026,Subspecies Cecropis daurica striolata
-Cercopithecus mitis,Cercopithecus albogularis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chalcites megarhynchus,Rhamphomantis megarhynchus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chalcites meyerii,Chrysococcyx meyeri,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chloris sinica,Chloris kittlitzi,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Chlorophoneus bocagei,Telophorus bocagei,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chlorophoneus nigrifrons,Telophorus nigrifrons,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chlorophoneus olivaceus,Telophorus olivaceus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chlorophoneus sulfureopectus,Telophorus sulfureopectus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chlorophonia cyanocephala,Cyanophonia cyanocephala,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chloropsis hardwickii,Chloropsis lazulina,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Chordeiles nacunda,Podager nacunda,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chordeiles pusillus,Nannochordeiles pusillus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Chroicocephalus philadelphia,Larus philadelphia,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Cercopithecus mitis,Cercopithecus albogularis,manual,Reviewed synonym
+Chalcites megarhynchus,Rhamphomantis megarhynchus,manual,Reviewed synonym
+Chalcites meyerii,Chrysococcyx meyeri,manual,Reviewed synonym
+Chloris sinica,Chloris kittlitzi,manual,Reviewed synonym
+Chlorophoneus bocagei,Telophorus bocagei,manual,Reviewed synonym
+Chlorophoneus nigrifrons,Telophorus nigrifrons,manual,Reviewed synonym
+Chlorophoneus olivaceus,Telophorus olivaceus,manual,Reviewed synonym
+Chlorophoneus sulfureopectus,Telophorus sulfureopectus,manual,Reviewed synonym
+Chlorophonia cyanocephala,Cyanophonia cyanocephala,manual,Reviewed synonym
+Chloropsis hardwickii,Chloropsis lazulina,manual,Reviewed synonym
+Chordeiles nacunda,Podager nacunda,manual,Reviewed synonym
+Chordeiles pusillus,Nannochordeiles pusillus,manual,Reviewed synonym
+Chroicocephalus philadelphia,Larus philadelphia,manual,Reviewed synonym
 Cincloramphus whitneyi,Megalurulus whitneyi,AviList v2026,"Older genus of this species, not of its split Cincloramphus turipavae"
 Cinnyris stuhlmanni,Cinnyris whytei,manual,AviList v2026 subspecies
-Circaetus spectabilis,Dryotriorchis spectabilis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Circaetus spectabilis,Dryotriorchis spectabilis,manual,Reviewed synonym
 Cnephaeus nilssonii,Eptesicus nilssonii,https://github.com/birdnet-team/birdnet-taxonomy/issues/2,GBIF backbone accepts Eptesicus nilssonii (7261816); iNat/XC use the Cnephaeus combination
 Cnephaeus serotinus,Eptesicus serotinus,https://github.com/birdnet-team/birdnet-taxonomy/issues/2,GBIF backbone accepts Eptesicus serotinus (2432359); iNat/XC use the Cnephaeus combination
-Coccycua cinerea,Micrococcyx cinereus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Coccycua pumila,Micrococcyx pumilus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Coggerdonia adelaidensis,Litoria adelaidensis,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Colluricincla megarhyncha,Colluricincla affinis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Colluricincla megarhyncha,Colluricincla discolor,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Colluricincla megarhyncha,Colluricincla fortis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Colluricincla megarhyncha,Colluricincla obscura,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Colluricincla megarhyncha,Colluricincla rufogaster,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Colluricincla megarhyncha,Colluricincla tappenbecki,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Coloeus dauuricus,Corvus dauuricus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Coloeus monedula,Corvus monedula,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Conocephalus fasciatus,Conocephalus vicinus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Conocephalus fuscus,Conocephalus discolor,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Corvinella corvina,Lanius corvinus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Curruca cantillans,Sylvia cantillans,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Curruca melanocephala,Sylvia melanocephala,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Curruca ruppeli,Sylvia rueppelli,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Curruca subalpina,Sylvia subalpina,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Curruca subcoerulea,Sylvia subcaerulea,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Dendrocoptes medius,Dendrocopos medius,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Dendropsophus molitor,Dendropsophus labialis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Diphyllodes magnificus,Cicinnurus magnificus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Diphyllodes respublica,Cicinnurus respublica,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Driophlox atrimaxillaris,Habia atrimaxillaris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Driophlox cristata,Habia cristata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Driophlox fuscicauda,Habia fuscicauda,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Driophlox gutturalis,Habia gutturalis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Dryobates cathpharius,Dendrocopos cathpharius,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Dryobates minor,Dendrocopos minor,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Dryophytes andersonii,Hyla andersonii,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes arenicolor,Hyla arenicolor,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes avivoca,Hyla avivoca,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes chrysoscelis,Hyla chrysoscelis,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes cinereus,Hyla cinerea,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes eximius,Hyla eximia,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes femoralis,Hyla femoralis,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes gratiosus,Hyla gratiosa,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes japonicus,Hyla japonica,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Dryophytes squirellus,Hyla squirella,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Coccycua cinerea,Micrococcyx cinereus,manual,Reviewed synonym
+Coccycua pumila,Micrococcyx pumilus,manual,Reviewed synonym
+Coggerdonia adelaidensis,Litoria adelaidensis,manual,Reviewed synonym
+Colluricincla megarhyncha,Colluricincla affinis,manual,Reviewed synonym
+Colluricincla megarhyncha,Colluricincla discolor,manual,Reviewed synonym
+Colluricincla megarhyncha,Colluricincla fortis,manual,Reviewed synonym
+Colluricincla megarhyncha,Colluricincla obscura,manual,Reviewed synonym
+Colluricincla megarhyncha,Colluricincla rufogaster,manual,Reviewed synonym
+Colluricincla megarhyncha,Colluricincla tappenbecki,manual,Reviewed synonym
+Coloeus dauuricus,Corvus dauuricus,manual,Reviewed synonym
+Coloeus monedula,Corvus monedula,manual,Reviewed synonym
+Conocephalus fasciatus,Conocephalus vicinus,manual,Reviewed synonym
+Conocephalus fuscus,Conocephalus discolor,manual,Reviewed synonym
+Corvinella corvina,Lanius corvinus,manual,Reviewed synonym
+Curruca cantillans,Sylvia cantillans,manual,Reviewed synonym
+Curruca melanocephala,Sylvia melanocephala,manual,Reviewed synonym
+Curruca ruppeli,Sylvia rueppelli,manual,Reviewed synonym
+Curruca subalpina,Sylvia subalpina,manual,Reviewed synonym
+Curruca subcoerulea,Sylvia subcaerulea,manual,Reviewed synonym
+Dendrocoptes medius,Dendrocopos medius,manual,Reviewed synonym
+Dendropsophus molitor,Dendropsophus labialis,manual,Reviewed synonym
+Diphyllodes magnificus,Cicinnurus magnificus,manual,Reviewed synonym
+Diphyllodes respublica,Cicinnurus respublica,manual,Reviewed synonym
+Driophlox atrimaxillaris,Habia atrimaxillaris,manual,Reviewed synonym
+Driophlox cristata,Habia cristata,manual,Reviewed synonym
+Driophlox fuscicauda,Habia fuscicauda,manual,Reviewed synonym
+Driophlox gutturalis,Habia gutturalis,manual,Reviewed synonym
+Dryobates cathpharius,Dendrocopos cathpharius,manual,Reviewed synonym
+Dryobates minor,Dendrocopos minor,manual,Reviewed synonym
+Dryophytes andersonii,Hyla andersonii,manual,Reviewed synonym
+Dryophytes arenicolor,Hyla arenicolor,manual,Reviewed synonym
+Dryophytes avivoca,Hyla avivoca,manual,Reviewed synonym
+Dryophytes chrysoscelis,Hyla chrysoscelis,manual,Reviewed synonym
+Dryophytes cinereus,Hyla cinerea,manual,Reviewed synonym
+Dryophytes eximius,Hyla eximia,manual,Reviewed synonym
+Dryophytes femoralis,Hyla femoralis,manual,Reviewed synonym
+Dryophytes gratiosus,Hyla gratiosa,manual,Reviewed synonym
+Dryophytes japonicus,Hyla japonica,manual,Reviewed synonym
+Dryophytes squirellus,Hyla squirella,manual,Reviewed synonym
 Dryophytes suweonensis,Hyla suweonensis,manual,iNaturalist synonym
-Dryophytes versicolor,Hyla versicolor,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Dryophytes versicolor,Hyla versicolor,manual,Reviewed synonym
 Egretta garzetta,Egretta dimorpha,manual,AviList v2026 subspecies
-Eleothreptus anomalus,Hydropsalis anomala,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Eleothreptus candicans,Hydropsalis candicans,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Emblema modestum,Emblema modesta,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Emblema modestum,Neochmia modesta,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Emblema ruficauda,Neochmia ruficauda,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Eopsaltria georgiana,Quoyornis georgianus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Eopsaltria placens,Poecilodryas placens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Epidalea calamita,Bufo calamita,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Erethizon dorsatum,Erethizon dorsata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Eumyias oscillans,Cyornis oscillans,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Eupetomena cirrochloris,Aphantochroa cirrochloris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Formicivora serrana,Formicivora littoralis,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Forpus modestus,Forpus sclateri,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Galagoides demidoff,Galago demidoff,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallirallus calayanensis,Aptenorallus calayanensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallirallus insignis,Hypotaenidia insignis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallirallus okinawae,Hypotaenidia okinawae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallirallus owstoni,Hypotaenidia owstoni,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallirallus philippensis,Hypotaenidia philippensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallirallus rovianae,Hypotaenidia rovianae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallirallus sylvestris,Hypotaenidia sylvestris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallus lafayettii,Gallus lafayetii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Geokichla gurneyi,Zoothera gurneyi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Glossoptilus goldiei,Psitteuteles goldiei,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Habia rubica,Habia rubra,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Hapithus luteolira,Orocharis luteolira,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Hapithus saltator,Orocharis saltator,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Haplospiza rustica,Spodiornis rusticus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Hesperiphona abeillei,Coccothraustes abeillei,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Hesperiphona vespertina,Coccothraustes vespertinus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Heteroxolmis dominicana,Heteroxolmis dominicanus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Hoolock hoolock,Bunopithecus hoolock,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Hoploxypterus cayanus,Vanellus cayanus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Horizocerus albocristatus,Tropicranus albocristatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Horornis acanthizoides,Cettia acanthizoides,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Hydrochoerus hydrochaeris,Hydrochoeris hydrochaeris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Hylarana nicobariensis,Amnirana nicobariensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Eleothreptus anomalus,Hydropsalis anomala,manual,Reviewed synonym
+Eleothreptus candicans,Hydropsalis candicans,manual,Reviewed synonym
+Emblema modestum,Emblema modesta,manual,Reviewed synonym
+Emblema modestum,Neochmia modesta,manual,Reviewed synonym
+Emblema ruficauda,Neochmia ruficauda,manual,Reviewed synonym
+Eopsaltria georgiana,Quoyornis georgianus,manual,Reviewed synonym
+Eopsaltria placens,Poecilodryas placens,manual,Reviewed synonym
+Epidalea calamita,Bufo calamita,manual,Reviewed synonym
+Erethizon dorsatum,Erethizon dorsata,manual,Reviewed synonym
+Eumyias oscillans,Cyornis oscillans,manual,Reviewed synonym
+Eupetomena cirrochloris,Aphantochroa cirrochloris,manual,Reviewed synonym
+Formicivora serrana,Formicivora littoralis,manual,Reviewed synonym
+Forpus modestus,Forpus sclateri,manual,Reviewed synonym
+Galagoides demidoff,Galago demidoff,manual,Reviewed synonym
+Gallirallus calayanensis,Aptenorallus calayanensis,manual,Reviewed synonym
+Gallirallus insignis,Hypotaenidia insignis,manual,Reviewed synonym
+Gallirallus okinawae,Hypotaenidia okinawae,manual,Reviewed synonym
+Gallirallus owstoni,Hypotaenidia owstoni,manual,Reviewed synonym
+Gallirallus philippensis,Hypotaenidia philippensis,manual,Reviewed synonym
+Gallirallus rovianae,Hypotaenidia rovianae,manual,Reviewed synonym
+Gallirallus sylvestris,Hypotaenidia sylvestris,manual,Reviewed synonym
+Gallus lafayettii,Gallus lafayetii,manual,Reviewed synonym
+Geokichla gurneyi,Zoothera gurneyi,manual,Reviewed synonym
+Glossoptilus goldiei,Psitteuteles goldiei,manual,Reviewed synonym
+Habia rubica,Habia rubra,manual,Reviewed synonym
+Hapithus luteolira,Orocharis luteolira,manual,Reviewed synonym
+Hapithus saltator,Orocharis saltator,manual,Reviewed synonym
+Haplospiza rustica,Spodiornis rusticus,manual,Reviewed synonym
+Hesperiphona abeillei,Coccothraustes abeillei,manual,Reviewed synonym
+Hesperiphona vespertina,Coccothraustes vespertinus,manual,Reviewed synonym
+Heteroxolmis dominicana,Heteroxolmis dominicanus,manual,Reviewed synonym
+Hoolock hoolock,Bunopithecus hoolock,manual,Reviewed synonym
+Hoploxypterus cayanus,Vanellus cayanus,manual,Reviewed synonym
+Horizocerus albocristatus,Tropicranus albocristatus,manual,Reviewed synonym
+Horornis acanthizoides,Cettia acanthizoides,manual,Reviewed synonym
+Hydrochoerus hydrochaeris,Hydrochoeris hydrochaeris,manual,Reviewed synonym
+Hylarana nicobariensis,Amnirana nicobariensis,manual,Reviewed synonym
 Hylexetastes uniformis,Hylexetastes brigidai,manual,AviList v2026 subspecies
-Hypocharmosyna placentis,Charmosyna placentis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Ichthyaetus ichthyaetus,Larus ichthyaetus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Icterus cayanensis,Icterus chrysocephalus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Hypocharmosyna placentis,Charmosyna placentis,manual,Reviewed synonym
+Ichthyaetus ichthyaetus,Larus ichthyaetus,manual,Reviewed synonym
+Icterus cayanensis,Icterus chrysocephalus,manual,Reviewed synonym
 Icterus laudabilis,Icterus laudablis,manual,Misspelling in the English Wikipedia article
-Ixos leucogrammicus,Pycnonotus leucogrammicus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Lagothrix lagothricha,Lagothrix lagotricha,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Laterallus flaviventer,Hapalocrex flaviventer,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Laterallus spiloptera,Laterallus spilopterus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Leuconotopicus albolarvatus,Dryobates albolarvatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Leuconotopicus arizonae,Dryobates arizonae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Leuconotopicus borealis,Dryobates borealis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Leuconotopicus fumigatus,Dryobates fumigatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Leuconotopicus stricklandi,Dryobates stricklandi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Leuconotopicus villosus,Dryobates villosus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Leuconotopicus villosus,Picoides villosus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Lichmera indistincta,Lichmera limbata,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Lichmera lombokia,Sugomel lombokium,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Linaria cannabina,Carduelis cannabina,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Linaria flavirostris,Carduelis flavirostris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Lophoceros alboterminatus,Tockus alboterminatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Lophoceros nasutus,Tockus nasutus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Lophorina superba,Lophorina niedda,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Lophotis ruficrista,Eupodotis ruficrista,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Lupulella mesomelas,Canis mesomelas,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Macronyx fuelleborni,Macronyx fuellebornii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Mareca falcata,Anas falcata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Mareca penelope,Anas penelope,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Mareca sibilatrix,Anas sibilatrix,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Mareca strepera,Anas strepera,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Megascops watsonii,Megascops usta,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Megatibicen figuratus,Tibicen figurata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Megatibicen grossus,Megatibicen auletes,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_synonym
-Megatibicen grossus,Megatibicen grossa,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Megatibicen pronotalis,Tibicen marginalis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Megatibicen resonans,Tibicen resonans,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Melanodryas pulverulenta,Peneoenanthe pulverulenta,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Melanopareia torquata,Melanopareia bitorquata,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Microspizias superciliosus,Hieraspiza superciliosa,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Microtarsus eutilotus,Pycnonotus eutilotus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Microtarsus fuscoflavescens,Pycnonotus fuscoflavescens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Microtarsus priocephalus,Pycnonotus priocephalus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Microtarsus urostictus,Pycnonotus urostictus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Miogryllus verticalis,Miogryllus saussurei,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Mitu tomentosum,Pauxi tomentosa,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Mitu tuberosum,Pauxi tuberosa,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Myiophobus roraimae,Scotomyias roraimae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Myiothlypis bivittata,Myiothlypis roraimae,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Myiothlypis rivularis,Myiothlypis mesoleuca,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Myrmotherula ignota,Myrmotherula obscura,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Nannopsittacus melanogenia,Cyclopsitta melanogenia,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Neogale vison,Mustela vison,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Neogale vison,Neovison vison,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Neoscapteriscus borellii,Scapteriscus borellii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Neotibicen davisi,Tibicen davisi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Neotibicen pruinosus,Tibicen pruinosa,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Neotibicen tibicen,Tibicen chloromera,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Neoxolmis coronatus,Nengetus coronatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Neoxolmis rufiventris,Nengetus rufiventris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Nidirana adenopleura,Babina adenopleura,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Nyctipolus hirundinaceus,Nyctidromus hirundinaceus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Nyctipolus nigrescens,Nyctidromus nigrescens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Nystalus striolatus,Nystalus torridus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Onychorhynchus coronatus,Onychorhynchus occidentalis,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Onychostruthus taczanowskii,Montifringilla taczanowskii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Otospermophilus beecheyi,Spermophilus beecheyi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Otospermophilus variegatus,Spermophilus variegatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Otus senegalensis,Otus feae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Ixos leucogrammicus,Pycnonotus leucogrammicus,manual,Reviewed synonym
+Lagothrix lagothricha,Lagothrix lagotricha,manual,Reviewed synonym
+Laterallus flaviventer,Hapalocrex flaviventer,manual,Reviewed synonym
+Laterallus spiloptera,Laterallus spilopterus,manual,Reviewed synonym
+Leuconotopicus albolarvatus,Dryobates albolarvatus,manual,Reviewed synonym
+Leuconotopicus arizonae,Dryobates arizonae,manual,Reviewed synonym
+Leuconotopicus borealis,Dryobates borealis,manual,Reviewed synonym
+Leuconotopicus fumigatus,Dryobates fumigatus,manual,Reviewed synonym
+Leuconotopicus stricklandi,Dryobates stricklandi,manual,Reviewed synonym
+Leuconotopicus villosus,Dryobates villosus,manual,Reviewed synonym
+Leuconotopicus villosus,Picoides villosus,manual,Reviewed synonym
+Lichmera indistincta,Lichmera limbata,manual,Reviewed synonym
+Lichmera lombokia,Sugomel lombokium,manual,Reviewed synonym
+Linaria cannabina,Carduelis cannabina,manual,Reviewed synonym
+Linaria flavirostris,Carduelis flavirostris,manual,Reviewed synonym
+Lophoceros alboterminatus,Tockus alboterminatus,manual,Reviewed synonym
+Lophoceros nasutus,Tockus nasutus,manual,Reviewed synonym
+Lophorina superba,Lophorina niedda,manual,Reviewed synonym
+Lophotis ruficrista,Eupodotis ruficrista,manual,Reviewed synonym
+Lupulella mesomelas,Canis mesomelas,manual,Reviewed synonym
+Macronyx fuelleborni,Macronyx fuellebornii,manual,Reviewed synonym
+Mareca falcata,Anas falcata,manual,Reviewed synonym
+Mareca penelope,Anas penelope,manual,Reviewed synonym
+Mareca sibilatrix,Anas sibilatrix,manual,Reviewed synonym
+Mareca strepera,Anas strepera,manual,Reviewed synonym
+Megascops watsonii,Megascops usta,manual,Reviewed synonym
+Megatibicen figuratus,Tibicen figurata,manual,Reviewed synonym
+Megatibicen grossus,Megatibicen auletes,manual,Reviewed synonym
+Megatibicen grossus,Megatibicen grossa,manual,Reviewed synonym
+Megatibicen pronotalis,Tibicen marginalis,manual,Reviewed synonym
+Megatibicen resonans,Tibicen resonans,manual,Reviewed synonym
+Melanodryas pulverulenta,Peneoenanthe pulverulenta,manual,Reviewed synonym
+Melanopareia torquata,Melanopareia bitorquata,manual,Reviewed synonym
+Microspizias superciliosus,Hieraspiza superciliosa,manual,Reviewed synonym
+Microtarsus eutilotus,Pycnonotus eutilotus,manual,Reviewed synonym
+Microtarsus fuscoflavescens,Pycnonotus fuscoflavescens,manual,Reviewed synonym
+Microtarsus priocephalus,Pycnonotus priocephalus,manual,Reviewed synonym
+Microtarsus urostictus,Pycnonotus urostictus,manual,Reviewed synonym
+Miogryllus verticalis,Miogryllus saussurei,manual,Reviewed synonym
+Mitu tomentosum,Pauxi tomentosa,manual,Reviewed synonym
+Mitu tuberosum,Pauxi tuberosa,manual,Reviewed synonym
+Myiophobus roraimae,Scotomyias roraimae,manual,Reviewed synonym
+Myiothlypis bivittata,Myiothlypis roraimae,manual,Reviewed synonym
+Myiothlypis rivularis,Myiothlypis mesoleuca,manual,Reviewed synonym
+Myrmotherula ignota,Myrmotherula obscura,manual,Reviewed synonym
+Nannopsittacus melanogenia,Cyclopsitta melanogenia,manual,Reviewed synonym
+Neogale vison,Mustela vison,manual,Reviewed synonym
+Neogale vison,Neovison vison,manual,Reviewed synonym
+Neoscapteriscus borellii,Scapteriscus borellii,manual,Reviewed synonym
+Neotibicen davisi,Tibicen davisi,manual,Reviewed synonym
+Neotibicen pruinosus,Tibicen pruinosa,manual,Reviewed synonym
+Neotibicen tibicen,Tibicen chloromera,manual,Reviewed synonym
+Neoxolmis coronatus,Nengetus coronatus,manual,Reviewed synonym
+Neoxolmis rufiventris,Nengetus rufiventris,manual,Reviewed synonym
+Nidirana adenopleura,Babina adenopleura,manual,Reviewed synonym
+Nyctipolus hirundinaceus,Nyctidromus hirundinaceus,manual,Reviewed synonym
+Nyctipolus nigrescens,Nyctidromus nigrescens,manual,Reviewed synonym
+Nystalus striolatus,Nystalus torridus,manual,Reviewed synonym
+Onychorhynchus coronatus,Onychorhynchus occidentalis,manual,Reviewed synonym
+Onychostruthus taczanowskii,Montifringilla taczanowskii,manual,Reviewed synonym
+Otospermophilus beecheyi,Spermophilus beecheyi,manual,Reviewed synonym
+Otospermophilus variegatus,Spermophilus variegatus,manual,Reviewed synonym
+Otus senegalensis,Otus feae,manual,Reviewed synonym
 Pachycephala pectoralis,Pachycephala fuliginosa,manual,AviList v2026 subspecies
-Pachyglossa vincens,Dicaeum vincens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Pachyglossa vincens,Dicaeum vincens,manual,Reviewed synonym
 Pantherophis alleghaniensis,Pantherophis spiloides,manual,iNaturalist synonym
-Paradoxornis heudei,Calamornis heudei,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pelophylax esculentus,Rana esculenta,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pelophylax perezi,Rana perezi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Paradoxornis heudei,Calamornis heudei,manual,Reviewed synonym
+Pelophylax esculentus,Rana esculenta,manual,Reviewed synonym
+Pelophylax perezi,Rana perezi,manual,Reviewed synonym
 Pelophylax ridibundus,Pelophylax cypriensis,manual,iNaturalist synonym; epithet matching must not give it to Bufotes cypriensis
-Pengilleyia tyleri,Litoria tyleri,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Phonipara canora,Tiaris canorus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Picus canus,Picus dedemi,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Pionus menstruus,Pionus reichenowi,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Pionus tumultuosus,Pionus seniloides,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Pipile cujubi,Aburria cujubi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pipile cumanensis,Aburria cumanensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pipile jacutinga,Aburria jacutinga,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Planopleura kaempferi,Platypleura kaempferi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Plecturocebus donacophilus,Callicebus donacophilus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Plecturocebus moloch,Callicebus moloch,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Plocealauda assamica,Mirafra assamica,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Plocealauda erythrocephala,Mirafra erythrocephala,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Plocealauda microptera,Mirafra microptera,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Podiceps major,Podicephorus major,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pogonotriccus difficilis,Phylloscartes difficilis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pogonotriccus paulista,Phylloscartes paulista,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Poliocitellus franklinii,Spermophilus franklinii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Poospizopsis hypocondria,Poospizopsis hypochondria,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pseudacris regilla,Hyliola regilla,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pseudochorthippus parallelus,Chorthippus parallelus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Psilopogon haemacephalus,Megalaima haemacephala,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Psilopogon virens,Megalaima virens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Psilopogon zeylanicus,Megalaima zeylanica,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Psophia viridis,Psophia obscura,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Psophodes nigrogularis,Psophodes leucogaster,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Pteronemobius heydenii,Pteronemobius heydeni,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pyrgilauda blanfordi,Montifringilla blanfordi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Pyrrhura lepida,Pyrrhura coerulescens,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Radjah radjah,Tadorna radjah,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Ramphastos ambiguus,Ramphastos swainsonii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Ramphiculus gularis,Ptilinopus epius,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Ramphiculus gularis,Ptilinopus gularis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Pengilleyia tyleri,Litoria tyleri,manual,Reviewed synonym
+Phonipara canora,Tiaris canorus,manual,Reviewed synonym
+Picus canus,Picus dedemi,manual,Reviewed synonym
+Pionus menstruus,Pionus reichenowi,manual,Reviewed synonym
+Pionus tumultuosus,Pionus seniloides,manual,Reviewed synonym
+Pipile cujubi,Aburria cujubi,manual,Reviewed synonym
+Pipile cumanensis,Aburria cumanensis,manual,Reviewed synonym
+Pipile jacutinga,Aburria jacutinga,manual,Reviewed synonym
+Planopleura kaempferi,Platypleura kaempferi,manual,Reviewed synonym
+Plecturocebus donacophilus,Callicebus donacophilus,manual,Reviewed synonym
+Plecturocebus moloch,Callicebus moloch,manual,Reviewed synonym
+Plocealauda assamica,Mirafra assamica,manual,Reviewed synonym
+Plocealauda erythrocephala,Mirafra erythrocephala,manual,Reviewed synonym
+Plocealauda microptera,Mirafra microptera,manual,Reviewed synonym
+Podiceps major,Podicephorus major,manual,Reviewed synonym
+Pogonotriccus difficilis,Phylloscartes difficilis,manual,Reviewed synonym
+Pogonotriccus paulista,Phylloscartes paulista,manual,Reviewed synonym
+Poliocitellus franklinii,Spermophilus franklinii,manual,Reviewed synonym
+Poospizopsis hypocondria,Poospizopsis hypochondria,manual,Reviewed synonym
+Pseudacris regilla,Hyliola regilla,manual,Reviewed synonym
+Pseudochorthippus parallelus,Chorthippus parallelus,manual,Reviewed synonym
+Psilopogon haemacephalus,Megalaima haemacephala,manual,Reviewed synonym
+Psilopogon virens,Megalaima virens,manual,Reviewed synonym
+Psilopogon zeylanicus,Megalaima zeylanica,manual,Reviewed synonym
+Psophia viridis,Psophia obscura,manual,Reviewed synonym
+Psophodes nigrogularis,Psophodes leucogaster,manual,Reviewed synonym
+Pteronemobius heydenii,Pteronemobius heydeni,manual,Reviewed synonym
+Pyrgilauda blanfordi,Montifringilla blanfordi,manual,Reviewed synonym
+Pyrrhura lepida,Pyrrhura coerulescens,manual,Reviewed synonym
+Radjah radjah,Tadorna radjah,manual,Reviewed synonym
+Ramphastos ambiguus,Ramphastos swainsonii,manual,Reviewed synonym
+Ramphiculus gularis,Ptilinopus epius,manual,Reviewed synonym
+Ramphiculus gularis,Ptilinopus gularis,manual,Reviewed synonym
 Rawlinsonia ewingii,Litoria ewingii,manual,iNaturalist synonym; the split-off R. calliscelis must not claim it
-Rhabdotorrhinus corrugatus,Aceros corrugatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Rhinella diptycha,Rhinella schneideri,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Rhinella dorbignyi,Rhinella fernandezae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Rhinoplax vigil,Buceros vigil,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Roeseliana roeselii,Metrioptera roeselii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Rubigula cyaniventris,Ixodia cyaniventris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Rubigula cyaniventris,Pycnonotus cyaniventris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Rubigula erythropthalmos,Pycnonotus erythropthalmos,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Rubigula squamata,Pycnonotus squamatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Sapajus apella,Cebus apella,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Sapajus nigritus,Cebus nigritus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Scinax elaeochroa,Scinax elaeochrous,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Setopagis heterura,Hydropsalis heterura,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Setopagis parvula,Hydropsalis parvula,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Sibirionetta formosa,Anas formosa,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spatula clypeata,Anas clypeata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spatula cyanoptera,Anas cyanoptera,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spatula hottentota,Anas hottentota,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spatula platalea,Anas platalea,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spatula querquedula,Anas querquedula,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spatula smithii,Anas smithii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spilopelia chinensis,Streptopelia chinensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spilopelia senegalensis,Streptopelia senegalensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spinus cucullatus,Carduelis cucullata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spinus pinus,Carduelis pinus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Spinus spinus,Carduelis spinus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Sporophila americana,Sporophila murallae,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Sporophila fringilloides,Dolospingus fringilloides,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Stenobothrus rubicundulus,Stenobothrus rubicundus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Stephanoaetus coronatus,Urubitinga coronata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Rhabdotorrhinus corrugatus,Aceros corrugatus,manual,Reviewed synonym
+Rhinella diptycha,Rhinella schneideri,manual,Reviewed synonym
+Rhinella dorbignyi,Rhinella fernandezae,manual,Reviewed synonym
+Rhinoplax vigil,Buceros vigil,manual,Reviewed synonym
+Roeseliana roeselii,Metrioptera roeselii,manual,Reviewed synonym
+Rubigula cyaniventris,Ixodia cyaniventris,manual,Reviewed synonym
+Rubigula cyaniventris,Pycnonotus cyaniventris,manual,Reviewed synonym
+Rubigula erythropthalmos,Pycnonotus erythropthalmos,manual,Reviewed synonym
+Rubigula squamata,Pycnonotus squamatus,manual,Reviewed synonym
+Sapajus apella,Cebus apella,manual,Reviewed synonym
+Sapajus nigritus,Cebus nigritus,manual,Reviewed synonym
+Scinax elaeochroa,Scinax elaeochrous,manual,Reviewed synonym
+Setopagis heterura,Hydropsalis heterura,manual,Reviewed synonym
+Setopagis parvula,Hydropsalis parvula,manual,Reviewed synonym
+Sibirionetta formosa,Anas formosa,manual,Reviewed synonym
+Spatula clypeata,Anas clypeata,manual,Reviewed synonym
+Spatula cyanoptera,Anas cyanoptera,manual,Reviewed synonym
+Spatula hottentota,Anas hottentota,manual,Reviewed synonym
+Spatula platalea,Anas platalea,manual,Reviewed synonym
+Spatula querquedula,Anas querquedula,manual,Reviewed synonym
+Spatula smithii,Anas smithii,manual,Reviewed synonym
+Spilopelia chinensis,Streptopelia chinensis,manual,Reviewed synonym
+Spilopelia senegalensis,Streptopelia senegalensis,manual,Reviewed synonym
+Spinus cucullatus,Carduelis cucullata,manual,Reviewed synonym
+Spinus pinus,Carduelis pinus,manual,Reviewed synonym
+Spinus spinus,Carduelis spinus,manual,Reviewed synonym
+Sporophila americana,Sporophila murallae,manual,Reviewed synonym
+Sporophila fringilloides,Dolospingus fringilloides,manual,Reviewed synonym
+Stenobothrus rubicundulus,Stenobothrus rubicundus,manual,Reviewed synonym
+Stephanoaetus coronatus,Urubitinga coronata,manual,Reviewed synonym
 Stiphrornis erythrothorax,Stiphrornis xanthogaster,AviList v2026,Subspecies Stiphrornis erythrothorax xanthogaster
-Stizorhina finschi,Neocossyphus finschi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Stizorhina fraseri,Neocossyphus fraseri,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Streptopelia roseogrisea,Streptopelia risoria,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Strix albitarsis,Ciccaba albitarsis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Strix huhula,Ciccaba huhula,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Strix nigrolineata,Ciccaba nigrolineata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Strix virgata,Ciccaba virgata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Sus scrofa,Sus domesticus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Suthora webbiana,Paradoxornis webbianus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Synoicus chinensis,Excalfactoria chinensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Systellura longirostris,Hydropsalis longirostris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tachymarptis melba,Apus melba,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tachyphonus surinamus,Maschalethraupis surinamus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tachyspiza haplochroa,Accipiter haplochrous,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_synonym
-Tachyspiza haplochroa,Tachyspiza haplochrous,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Tachyspiza nanus,Accipiter nanus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tachyspiza trinotata,Accipiter trinotatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Talaphorus chlorocercus,Thalaphorus chlorocercus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tangara velia,Tangara cyanomelas,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tepuiornis whitelyi,Setopagis whitelyi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Thectocercus acuticaudatus,Psittacara acuticaudatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Thinornis cucullatus,Charadrius cucullatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Thinornis melanops,Charadrius melanops,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Thinornis novaeseelandiae,Charadrius novaeseelandiae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Trachyphonus darnaudii,Trachyphonus usambiro,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Trichoglossus flavoviridis,Saudareos flavoviridis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Trichoglossus johnstoniae,Saudareos johnstoniae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Trichoglossus ornatus,Saudareos ornata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Turdus mupinensis,Otocichla mupinensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tychaedon barbata,Cercotrichas barbata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tychaedon leucosticta,Cercotrichas leucosticta,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tychaedon quadrivirgata,Cercotrichas quadrivirgata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Tychaedon signata,Cercotrichas signata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Urocitellus armatus,Spermophilus armatus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Urocitellus columbianus,Spermophilus columbianus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Urocitellus parryii,Spermophilus parryii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Urocitellus richardsonii,Spermophilus richardsonii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Urolestes melanoleucus,Lanius melanoleucus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis affinis,Dryobates affinis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis callonotus,Dryobates callonotus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis cassini,Dryobates cassini,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis chocoensis,Dryobates chocoensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis dignus,Dryobates dignus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis frontalis,Dryobates frontalis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis kirkii,Dryobates kirkii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis lignarius,Dryobates lignarius,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis maculifrons,Dryobates maculifrons,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis mixtus,Dryobates mixtus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis nigriceps,Dryobates nigriceps,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis passerinus,Dryobates passerinus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis sanguineus,Dryobates sanguineus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Veniliornis spilogaster,Dryobates spilogaster,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Vitreorana parvula,Vitreorana uranoscopa,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Xiphorhynchus guttatus,Xiphorhynchus guttatoides,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Xiphorhynchus ocellatus,Xiphorhynchus beauperthuysii,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Xiphorhynchus ocellatus,Xiphorhynchus chunchotambo,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
-Zhangixalus moltrechti,Rhacophorus moltrechti,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Zhangixalus taipeianus,Rhacophorus taipeianus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Zimmerius chrysops,Zimmerius minimus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
+Stizorhina finschi,Neocossyphus finschi,manual,Reviewed synonym
+Stizorhina fraseri,Neocossyphus fraseri,manual,Reviewed synonym
+Streptopelia roseogrisea,Streptopelia risoria,manual,Reviewed synonym
+Strix albitarsis,Ciccaba albitarsis,manual,Reviewed synonym
+Strix huhula,Ciccaba huhula,manual,Reviewed synonym
+Strix nigrolineata,Ciccaba nigrolineata,manual,Reviewed synonym
+Strix virgata,Ciccaba virgata,manual,Reviewed synonym
+Sus scrofa,Sus domesticus,manual,Reviewed synonym
+Suthora webbiana,Paradoxornis webbianus,manual,Reviewed synonym
+Synoicus chinensis,Excalfactoria chinensis,manual,Reviewed synonym
+Systellura longirostris,Hydropsalis longirostris,manual,Reviewed synonym
+Tachymarptis melba,Apus melba,manual,Reviewed synonym
+Tachyphonus surinamus,Maschalethraupis surinamus,manual,Reviewed synonym
+Tachyspiza haplochroa,Accipiter haplochrous,manual,Reviewed synonym
+Tachyspiza haplochroa,Tachyspiza haplochrous,manual,Reviewed synonym
+Tachyspiza nanus,Accipiter nanus,manual,Reviewed synonym
+Tachyspiza trinotata,Accipiter trinotatus,manual,Reviewed synonym
+Talaphorus chlorocercus,Thalaphorus chlorocercus,manual,Reviewed synonym
+Tangara velia,Tangara cyanomelas,manual,Reviewed synonym
+Tepuiornis whitelyi,Setopagis whitelyi,manual,Reviewed synonym
+Thectocercus acuticaudatus,Psittacara acuticaudatus,manual,Reviewed synonym
+Thinornis cucullatus,Charadrius cucullatus,manual,Reviewed synonym
+Thinornis melanops,Charadrius melanops,manual,Reviewed synonym
+Thinornis novaeseelandiae,Charadrius novaeseelandiae,manual,Reviewed synonym
+Trachyphonus darnaudii,Trachyphonus usambiro,manual,Reviewed synonym
+Trichoglossus flavoviridis,Saudareos flavoviridis,manual,Reviewed synonym
+Trichoglossus johnstoniae,Saudareos johnstoniae,manual,Reviewed synonym
+Trichoglossus ornatus,Saudareos ornata,manual,Reviewed synonym
+Turdus mupinensis,Otocichla mupinensis,manual,Reviewed synonym
+Tychaedon barbata,Cercotrichas barbata,manual,Reviewed synonym
+Tychaedon leucosticta,Cercotrichas leucosticta,manual,Reviewed synonym
+Tychaedon quadrivirgata,Cercotrichas quadrivirgata,manual,Reviewed synonym
+Tychaedon signata,Cercotrichas signata,manual,Reviewed synonym
+Urocitellus armatus,Spermophilus armatus,manual,Reviewed synonym
+Urocitellus columbianus,Spermophilus columbianus,manual,Reviewed synonym
+Urocitellus parryii,Spermophilus parryii,manual,Reviewed synonym
+Urocitellus richardsonii,Spermophilus richardsonii,manual,Reviewed synonym
+Urolestes melanoleucus,Lanius melanoleucus,manual,Reviewed synonym
+Veniliornis affinis,Dryobates affinis,manual,Reviewed synonym
+Veniliornis callonotus,Dryobates callonotus,manual,Reviewed synonym
+Veniliornis cassini,Dryobates cassini,manual,Reviewed synonym
+Veniliornis chocoensis,Dryobates chocoensis,manual,Reviewed synonym
+Veniliornis dignus,Dryobates dignus,manual,Reviewed synonym
+Veniliornis frontalis,Dryobates frontalis,manual,Reviewed synonym
+Veniliornis kirkii,Dryobates kirkii,manual,Reviewed synonym
+Veniliornis lignarius,Dryobates lignarius,manual,Reviewed synonym
+Veniliornis maculifrons,Dryobates maculifrons,manual,Reviewed synonym
+Veniliornis mixtus,Dryobates mixtus,manual,Reviewed synonym
+Veniliornis nigriceps,Dryobates nigriceps,manual,Reviewed synonym
+Veniliornis passerinus,Dryobates passerinus,manual,Reviewed synonym
+Veniliornis sanguineus,Dryobates sanguineus,manual,Reviewed synonym
+Veniliornis spilogaster,Dryobates spilogaster,manual,Reviewed synonym
+Vitreorana parvula,Vitreorana uranoscopa,manual,Reviewed synonym
+Xiphorhynchus guttatus,Xiphorhynchus guttatoides,manual,Reviewed synonym
+Xiphorhynchus ocellatus,Xiphorhynchus beauperthuysii,manual,Reviewed synonym
+Xiphorhynchus ocellatus,Xiphorhynchus chunchotambo,manual,Reviewed synonym
+Zhangixalus moltrechti,Rhacophorus moltrechti,manual,Reviewed synonym
+Zhangixalus taipeianus,Rhacophorus taipeianus,manual,Reviewed synonym
+Zimmerius chrysops,Zimmerius minimus,manual,Reviewed synonym
 Zimmerius viridiflavus,Zimmerius flavidifrons,manual,AviList v2026 subspecies
