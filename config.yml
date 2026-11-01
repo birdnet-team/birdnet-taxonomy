@@ -148,10 +148,9 @@ metadata_quality:
   # species stays even before other sources cover a new split.
   keep_groups:
     - Aves
-  # Species a model outputs (status keep in overrides/model_labels/) are never
-  # dropped either: gaps are marked low_resource instead. Species with a BirdNET
-  # ID also stay, until a --reassign-ids.
-  keep_model_labels: true
+  # Species with a BirdNET ID (bn_ids.json) are never dropped either: gaps are
+  # marked low_resource instead.
+  keep_registered: true
 
 # Release CSV export (dist/BirdNET_Taxonomy_<version>.csv). The JSON carries every
 # locale; the CSV gets one common_name_<locale> column per locale listed here,

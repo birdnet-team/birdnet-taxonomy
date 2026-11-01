@@ -24,7 +24,6 @@ Output:
   - dist/BirdNET_Taxonomy_<version>.json
   - dist/BirdNET_Taxonomy_<version>.csv
   - dist/BirdNET_Taxonomy_<version>.zip
-  - dist/model_labels/<model>.csv  (from overrides/model_labels/<model>.csv)
 
 Usage:
     python -m build.metadata [--merge-only] [--dry-run] [--no-zip] [--dev]
@@ -42,7 +41,6 @@ import unicodedata
 import zipfile
 from collections import Counter
 from pathlib import Path
-from string import Template
 
 from urllib.parse import quote, unquote
 from config import RELEASE_PREFIX, load_config, image_url_prefix, release_file, LOCALE_NAMES
@@ -82,43 +80,9 @@ MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
 MANUAL_COMMON_ALIASES_FILE = ROOT / "overrides" / "common_name_aliases.csv"
 MANUAL_SPLITS_FILE = ROOT / "overrides" / "bird_splits.csv"
 PRIORITY_SPECIES_FILE = ROOT / "overrides" / "priority_species.csv"
-MODEL_LABELS_DIR = ROOT / "overrides" / "model_labels"
-MODEL_ALIASES_FILE = ROOT / "overrides" / "model_aliases.csv"
-MODEL_HANDOVER_DIR = RAW_DIR / "model_handover"
+LABEL_ALIASES_FILE = ROOT / "overrides" / "label_aliases.csv"
 BN_IDS_FILE = ROOT / "bn_ids.json"
 
-MODEL_LABEL_COLUMNS = ("mario_id", "model_label", "train_count", "status", "scientific_name",
-                       "taxon_group", "redirect_to", "alias", "reason", "note")
-MODEL_LABEL_EXPORT_COLUMNS = ("mario_id", "model_label", "train_count", "status", "rename_to",
-                              "redirect_to", "redirect_mario_id", "reason", "reason_text",
-                              "scientific_name", "common_name", "birdnet_id", "taxon_group")
-# Reason codes and the wording relayed to the model developer; a row's own
-# note replaces the wording. Every removed or undecided label needs a reason.
-MODEL_LABEL_REASONS = {
-    "duplicate": "Duplicate of another label",
-    "near_identical_sound": "Same sound as the redirect target",
-    "not_single_class": "Not a single class: it could be several different sounds or sources",
-    "no_training_data": "No training samples",
-    "extinct": "Extinct, and the taxonomy excludes extinct species",
-    "plant": "A plant, and the taxonomy covers animals and sound classes",
-    "not_species": "Not a species or a usable sound class",
-    "retired_name": "Name retired on iNaturalist with no accepted replacement",
-    "subspecies": "Subspecies of the redirect target, to merge in a future model",
-    "human_sound": "Human sound, to merge into Homo sapiens in a future model",
-    "pet_sound": "Sound of a pet species, to merge into that species in a future model",
-    "new_species": "Species not added to the taxonomy yet",
-    "new_sound_class": "Sound class not added to the taxonomy yet",
-    "uncertain_name": "Name needs a manual check",
-    "no_inat_taxon": "Not found on iNaturalist, GBIF, or Catalogue of Life",
-    "unlikely_sound": "Not known to produce sound, so the recordings are probably mislabelled",
-}
-# keep: output with a final record. pending: its record is not added yet.
-# remove: output to drop. review: undecided, no record claimed.
-MODEL_LABEL_STATUSES = {"keep", "pending", "remove", "review"}
-# Aliases of these labels are sound names, never scientific synonyms.
-MODEL_LABEL_SOUND_REASONS = {"human_sound", "pet_sound", "near_identical_sound", "not_single_class"}
-# These labels name something other than their record, so a differing name is no rename.
-MODEL_LABEL_NO_RENAME_REASONS = {"subspecies", "pet_sound"}
 
 ID_FIELDS = (
     "inat_id", "ebird_code", "gbif_id", "ncbi_id", "avibase_id",
@@ -621,272 +585,16 @@ def load_priority_only_species(cfg: dict) -> set[str]:
                 if row["taxon_group"].strip() in groups}
 
 
-def _link_model_redirects(path: Path, rows: list[dict]) -> None:
-    """Point each row with `redirect_to` at its target row (`_target`).
-
-    A target is the surviving label: not removed, with training samples, not
-    itself redirected. Only removed rows may share a label with another row.
-    """
-    targets: dict[str, dict] = {}
-    for row in rows:
-        if row["status"] != "remove":
-            if row["model_label"] in targets:
-                raise ValueError(f"{path}: duplicate label '{row['model_label']}'")
-            targets[row["model_label"]] = row
-    for row in rows:
-        if not row["redirect_to"]:
-            continue
-        target = targets.get(row["redirect_to"])
-        problem = (
-            "is unknown or removed" if target is None
-            else "is the label itself" if target is row
-            else "is awaiting review" if target["status"] == "review"
-            else "has no training samples" if not int(target["train_count"] or 0)
-            else "redirects too" if target["redirect_to"]
-            else ""
-        )
-        if problem:
-            raise ValueError(
-                f"{path}: label {row['mario_id']}: redirect_to '{row['redirect_to']}' {problem}"
-            )
-        row["_target"] = target
-
-
-def load_model_labels() -> dict[str, list[dict]]:
-    """Load repo-tracked crosswalks from model outputs to taxonomy records.
-
-    Returns {model name: rows}, one CSV per model in overrides/model_labels/.
-    """
-    models: dict[str, list[dict]] = {}
-    for path in sorted(MODEL_LABELS_DIR.glob("*.csv")):
-        rows: list[dict] = []
-        seen: set[str] = set()
-        with open(path, encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            missing = set(MODEL_LABEL_COLUMNS) - set(reader.fieldnames or [])
-            if missing:
-                raise ValueError(f"{path}: missing required columns: {', '.join(sorted(missing))}")
-            for line_no, raw in enumerate(reader, start=2):
-                row = {key: (raw.get(key) or "").strip() for key in MODEL_LABEL_COLUMNS}
-                if not row["mario_id"] or row["mario_id"] in seen:
-                    raise ValueError(f"{path}: line {line_no}: missing or duplicate mario_id")
-                if row["status"] not in MODEL_LABEL_STATUSES:
-                    raise ValueError(f"{path}: line {line_no}: invalid status '{row['status']}'")
-                if row["train_count"] and not row["train_count"].isdigit():
-                    raise ValueError(
-                        f"{path}: line {line_no}: invalid train_count '{row['train_count']}'"
-                    )
-                if row["status"] in ("keep", "pending") and not row["scientific_name"]:
-                    raise ValueError(f"{path}: line {line_no}: {row['status']} needs scientific_name")
-                if row["reason"] and row["reason"] not in MODEL_LABEL_REASONS:
-                    raise ValueError(f"{path}: line {line_no}: invalid reason '{row['reason']}'")
-                if row["status"] in ("remove", "review") and not row["reason"]:
-                    raise ValueError(f"{path}: line {line_no}: {row['status']} needs a reason")
-                seen.add(row["mario_id"])
-                rows.append(row)
-        _link_model_redirects(path, rows)
-        models[path.stem] = rows
-    return models
-
-
-def model_label_aliases(model_labels: dict[str, list[dict]],
-                        taxonomy: dict) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Scientific and common-name aliases the crosswalks imply.
-
-    A label's alias goes on its redirect target's record, otherwise on its own.
-    Aliases are one-way, and wait until that record exists.
-    """
+def load_label_aliases() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Aliases from audio model labels in overrides/label_aliases.csv:
+    {species: scientific aliases} and {species: common-name aliases}."""
     scientific: dict[str, list[str]] = {}
     common: dict[str, list[str]] = {}
-    for rows in model_labels.values():
-        for row in rows:
-            owner = row["_target"]["scientific_name"] if "_target" in row else row["scientific_name"]
-            alias = row["alias"]
-            if not alias or alias == owner or row["status"] == "review" or owner not in taxonomy:
-                continue
-            if row["reason"] in MODEL_LABEL_SOUND_REASONS:
-                common.setdefault(owner, []).append(alias)
-            elif is_clean_scientific_name(alias):
-                scientific.setdefault(owner, []).append(alias)
+    with open(LABEL_ALIASES_FILE, encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            target = scientific if row["kind"] == "scientific" else common
+            target.setdefault(row["scientific_name"], []).append(row["alias"])
     return scientific, common
-
-
-def load_model_aliases() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Aliases the private crosswalks imply, from the tracked overrides/model_aliases.csv.
-
-    The file holds only names already published on the records, so a build
-    without a crosswalk gives the same records.
-    """
-    scientific: dict[str, list[str]] = {}
-    common: dict[str, list[str]] = {}
-    if MODEL_ALIASES_FILE.exists():
-        with open(MODEL_ALIASES_FILE, encoding="utf-8", newline="") as f:
-            for row in csv.DictReader(f):
-                target = scientific if row["kind"] == "scientific" else common
-                target.setdefault(row["scientific_name"], []).append(row["alias"])
-    return scientific, common
-
-
-def save_model_aliases(scientific: dict[str, list[str]], common: dict[str, list[str]],
-                       records: list[dict]) -> None:
-    """Keep overrides/model_aliases.csv in step with the crosswalks. Only aliases
-    that reached a published record are written (atomic)."""
-    by_name = {rec["scientific_name"]: rec for rec in records}
-    rows = [
-        {"scientific_name": sci, "alias": alias, "kind": kind}
-        for kind, field, aliases in (("scientific", "scientific_name_aliases", scientific),
-                                     ("common", "common_name_aliases", common))
-        for sci, values in sorted(aliases.items())
-        for alias in values
-        if sci in by_name and alias in by_name[sci][field]
-    ]
-    tmp = MODEL_ALIASES_FILE.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["scientific_name", "alias", "kind"],
-                                lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
-    os.replace(tmp, MODEL_ALIASES_FILE)
-
-
-def model_label_redirects(model_labels: dict[str, list[dict]]) -> dict[str, str]:
-    """Map each record that redirects to its target record."""
-    return {
-        row["scientific_name"]: row["_target"]["scientific_name"]
-        for rows in model_labels.values() for row in rows
-        if "_target" in row and row["scientific_name"]
-        and row["scientific_name"] != row["_target"]["scientific_name"]
-    }
-
-
-def model_label_exports(model_labels: dict[str, list[dict]],
-                        records: list[dict]) -> dict[str, list[dict]]:
-    """Check the crosswalks against the final records and build their exports."""
-    by_name = {rec["scientific_name"]: rec for rec in records}
-    exports: dict[str, list[dict]] = {}
-    errors: list[str] = []
-    for model, rows in model_labels.items():
-        exports[model] = []
-        surviving: dict[str, str] = {}
-        for row in rows:
-            rec = by_name.get(row["scientific_name"])
-            if row["status"] == "keep" and rec is None:
-                errors.append(f"{model} {row['mario_id']}: '{row['scientific_name']}' is not a record")
-            if row["status"] in ("keep", "pending") and "_target" not in row:
-                first = surviving.setdefault(row["scientific_name"], row["mario_id"])
-                if first != row["mario_id"]:
-                    errors.append(f"{model} {row['mario_id']}: same record as label {first}, "
-                                  "set redirect_to on one of them")
-            if row["status"] == "pending" and rec is not None:
-                errors.append(f"{model} {row['mario_id']}: '{row['scientific_name']}' "
-                              "is a record now, set status to keep")
-            exports[model].append({
-                **{key: row[key] for key in MODEL_LABEL_COLUMNS if key in MODEL_LABEL_EXPORT_COLUMNS},
-                "redirect_mario_id": row["_target"]["mario_id"] if "_target" in row else "",
-                "reason_text": row["note"] or (
-                    f"Duplicate of {row['redirect_to']}"
-                    if row["reason"] == "duplicate" and row["redirect_to"]
-                    else MODEL_LABEL_REASONS.get(row["reason"], "")
-                ),
-                "rename_to": row["scientific_name"] if (
-                    row["status"] in ("keep", "pending")
-                    and row["reason"] not in MODEL_LABEL_NO_RENAME_REASONS
-                    and row["scientific_name"] != row["model_label"]
-                ) else "",
-                "common_name": (rec or {}).get("common_name", ""),
-                "birdnet_id": (rec or {}).get("birdnet_id", ""),
-                "taxon_group": (rec or {}).get("taxon_group") or row["taxon_group"],
-            })
-    if errors:
-        joined = "; ".join(errors[:10])
-        if len(errors) > 10:
-            joined += f"; ... (+{len(errors) - 10} more)"
-        raise ValueError(f"Model label crosswalk: {joined}")
-    return exports
-
-
-def write_model_label_exports(exports: dict[str, list[dict]], out_dir: Path) -> None:
-    """Write one CSV per model to <out_dir>/model_labels/ (atomic).
-
-    These go to the model developer, so they stay out of the release zip.
-    """
-    folder = out_dir / "model_labels"
-    folder.mkdir(parents=True, exist_ok=True)
-    for model, rows in exports.items():
-        path = folder / f"{model}.csv"
-        tmp = path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=MODEL_LABEL_EXPORT_COLUMNS, lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(rows)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-        counts = Counter(row["status"] for row in rows)
-        print(f"  Model labels: {path} ({len(rows)} labels: "
-              f"{', '.join(f'{n} {status}' for status, n in counts.most_common())})")
-
-
-def _handover_counts(rows: list[dict], unlabelled: list[dict]) -> dict[str, str]:
-    """Counts for a model's notes, taken from its export and unlabelled species."""
-    statuses = Counter(row["status"] for row in rows)
-    samples = {status: sum(int(row["train_count"] or 0) for row in rows if row["status"] == status)
-               for status in statuses}
-    total = sum(samples.values())
-    redirected = Counter(row["status"] for row in rows if row["redirect_to"])
-    changes = Counter(row["change"] for row in unlabelled)
-    return {key: f"{value:,}" for key, value in {
-        "keep": statuses["keep"], "remove": statuses["remove"],
-        "renames": sum(1 for row in rows if row["rename_to"]),
-        "redirects": sum(redirected.values()), "redirects_now": redirected["remove"],
-        "redirects_later": redirected["keep"],
-        "subspecies": sum(1 for row in rows
-                          if row["reason"] == "subspecies" and row["status"] == "keep"),
-        "kept_samples": samples.get("keep", 0), "total_samples": total,
-        "unlabelled": len(unlabelled), "splits": changes["split"],
-        "new_species": changes["new species"],
-        "with_source": sum(1 for row in unlabelled if row["split_from"]),
-    }.items()} | {"kept_share": f"{100 * samples.get('keep', 0) / total:.1f}" if total else "0"}
-
-
-def write_model_handover(exports: dict[str, list[dict]], records: list[dict],
-                         out_dir: Path) -> None:
-    """Write what goes to a model's developer beside its CSV, from the local
-    raw_data/model_handover/<model>/ folder, if there is one.
-
-    unlabelled_splits.csv lists species new to the taxonomy that the model has no
-    label for; they get their current names and IDs here. notes.md is a template
-    whose counts come from the export, so neither can go stale.
-    """
-    by_name = {rec["scientific_name"]: rec for rec in records}
-    for model, rows in exports.items():
-        folder = MODEL_HANDOVER_DIR / model
-        unlabelled: list[dict] = []
-        splits = folder / "unlabelled_splits.csv"
-        if splits.exists():
-            labelled = {row["scientific_name"] for row in rows if row["status"] == "keep"}
-            with open(splits, encoding="utf-8", newline="") as f:
-                reviewed = list(csv.DictReader(f))
-            for row in reviewed:
-                sci = row["scientific_name"]
-                if sci not in by_name or sci in labelled or (
-                        row["split_from"] and row["split_from"] not in by_name):
-                    raise ValueError(f"{splits}: '{sci}' is not a record, already has a label, "
-                                     "or names an unknown parent")
-                rec = by_name[sci]
-                unlabelled.append({"scientific_name": sci, "common_name": rec["common_name"],
-                                   "birdnet_id": rec["birdnet_id"], "ebird_code": rec["ebird_code"],
-                                   "change": row["change"], "split_from": row["split_from"]})
-            with open(out_dir / "model_labels" / f"{model}_unlabelled_splits.csv", "w",
-                      encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=list(unlabelled[0]), lineterminator="\n")
-                writer.writeheader()
-                writer.writerows(unlabelled)
-        notes = folder / "notes.md"
-        if notes.exists():
-            text = Template(notes.read_text(encoding="utf-8")).substitute(
-                _handover_counts(rows, unlabelled))
-            (out_dir / "model_labels" / f"{model}_notes.md").write_text(text, encoding="utf-8")
 
 
 def is_sound_class_record(record: dict) -> bool:
@@ -2184,7 +1892,6 @@ def _metadata_quality(record: dict) -> tuple[int, list[str], int]:
 def _apply_metadata_quality_filter(
     records: list[dict],
     quality_cfg: dict | None,
-    model_species: set[str] | None = None,
 ) -> list[dict]:
     if not (quality_cfg or {}).get("enabled", False):
         return records
@@ -2196,7 +1903,8 @@ def _apply_metadata_quality_filter(
     }
     drop_thin = bool(quality_cfg.get("drop_if_missing_image_and_description", False))
     keep_groups = {str(g) for g in quality_cfg.get("keep_groups", []) or []}
-    keep_species = (model_species or set()) if quality_cfg.get("keep_model_labels", False) else set()
+    # A species with a BirdNET ID stays, so the records of a release are stable.
+    keep_species = set(_load_bn_ids()) if quality_cfg.get("keep_registered", False) else set()
     max_thin_external_ids = int(
         quality_cfg.get("max_external_ids_for_thin_records", 1) or 0
     )
@@ -2683,8 +2391,6 @@ def build_metadata(taxonomy: dict, wiki: dict,
                    quality_cfg: dict | None = None,
                    avicommons: dict[str, dict] | None = None,
                    manual_common_aliases: dict[str, list[str]] | None = None,
-                   model_species: set[str] | None = None,
-                   redirects: dict[str, str] | None = None,
                    description_overrides: list[dict] | None = None) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
@@ -2718,8 +2424,6 @@ def build_metadata(taxonomy: dict, wiki: dict,
         avicommons = {}
     if manual_common_aliases is None:
         manual_common_aliases = {}
-    if redirects is None:
-        redirects = {}
 
     image_prefix = image_url_prefix()
     min_english_words = int(load_config().get("descriptions", {}).get("min_english_words", 40))
@@ -2984,23 +2688,20 @@ def build_metadata(taxonomy: dict, wiki: dict,
 
     print(f"  Texts dropped: {_drop_misplaced_texts(records)} (genus articles, "
           "shared texts, LLM text without a source link)")
-    # A species with a BirdNET ID stays until a reassignment, so a build gives
-    # the same records with or without the private crosswalks.
-    registered = set() if reassign_ids else set(_load_bn_ids())
-    records = _apply_metadata_quality_filter(records, quality_cfg,
-                                             (model_species or set()) | registered)
+    records = _apply_metadata_quality_filter(records, quality_cfg)
     print(f"  Identifiers dropped for an invalid format: {invalid_ids}")
     print(f"  Images kept on one species only (shared photo): {_dedupe_images(records)} removed")
     print(f"  Low-resource records: {_mark_low_resource(records)}")
     renamed = _resolve_display_name_collisions(records, taxonomy)
     print(f"  Display names: {renamed} species renamed (name shared with another species)")
-    # A manual common-name alias must not be another species' display name,
-    # unless that record redirects here: its own name wins lookups meanwhile.
-    name_owner = {r["common_name"].lower(): r["scientific_name"] for r in records}
+    # A manual common-name alias must not be another species' display name. A
+    # sound class may share one ("speech"): its own name wins lookups.
+    name_owner = {r["common_name"].lower(): r["scientific_name"] for r in records
+                  if not is_sound_class_record(r)}
     for sci, values in manual_common_aliases.items():
         for alias in values:
             owner = name_owner.get(alias.lower(), sci)
-            if owner != sci and redirects and redirects.get(owner) != sci:
+            if owner != sci:
                 raise ValueError(
                     f"{MANUAL_COMMON_ALIASES_FILE}: alias '{alias}' for '{sci}' "
                     f"is the common name of '{owner}'"
@@ -3230,21 +2931,13 @@ def main():
         )
     print(f"  Common aliases: {sum(len(v) for v in manual_common_aliases.values()):>4} manual "
           f"common-name aliases ({len(manual_common_aliases)} species)")
-    model_labels = load_model_labels()
-    if args.reassign_ids and not model_labels:
-        raise SystemExit("--reassign-ids needs the private crosswalks in overrides/model_labels/: "
-                         "without them, species kept only for a model label would lose their IDs")
-    model_scientific, model_common = (model_label_aliases(model_labels, taxonomy)
-                                      if model_labels else load_model_aliases())
-    for sci, values in model_scientific.items():
+    label_scientific, label_common = load_label_aliases()
+    for sci, values in label_scientific.items():
         manual_aliases[sci] = [*manual_aliases.get(sci, []), *values]
-    for sci, values in model_common.items():
+    for sci, values in label_common.items():
         manual_common_aliases[sci] = [*manual_common_aliases.get(sci, []), *values]
-    if not model_labels:
-        print("  No private crosswalk: records are unaffected, developer files are skipped")
-    print(f"  Model labels: {len(model_labels)} crosswalks, "
-          f"{sum(len(v) for v in model_scientific.values())} scientific and "
-          f"{sum(len(v) for v in model_common.values())} common-name aliases")
+    print(f"  Label aliases: {sum(len(v) for v in label_scientific.values())} scientific and "
+          f"{sum(len(v) for v in label_common.values())} common-name aliases")
 
     print("\nMerging...")
     records = build_metadata(
@@ -3258,13 +2951,7 @@ def main():
         avicommons=avicommons,
         manual_common_aliases=manual_common_aliases,
         description_overrides=description_overrides,
-        model_species={row["scientific_name"] for rows in model_labels.values()
-                       for row in rows if row["status"] == "keep"},
-        redirects=model_label_redirects(model_labels),
     )
-    model_exports = model_label_exports(model_labels, records)
-    if model_labels:
-        save_model_aliases(model_scientific, model_common, records)
 
     print("\nAuditing final metadata...")
     desc_cfg = cfg.get("descriptions", {})
@@ -3300,8 +2987,6 @@ def main():
     os.replace(tmp, csv_path)
     csv_size = csv_path.stat().st_size
     print(f"  CSV:  {csv_path} ({csv_size / 1024 / 1024:.1f} MB)")
-    write_model_label_exports(model_exports, out_dir)
-    write_model_handover(model_exports, records, out_dir)
 
     # Zip
     if not args.no_zip:

@@ -107,22 +107,6 @@ only copy of a fix.
 - `overrides/species_overrides.csv`: images, crop anchors, and `gbif_id`.
 - `overrides/priority_species.csv`: a row's `inat_id` wins over any cached record.
 
-## Model labels
-
-- `overrides/model_labels/<model>.csv` maps each audio model output onto the taxonomy.
-  Base species names never change to fit a label; model names become aliases.
-- Crosswalks are private. The folder is gitignored and must never be committed. A build
-  without it gives the same records and skips only the developer files, because species
-  with a BirdNET ID stay, and `overrides/model_aliases.csv` holds the aliases. The build
-  keeps that file in step whenever a crosswalk is present. `--reassign-ids` needs the
-  crosswalk and refuses to run without it.
-- `redirect_to` names the label another should merge into, and generates a one-way
-  alias. Set it only if the target is a surviving label with training samples.
-- Keep the taxonomy lean. Duplicate, sketchy, or useless labels stay out, with status
-  `remove` and a `reason`. The exported CSV tells the model developer what to prune and
-  why, and which labels to rename. That detail never goes on taxonomy records, in the
-  release zip, or in the API.
-
 ## Images
 
 - Generated as WebP in two sizes (thumb, medium) with stable, human-readable
@@ -159,7 +143,7 @@ only copy of a fix.
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`
   and the files in `overrides/` (`species_overrides.csv`, `species_aliases.csv`,
   `common_name_aliases.csv`, `bird_splits.csv`, `priority_species.csv`,
-  `sound_classes.csv`, `description_overrides.csv`, `model_aliases.csv`) are git-tracked and
+  `sound_classes.csv`, `description_overrides.csv`, `label_aliases.csv`) are git-tracked and
   meaningful.
 - Secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.)
   live in `.env`, never in `config.yml` or source.
@@ -195,7 +179,6 @@ reasoning go in `docs/`:
 - `docs/pipeline.md`: collectors, flags, build, images, project layout
 - `docs/taxonomy.md`: taxon groups and selection rules
 - `docs/metadata.md`: output fields, quality filter, BirdNET IDs
-- `docs/model-labels.md`: audio model crosswalks
 - `docs/web-api.md`: web server, deployment, API
 
 ## Working style
