@@ -55,7 +55,7 @@ from utils.audit_metadata import audit_records, has_failures, print_report
 from utils.description_quality import (
     clean_description_text, contains_species_identity, describes_species,
     drop_llm_meta_sentences, is_disambiguation_text, names_other_species,
-    word_count,
+    source_hash, word_count,
 )
 
 # ---------------------------------------------------------------------------
@@ -2525,8 +2525,10 @@ def build_metadata(taxonomy: dict, wiki: dict,
             fallback_locales.update(cl_extracts)
         translated = cl.get("translated_from", {}) or {}
         for loc, text in cl_extracts.items():
-            # Translations of a rejected English article carry its errors.
-            if loc in translated and sci_name in rejected_english:
+            # Translations of a rejected English article carry its errors;
+            # those of the species' own article, found since, do not.
+            if (loc in translated and sci_name in rejected_english
+                    and translated[loc] != source_hash(wp_en)):
                 continue
             # A machine translation made while Wikipedia lacked this locale
             # yields to native Wikipedia text added since.

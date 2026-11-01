@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import re
 
@@ -16,21 +17,26 @@ def word_count(text: str) -> int:
     return len(words) + len(cjk_chars)
 
 
+def source_hash(text: str) -> str:
+    """Fingerprint of the English source a translation was made from."""
+    return hashlib.sha1(" ".join((text or "").split()).encode("utf-8")).hexdigest()[:12]
+
+
 # Opening phrases of Wikipedia disambiguation pages ("Ruff may refer to:"),
 # which iNat sometimes links instead of the species article.
 _DISAMBIGUATION_RE = re.compile(
     r"^[^\n]{0,160}?\b("
     r"may (?:also )?refer to|can refer to|"           # en
-    r"steht für|bezeichnet|"                          # de
+    r"steht für|bezeichnet|kann sich auf|"            # de
     r"peut (?:désigner|faire référence)|"             # fr
     r"puede (?:referirse|hacer referencia)|"          # es
     r"pode (?:referir-se|designar)|"                  # pt
     r"può (?:riferirsi|indicare)|"                    # it
     r"kan (?:verwijzen naar|syfta på|henvise til|vise til)|"  # nl/sv/da/no
     r"może (?:oznaczać|odnosić się)|"                 # pl
-    r"může (?:být|označovat)|"                        # cs
+    r"může (?:být|označovat|odkazovat)|"              # cs
     r"может (?:означать|относиться)"                  # ru
-    r")\b[^\n]{0,40}:\s*(\n|$)",
+    r")\b[^\n.]{0,40}:(?:\s|$)",  # the list can follow on the same line
     re.IGNORECASE,
 )
 
