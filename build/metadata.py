@@ -46,6 +46,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote
 from config import load_config, image_url_prefix, LOCALE_NAMES
 from collectors._common import (
+    load_description_overrides, rejected_articles, strip_rejected_articles,
     ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE, TRUSTED_XC_METHODS,
     clean_aliases, is_clean_common_name, is_clean_scientific_name,
     is_full_species_name, load_json, load_manual_sound_classes, load_manual_species_aliases,
@@ -54,7 +55,7 @@ from collectors._common import (
 from utils.audit_metadata import audit_records, has_failures, print_report
 from utils.description_quality import (
     clean_description_text, contains_species_identity, describes_species,
-    is_disambiguation_text, names_other_species,
+    drop_llm_meta_sentences, is_disambiguation_text, names_other_species,
     word_count,
 )
 
@@ -687,10 +688,16 @@ def model_label_exports(model_labels: dict[str, list[dict]],
     errors: list[str] = []
     for model, rows in model_labels.items():
         exports[model] = []
+        surviving: dict[str, str] = {}
         for row in rows:
             rec = by_name.get(row["scientific_name"])
             if row["status"] == "keep" and rec is None:
                 errors.append(f"{model} {row['mario_id']}: '{row['scientific_name']}' is not a record")
+            if row["status"] in ("keep", "pending") and "_target" not in row:
+                first = surviving.setdefault(row["scientific_name"], row["mario_id"])
+                if first != row["mario_id"]:
+                    errors.append(f"{model} {row['mario_id']}: same record as label {first}, "
+                                  "set redirect_to on one of them")
             if row["status"] == "pending" and rec is not None:
                 errors.append(f"{model} {row['mario_id']}: '{row['scientific_name']}' "
                               "is a record now, set status to keep")
@@ -867,6 +874,14 @@ def _raw_lookup(data: dict, names: list[str]) -> dict:
         if rec:
             return rec
     return {}
+
+
+def _richest_record(wiki: dict, names: list[str]) -> dict:
+    """The Wikipedia record with the most text among a species' names, so a
+    thin record under a new name never hides a full one under its old name."""
+    records = [wiki[n] for n in names if wiki.get(n)]
+    return max(records, key=lambda r: len(r.get("extract") or "") + sum(
+        len(t) for t in (r.get("extracts") or {}).values()), default={})
 
 
 def _own_aliases(sci: str, taxonomy: dict, names: list[str]) -> list[str]:
@@ -2121,6 +2136,24 @@ _GENUS_TEXT_RE = re.compile(
 )
 
 
+def _apply_description_replacements(records: list[dict], overrides: list[dict]) -> int:
+    """Apply reviewed text fixes. A fix that no longer matches fails the build,
+    so it cannot silently stop working."""
+    by_name = {rec["scientific_name"]: rec for rec in records}
+    applied = 0
+    for row in overrides:
+        rec = by_name.get(row["scientific_name"])
+        if row["action"] != "replace" or not rec or row["locale"] not in rec["descriptions"]:
+            continue
+        text = rec["descriptions"][row["locale"]]
+        if row["find"] not in text and row["replace"] not in text:
+            raise ValueError(f"Description override no longer matches: {row['scientific_name']} "
+                             f"[{row['locale']}]: {row['find']!r}")
+        rec["descriptions"][row["locale"]] = text.replace(row["find"], row["replace"])
+        applied += 1
+    return applied
+
+
 def _drop_description(rec: dict, loc: str) -> None:
     """Remove one locale's description and everything that points at it."""
     rec["descriptions"].pop(loc, None)
@@ -2408,7 +2441,8 @@ def build_metadata(taxonomy: dict, wiki: dict,
                    avicommons: dict[str, dict] | None = None,
                    manual_common_aliases: dict[str, list[str]] | None = None,
                    model_species: set[str] | None = None,
-                   redirects: dict[str, str] | None = None) -> list[dict]:
+                   redirects: dict[str, str] | None = None,
+                   description_overrides: list[dict] | None = None) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
     Each record:
@@ -2454,7 +2488,7 @@ def build_metadata(taxonomy: dict, wiki: dict,
     # it names first (the others are usually splits linking the parent).
     article_claims: dict[str, list[tuple[int, str]]] = {}
     for sci, tax in taxonomy.items():
-        wp = _raw_lookup(wiki, _entry_names(sci, tax))
+        wp = _richest_record(wiki, _entry_names(sci, tax))
         url = (wp.get("wikipedia_urls") or {}).get("en")
         text = (wp.get("extract") or "").lower()
         if url and text:
@@ -2469,7 +2503,7 @@ def build_metadata(taxonomy: dict, wiki: dict,
         elif not is_clean_scientific_name(sci_name):
             continue
         names = _entry_names(sci_name, tax)
-        wp = _raw_lookup(wiki, names)
+        wp = _richest_record(wiki, names)
         cl = _raw_lookup(translate, names)
         identity_names = clean_aliases([
             *names, *tax.get("scientific_name_aliases", []), *tax.get("xc_aliases", []),
@@ -2548,7 +2582,7 @@ def build_metadata(taxonomy: dict, wiki: dict,
             # substantive native text (e.g. an article found later) replaces it.
             if loc in fallback_locales and word_count(native) >= min_english_words:
                 continue
-            text = clean_description_text(text)
+            text = drop_llm_meta_sentences(clean_description_text(text))
             # Guard against malformed locale keys (e.g. an LLM echoing the
             # literal "locale" placeholder from a prompt example).
             if (text and loc in LOCALE_NAMES and not is_disambiguation_text(text)
@@ -2717,6 +2751,7 @@ def build_metadata(taxonomy: dict, wiki: dict,
           "(same name on a more-observed species or the article's title species)")
     print(f"  LLM descriptions: {_align_llm_species_names(records)} aligned with the "
           "localized common name")
+    print(f"  Description overrides: {_apply_description_replacements(records, description_overrides or [])}")
 
     # Assign BirdNET species IDs (persistent; ranges per record kind)
     _assign_bn_ids(records, reassign_ids)
@@ -2892,6 +2927,11 @@ def main():
 
     print("\nLoading enrichment data...")
     wiki = load_json(WIKI_DATA_FILE)
+    description_overrides = load_description_overrides()
+    unknown = sorted({r["scientific_name"] for r in description_overrides} - set(taxonomy))
+    if unknown:
+        raise ValueError(f"Description overrides reference unknown species: {', '.join(unknown)}")
+    strip_rejected_articles(wiki, rejected_articles())
     llm_cfg = cfg.get("llm") or cfg.get("claude", {})
     llm_enabled = bool(llm_cfg.get("enabled", False))
     translate = load_json(TRANSLATE_DATA_FILE) if llm_enabled else {}
@@ -2953,6 +2993,7 @@ def main():
         quality_cfg=cfg.get("metadata_quality", {}),
         avicommons=avicommons,
         manual_common_aliases=manual_common_aliases,
+        description_overrides=description_overrides,
         model_species={row["scientific_name"] for rows in model_labels.values()
                        for row in rows if row["status"] == "keep"},
         redirects=model_label_redirects(model_labels),

@@ -260,6 +260,20 @@ def _finish_last_sentence(text: str) -> str:
     return text if _SENTENCE_END_RE.search(text) else f"{text}."
 
 
+# Sentences where an LLM talks about its sources instead of the species.
+_LLM_META_RE = re.compile(
+    r"\b(?:provided|available) (?:sources?|records?|texts?|articles?)\b|\bcurrent records\b"
+    r"|\bspecific details\b[^.]*\b(?:limited|unknown|unavailable)\b",
+    re.IGNORECASE,
+)
+
+
+def drop_llm_meta_sentences(text: str) -> str:
+    """Remove sentences about the sources from LLM text."""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(s for s in sentences if not _LLM_META_RE.search(s))
+
+
 def clean_description_text(text: str) -> str:
     """Clean stored descriptions: drop hatnotes, section headings, reference-type
     tails and reference-list text, subspecies and synonym lists, citation

@@ -25,7 +25,8 @@ must be a surviving label with training samples that does not redirect itself. E
 stays one-way. A record that redirects keeps winning lookups of its own name, so a
 common-name alias may match its name.
 
-The build fails on an invalid crosswalk, then writes `dist/model_labels/<model>.csv`
+The build fails on an invalid crosswalk, including two surviving labels on one record
+with no redirect between them, then writes `dist/model_labels/<model>.csv`
 for the model developer, with resolved BirdNET IDs. Its `reason_text` column states in
 plain language why each label was rejected or flagged, and `rename_to` proposes a name
 for each surviving label whose name differs from its record. Reasons and proposed

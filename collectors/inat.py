@@ -1112,10 +1112,12 @@ def fetch_priority_species(existing: dict, cfg: dict, delay: float,
 
     allowed_groups = {g.get("name") for g in cfg.get("taxon_groups", [])}
     rows = [r for r in rows if r["taxon_group"] in allowed_groups]
+    # A reviewed iNat ID wins over any cached record of that name.
     missing = [
         r for r in rows
         if r["scientific_name"] not in existing
         or existing[r["scientific_name"]].get("inat_id") is None
+        or (r.get("inat_id") and existing[r["scientific_name"]].get("inat_id") != r["inat_id"])
     ]
     if new_only:
         missing = [r for r in missing if r["scientific_name"] not in existing]
@@ -1170,7 +1172,7 @@ def fetch_priority_species(existing: dict, cfg: dict, delay: float,
             if not row:
                 continue
             sci = row["scientific_name"]
-            if sci in existing and existing[sci].get("inat_id") is not None:
+            if existing.get(sci, {}).get("inat_id") == tid:
                 continue
             if result.get("rank") != "species":
                 continue

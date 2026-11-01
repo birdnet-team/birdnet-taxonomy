@@ -32,7 +32,8 @@ at least 100 total iNaturalist observations.
 The biological taxonomy is species-level only. Scientific names must be clean
 binomial species names: no genera-only rows, higher ranks, subspecies,
 trinomials, hybrids, parenthetical qualifiers, slash alternatives, or informal
-annotations. Subspecies encountered in source data are folded into their parent
+annotations. Hybrid-origin taxa that iNaturalist lists as species (*Pelophylax
+esculentus*, *P. grafi*) are a reviewed exception. Subspecies encountered in source data are folded into their parent
 binomial species for now.
 
 Common names are also treated as display names. Parenthetical qualifiers,

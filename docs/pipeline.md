@@ -258,7 +258,7 @@ Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia
 
 - **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks the LLM to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
 - **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for the configured target locales — a native Wikipedia stub under 25 words counts as missing when the English text has at least 40 words. Sends the English text for translation into all missing locales at once.
-- **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English descriptions only from traceable Wikipedia extracts: for species without English text, from their non-English extracts; for English stubs (under `descriptions.min_english_words`) whose non-English article is at least twice as long, from the stub plus those extracts. Fallback locales are marked as `llm_fallback` in build output.
+- **Phase 3 — English fallback:** Optional `--fallback-missing` pass that creates English descriptions only from traceable Wikipedia extracts: for species without English text, from their non-English extracts; for English stubs (under `descriptions.min_english_words`) whose non-English articles together hold at least twice as much text, from the stub plus those extracts. Fallback locales are marked as `llm_fallback` in build output.
 
 All phases work on Wikipedia text cleaned the way the build cleans it (no
 reference lists, subspecies lists, or markup), so stub checks and sources match
@@ -425,6 +425,7 @@ docs/                      # Project documentation
 overrides/
     bird_splits.csv        # Git-tracked birds kept separate from an AviList lump
     common_name_aliases.csv  # Git-tracked manual common-name search aliases
+    description_overrides.csv  # Git-tracked rejected articles and text fixes
     model_labels/          # Git-tracked crosswalks from audio model outputs to the taxonomy
     priority_species.csv   # Git-tracked reviewed taxonomy additions
     sound_classes.csv      # Git-tracked reviewed non-species sound classes

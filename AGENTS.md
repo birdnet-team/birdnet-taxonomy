@@ -29,7 +29,8 @@ serves the dataset (HTML UI, REST API, image proxy).
 - **The build step is purely offline.** `build/metadata.py` must not make network
   calls. It only merges data already present in `raw_data/`.
 - **Species only, with canonical names.** The pipeline tracks binomial species,
-  not genera, higher ranks, subspecies, or hybrids. Subspecies are folded into
+  not genera, higher ranks, subspecies, or hybrids. Hybrid-origin taxa that iNaturalist lists as species
+  (*Pelophylax esculentus*, *P. grafi*) are a reviewed exception. Subspecies are folded into
   their top-level species for now. Use the shared binomial-name filter in
   `collectors/_common.py`; do not reinvent name validation. Final scientific and
   common names must be canonical display names only: no parenthetical qualifiers,
@@ -92,6 +93,20 @@ everything (and writes `raw_data/taxonomy.json`, which later collector runs use)
   is strict and fails on duplicate rows, partial image overrides, invalid anchors,
   or unknown species.
 
+## Persistent fixes
+
+`raw_data/` is a cache and stays out of git, so a fix made there is lost on the next crawl.
+Every data fix must live in a tracked file that the collectors and the build obey:
+`overrides/` for reviewed values, or a rule in the code. Never hand-edit `raw_data/` as the
+only copy of a fix.
+
+- `overrides/description_overrides.csv`: `reject_article` removes a Wikipedia article for
+  the collector, the translator and the build. `replace` is a literal text fix, and the
+  build fails if it stops matching. Articles that fail the identity check are removed
+  automatically and need no row.
+- `overrides/species_overrides.csv`: images, crop anchors, and `gbif_id`.
+- `overrides/priority_species.csv`: a row's `inat_id` wins over any cached record.
+
 ## Model labels
 
 - `overrides/model_labels/<model>.csv` maps each audio model output onto the taxonomy.
@@ -128,7 +143,8 @@ everything (and writes `raw_data/taxonomy.json`, which later collector runs use)
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`
   and the files in `overrides/` (`species_overrides.csv`, `species_aliases.csv`,
   `common_name_aliases.csv`, `bird_splits.csv`, `priority_species.csv`,
-  `sound_classes.csv`, `model_labels/`) are git-tracked and meaningful.
+  `sound_classes.csv`, `description_overrides.csv`, `model_labels/`) are git-tracked and
+  meaningful.
 - Secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.)
   live in `.env`, never in `config.yml` or source.
   `utils/llm.py` auto-detects which LLM key is present and uses it.

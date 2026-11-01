@@ -52,7 +52,8 @@ HOST_NAME=https://birdnet.cornell.edu
 
 Biological taxonomy records are species-level only. Do not add genera, higher
 ranks, subspecies, trinomials, hybrids, or informal taxa. Fold subspecies into
-their parent binomial species for now.
+their parent binomial species for now. Hybrid-origin taxa that iNaturalist lists as
+species, such as *Pelophylax esculentus*, are a reviewed exception.
 
 AviList is the bird authority: bird records use the AviList scientific name,
 and iNat taxa AviList lumps or treats as subspecies are folded into the AviList
@@ -94,6 +95,20 @@ The build fails on invalid anchors, duplicate rows, partial image overrides, or 
 
 If an override changes the effective image URL or crop anchor, the image pipeline regenerates the same named `.webp` file in place. Cache freshness is tracked separately in per-image JSON sidecars under `dev/images/*/.state/` or `dist/images/*/.state/`.
 
+## Description Overrides
+
+`raw_data/` is a cache outside Git, so never fix data only there: the next crawl loses it.
+Text fixes live in `overrides/description_overrides.csv` (`scientific_name`, `locale`,
+`action`, `find`, `replace`, `notes`), which the collectors, the translator and the build
+all obey:
+
+- `reject_article`: a Wikipedia article is not about the species. Set `find` to its title,
+  or leave `find` empty to reject any article in that locale. It is never stored,
+  translated or published. Most wrong articles need no row: the collector removes any
+  article that fails the build's identity check.
+- `replace`: a literal fix of `find` with `replace` in the published text. The build fails
+  if the text no longer matches, so a stale fix cannot go unnoticed.
+
 ## Common-Name Aliases
 
 Reviewed common-name search aliases for species live in
@@ -116,7 +131,9 @@ tells the model developer to prune it.
 - Give every `remove` and `review` row a `reason`, so the CSV for the model developer can
   say why. Use `note` for specifics the standard wording misses. Reasons stay out of
   taxonomy records, the release zip and the API.
-- Set `redirect_to` only if the target is a surviving label with training samples.
+- Set `redirect_to` only if the target is a surviving label with training samples. Two
+  labels for one record need it, and the build fails without: keep the label that matches
+  the record's name.
 - Set `status` to `pending` when a label's record is planned, and to `keep` once the
   record exists. The build fails if either no longer matches the records.
 - Never rename a species to fit a label. Model names become aliases.
