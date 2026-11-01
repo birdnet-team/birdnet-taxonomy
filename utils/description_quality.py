@@ -37,10 +37,20 @@ _DISAMBIGUATION_RE = re.compile(
 
 # English notice pages left after a split ("Tropical pewee has been split into three species:").
 _SPLIT_NOTICE_RE = re.compile(r"^[^\n]{0,80}\b(?:has|have) been split into\b", re.IGNORECASE)
+# English pages about a shared name or a group of species ("Herring gull is a
+# common name for several birds", "White terns consist of three species").
+_SET_INDEX_RE = re.compile(
+    r"^[^.\n]{0,80}\b(?:is (?:a|the) (?:common )?name for|are common names? for|"
+    r"consists? of (?:two|three|four|five|several) species|"
+    r"are (?:two|three|four|five|several) species of)\b",
+    re.IGNORECASE,
+)
 # Hatnotes at the start of an article ("The name X can also refer to Y.").
 _HATNOTE_RE = re.compile(
     r"^(?:The name |In [^,\n]{0,40}, |For |This article discusses )[^\n]{0,200}?"
     r"(?:can also (?:refer to|mean)|, see |is distinct from)[^\n]{0,160}?\.\s+(?=[A-Z])"
+    r"|^The [^()\n]{3,60} \([A-Z][a-z]+ [a-z-]+\)[^\n]{0,40}"
+    r"\b(?:is|are) (?:occasionally|sometimes) called\b[^\n]{0,80}?\.\s*\n"
 )
 
 
@@ -48,7 +58,8 @@ def is_disambiguation_text(text: str) -> bool:
     """Return True for Wikipedia disambiguation or split-notice text (not a description)."""
     text = (text or "").strip()
     return bool(_DISAMBIGUATION_RE.search(text)
-                or (len(text.split()) <= 60 and _SPLIT_NOTICE_RE.search(text)))
+                or (len(text.split()) <= 60 and _SPLIT_NOTICE_RE.search(text))
+                or _SET_INDEX_RE.search(text))
 
 
 def normalize_space(text: str) -> str:
@@ -63,7 +74,8 @@ def contains_species_identity(text: str, names: list[str] | tuple[str, ...] | se
         return False
     for name in names:
         clean = normalize_space(str(name)).lower()
-        if clean and re.search(rf"\b{re.escape(clean)}\b", haystack):
+        # Not \b: Chinese text runs straight into a Latin name.
+        if clean and re.search(rf"(?<![a-z]){re.escape(clean)}(?![a-z])", haystack):
             return True
     return False
 
@@ -161,7 +173,13 @@ _URL_PAREN_RE = re.compile(r"\s*[(（][^()（）]*(?:https?://|www\.)[^()（）]
 # Reference-list text that survives section selection ("Günther, 1863 :
 # On new species ... Annals and Magazine of Natural History, vol. 11").
 _BIB_MARKER_RE = re.compile(
-    r"\bISBN\b|\bdoi:|\bdoi\.org\b|Wayback Machine|\bViitattu \d|\bIn: [A-Z]|"
+    r"\bISBN\b|\bISSN\b|\bOCLC\b|\bPMID\b|\bdoi:|\bdoi\.org\b|lire en ligne|"
+    r"Wayback Machine|\bViitattu \d|\bIn: [A-Z]|"
+    r"^\s*BirdLife International(?:\.| \(?\d{4})|BirdLife Species Factsheet|"
+    r"BirdLife International Data Zone|BirdLife türlerinin|\bFishBase\. Version\b|"
+    r"\bvideos, photos & sounds\b|Species Profile at\b|Türü görüntüle|Arşivlenmesi gereken|"
+    r"\bIUCN Red List Ver\.|^\s*(?:\d{4} )?IUCN Red List of Threatened Species\b|"
+    r"維基共享資源|维基共享资源|"
     r"^\s*\([a-z]{2,3}(?: \+ [a-z]{2,3})*\) |"  # fr source-language tag: "(en) Gould, « ... »"
     r"\bRetrieved (?:\d{1,2} )?[A-Z][a-z]+ \d|\b(?:[Cc]onsultado el|consulté le|abgerufen am) \d|"
     r"tarihinde (?:alındı|erişildi)|kaynağından arşivlendi|Downloaded from|https?://|\bwww\.|"
@@ -193,14 +211,24 @@ _TRINOMIAL_ITEM_RE = re.compile(r"\b[A-Z]\. [a-z]+\.? [a-z]{3,}\b\s*(?:[–—:-
 # A sentence of bare scientific names (a synonym list).
 _NAME_LIST_RE = re.compile(r"(?:[A-Z][a-z]+ [a-z]{3,}[,;]?\s*){2,}")
 _CATEGORY_RE = re.compile(r"\b(?:[KkL]ategori[ae]?|Category|Catégorie|Categoría|Categoria):\S")
+# Page furniture that is not part of the article (sw); sentences pointing at
+# the page itself; a stock Swedish-bot closing line kept by LLM fallbacks.
+_WIKI_CHROME_RE = re.compile(
+    r"kamusi elezo huru|masanduku ya uanapwa|\bWikiProject\b|"
+    r"\b(?:discussed|described|covered) in this article\b|\bIn this article\b|"
+    r"\bNo subspecies are listed in the Catalogue of Life\b")
+_SELF_LINK_RE = re.compile(r"\s*\(see external links\)")
 
 
 def _drop_list_intro(paragraph: str) -> str:
     """Drop a closing sentence that introduces a list ("Three subspecies are
     recognised:") whose items are gone."""
     while paragraph.rstrip().endswith((":", "：")):
-        parts = re.split(r"(?<=[.!?。])\s+", paragraph.rstrip())
-        paragraph = " ".join(parts[:-1])
+        # Chinese and Japanese sentences have no space after their full stop.
+        parts = re.split(r"(?<=[.!?])\s+|(?<=[。！？])", paragraph.rstrip())
+        if len(parts) == 1:  # one long sentence: only its last clause is the intro
+            return re.sub(r"[^,，、;；]*[:：]$", "", paragraph.rstrip()).rstrip(" ,，、;；")
+        paragraph = " ".join(parts[:-1]) if " " in paragraph else "".join(parts[:-1])
     return paragraph
 
 
@@ -214,7 +242,8 @@ def _starts_citation(sentence: str, rest: str) -> bool:
 def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
     """Drop citation marks, sentences with leftover wiki markup, and repeats."""
     paragraph = _CITATION_RE.sub("", html.unescape(paragraph.replace("\u200b", "")))
-    paragraph = re.sub(r"&[a-z]*dash;", "–", paragraph)
+    paragraph = re.sub(r"&[a-z]*dash;", "–", paragraph).replace("**", "")
+    paragraph = _SELF_LINK_RE.sub("", paragraph)
     # Headings flattened into running text ("... montaña. == Referencias ==")
     for match in list(re.finditer(r"\s*(={2,})\s*([^=\n]+?)\s*\1", paragraph)):
         if _END_SECTIONS.match(match.group(2).strip()):
@@ -231,7 +260,7 @@ def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
             break
         key = sentence.strip().lower()
         if (not key or _MARKUP_RE.search(sentence) or re.match(r"[,;:)\]{}|]", key)
-                or _NAME_LIST_RE.fullmatch(sentence.strip())
+                or _NAME_LIST_RE.fullmatch(sentence.strip()) or _WIKI_CHROME_RE.search(sentence)
                 or (len(key) > 30 and key in seen)):
             continue
         seen.add(key)
@@ -244,7 +273,11 @@ _SENTENCE_END_RE = re.compile(r"[.!?…)\"”»。！？]$")
 _AUTHOR_YEAR_RE = re.compile(r"\([A-Z][^()]*,\s*\d{4}\)")
 # A sentence ends after a word or number: "E. a. minor" is an abbreviation.
 _LAST_SENTENCE_RE = re.compile(r"^.*(?:[^\W_]{2}|[)\"”»])[.!?…。！？](?=\s)", re.DOTALL)
-_LIST_TAIL_RE = re.compile(r"^[A-Z]\. [a-z]\. |^[A-Z][a-z]{3,} [a-z]{4,} [a-z]{4,} [A-Z(]|\bClick Here\b")
+# A subspecies list: "A. b. c ...", or a trinomial followed by the next one of
+# its genus or by its author and year.
+_LIST_TAIL_RE = re.compile(
+    r"^[A-Z]\. [a-z]\. |^([A-Z][a-z]{3,}) [a-z]{4,} [a-z]{4,} (?:\1\b|\(?[A-Z][\w.'’-]+,? \(?\d{4})"
+    r"|\bClick Here\b")
 
 
 def _finish_last_sentence(text: str) -> str:
@@ -274,6 +307,23 @@ def drop_llm_meta_sentences(text: str) -> str:
     return " ".join(s for s in sentences if not _LLM_META_RE.search(s))
 
 
+def _latin_share(text: str) -> float:
+    """Share of a text's letters written in Latin script."""
+    letters = [c for c in text if c.isalpha()]
+    return sum(ord(c) < 0x250 for c in letters) / len(letters) if letters else 0.0
+
+
+def _drop_foreign_tails(paragraphs: list[str]) -> list[str]:
+    """After a text in another script, closing paragraphs almost all in Latin
+    letters are reference lists, name lists or link lists. Prose naming many
+    species stays below the limit."""
+    if not paragraphs or _latin_share(paragraphs[0]) >= 0.5:
+        return paragraphs
+    while len(paragraphs) > 1 and _latin_share(paragraphs[-1]) >= 0.8:
+        paragraphs = paragraphs[:-1]
+    return paragraphs
+
+
 def clean_description_text(text: str) -> str:
     """Clean stored descriptions: drop hatnotes, section headings, reference-type
     tails and reference-list text, subspecies and synonym lists, citation
@@ -296,6 +346,7 @@ def clean_description_text(text: str) -> str:
             cleaned = _clean_paragraph(paragraph, seen)
             if cleaned:
                 kept.append(cleaned)
+    kept = _drop_foreign_tails(kept)
     if kept:
         kept[-1] = _drop_list_intro(kept[-1])
     cleaned_text = "\n\n".join(p for p in kept if p).strip()
@@ -376,14 +427,25 @@ def describes_species(text: str, title: str, names: list[str],
 
 
 
+# The binomial a lead opens with: in parentheses, possibly after a "Latin:"
+# marker and before an author, or as the first words of the text.
+_OPENING_BINOMIAL_RE = re.compile(
+    r"[(（](?:лат\.\s*|lat\.\s*|nome científico:\s*|学名[:：]\s*|學名[:：]\s*|الاسم العلمي:?\s*)?"
+    r"([A-Z][a-z]+ [a-z][a-z-]+)(?=[\s,;)）])")
+_LEADING_BINOMIAL_RE = re.compile(r"^([A-Z][a-z]+ [a-z][a-z-]+)(?=[\s,])")
+
+
 def names_other_species(text: str, names: list[str], other_species: set[str]) -> bool:
-    """True if a text's opening names another species (in parentheses, as
-    Wikipedia leads do) and never this one — a sister-species article.
+    """True if a text's opening names another species (at its start or in
+    parentheses, as Wikipedia leads do) and never this one — a sister-species
+    article.
 
     Texts without a binomial are not judged (many non-English articles don't
     repeat the scientific name).
     """
-    match = re.search(r"\(([A-Z][a-z]+ [a-z][a-z-]+)[,)]", (text or "")[:300])
-    if not match or match.group(1) not in other_species or match.group(1) in names:
+    opening = (text or "")[:300]
+    match = _OPENING_BINOMIAL_RE.search(opening) or _LEADING_BINOMIAL_RE.search(opening)
+    binomial = match.group(1) if match else ""
+    if binomial not in other_species or binomial in names:
         return False
     return not describes_species(text, "", names, other_species=other_species)

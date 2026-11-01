@@ -382,6 +382,14 @@ def fetch_ebird_names(version: str = "") -> dict[str, dict[str, str]]:
     return result
 
 
+def _keep_earlier_photo(record: dict, earlier: dict) -> None:
+    """A page without a photo keeps the species' earlier one: eBird pages of
+    new codes (a split gives the parent one) start without a photo."""
+    if earlier.get("image_url") and not record.get("image_url"):
+        for field in ("image_url", "ml_asset_id", "image_attribution"):
+            record[field] = earlier.get(field, "")
+
+
 def main():
     cfg = load_config()
     ebird_cfg = cfg.get("ebird", {})
@@ -420,10 +428,10 @@ def main():
         existing = load_json(OUTPUT_FILE)
         print(f"  Already have eBird data for {len(existing)} species")
 
-        # Pages are per code; a renamed species keeps the record fetched for its code.
+        # Pages are per code: a renamed species keeps the record fetched for its
+        # code, and a species whose code changed (a split) needs the new page.
         fetched_codes = {rec.get("ebird_code") for rec in existing.values() if rec.get("ebird_code")}
-        to_fetch = [(sci, code) for sci, code in species.items()
-                    if sci not in existing and code not in fetched_codes]
+        to_fetch = [(sci, code) for sci, code in species.items() if code not in fetched_codes]
         if args.limit:
             to_fetch = to_fetch[:args.limit]
 
@@ -479,7 +487,11 @@ def main():
                     sci_name = futures[future]
                     try:
                         _, record = future.result()
-                        existing[sci_name] = record
+                        _keep_earlier_photo(record, existing.get(sci_name) or {})
+                        # A failed fetch keeps the stored record and is retried.
+                        if record.get("error", "no_description") == "no_description" \
+                                or sci_name not in existing:
+                            existing[sci_name] = record
                         if "error" not in record:
                             success += 1
                             pbar.set_postfix_str(sci_name, refresh=False)

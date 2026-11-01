@@ -124,7 +124,9 @@ in a model crosswalk).
 ## Model Labels
 
 `overrides/model_labels/<model>.csv` maps each output of an audio model onto the
-taxonomy. [docs/model-labels.md](docs/model-labels.md) describes the columns. Keep the taxonomy lean: a label that is
+taxonomy. These crosswalks are private: the folder is gitignored, so never commit it.
+Without one the build warns, and species kept only for a model label are dropped, so
+a build from a public clone differs from the published release. [docs/model-labels.md](docs/model-labels.md) describes the columns. Keep the taxonomy lean: a label that is
 a duplicate, sketchy, or not useful stays out, with status `remove`, and the export
 tells the model developer to prune it.
 

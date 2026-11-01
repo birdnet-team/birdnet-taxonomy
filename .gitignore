@@ -208,6 +208,7 @@ __marimo__/
 # Species data pipeline - generated files
 api-docs/
 raw_data/
+overrides/model_labels/
 dev/
 dist/
 images/

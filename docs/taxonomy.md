@@ -70,14 +70,22 @@ names become aliases of the replacement taxon.
   record. An ID reached only through an alias loses to the species whose own
   name carries it; IDs that stay ambiguous (typically after a recent split) are
   dropped. The build fails if a shared ID slips through.
-- `gbif_id` is GBIF's accepted key for the species: a synonym key is replaced
-  by its accepted key when the accepted name keeps the species' epithet (a
-  genus change, or GBIF ranking it as a subspecies) and neither the key nor
-  that name belongs to another species here (a GBIF lump keeps the original
-  key).
+- `gbif_id` is GBIF's accepted key for the species. A name can have several
+  GBIF usages, and Wikidata often holds a doubtful, misapplied, synonym, or
+  empty one with no occurrences, so the accepted usage of the same name that
+  holds the occurrences replaces it. Otherwise a synonym key is replaced by its
+  accepted key when the accepted name keeps the species' epithet (a genus change,
+  or GBIF ranking it as a subspecies) and neither the key nor that name belongs
+  to another species here (a GBIF lump keeps the original key).
+- `ncbi_id` is NCBI's current ID for the species: a merged ID is replaced by the
+  surviving one. IDs NCBI no longer knows, that name a sample ("*Hyperolius* cf.
+  *platyceps* JK-2009"), or that NCBI gives to another species of the taxonomy are
+  dropped.
 - Identifiers must match their format: numeric GBIF, NCBI, BirdLife, and
-  observation.org IDs; 16-hex Avibase IDs; lowercase eBird codes; `Q`-prefixed
+  observation.org IDs; 8-hex Avibase IDs; lowercase eBird codes; `Q`-prefixed
   Wikidata QIDs.
+- `avibase_id` comes from AviList, which gives every species its Avibase concept.
+  Wikidata can hold another concept of the name, such as one from before a split.
 
 ### Names
 
@@ -93,8 +101,12 @@ names become aliases of the replacement taxon.
   Latin-only name in a locale written in
   another script (an untranslated English fallback, e.g. in `zh`); a multi-word
   English name copied into another locale (eBird `pt_BR` lists untranslated
-  species in lower-case English); file names, catalogue numbers, or names
-  ending in a disambiguation number.
+  species in lower-case English); file names, catalogue numbers, names ending
+  in a disambiguation number, wiki pages in a namespace ("Category:..."), or
+  `sp.`/`ssp.` placeholders.
+- Localized names are one name: a comma list keeps its first alternative, and
+  words mixing look-alike letters of two scripts (a Latin "c" in a Russian
+  name) are repaired.
 - When two non-bird species share an English display name on iNat, the one
   whose English Wikipedia lead gives that name keeps it (then one with no other
   English name, then the more-observed one). The others take an unused English
@@ -111,9 +123,10 @@ names become aliases of the replacement taxon.
   the genus, or a clade) is dropped together with its other-language versions
   and any LLM text made from it, unless it is the article of a monotypic genus.
 - Any description (Wikipedia in any language, or LLM) whose opening names
-  another species of the taxonomy and never this one is dropped as well; the
-  LLM translator treats such locales as missing so a translation takes their
-  place. Links to rejected articles are dropped with them.
+  another species of the taxonomy, as its first words or in parentheses after a
+  common name, and never this one is dropped as well; the LLM translator treats
+  such locales as missing so a translation takes their place. Links to rejected
+  articles are dropped with them.
 - An English article claimed by several species stays with the species it names
   first.
 - LLM texts call the species by its localized common name: translations are
@@ -126,12 +139,14 @@ names become aliases of the replacement taxon.
 - A genus article on a species of a genus with several species is dropped, with its
   translations. A text shared by several species stays with those it names. LLM text
   needs a Wikipedia article to credit.
-- Wikipedia pages that only announce a split are not descriptions, and hatnotes
-  ("The name X can also refer to Y") are removed.
+- Wikipedia pages that only announce a split, or that are about a shared name
+  or a group of species ("Herring gull is a common name for several birds"), are
+  not descriptions, and hatnotes ("The name X can also refer to Y") are removed.
 - Texts are cleaned of citation marks, sentences with leftover wiki markup,
   section headings, repeated sentences, and reference-list text (author–year
   citations, ISBNs, URLs, archive-link notes, link lists) that survived
-  section selection.
+  section selection. After a text in another script, closing paragraphs
+  almost all in Latin letters go too: they are reference, name, or link lists.
 
 ### Images
 
@@ -140,11 +155,13 @@ the file, else the most commonly observed). A photo whose license requires attri
 (anything but public domain or CC0) is only used with a known author, and
 Commons files of a skull, skeleton, or postage stamp, or whose file name names
 another species of the taxonomy, are skipped; otherwise the next image source
-is tried.
+is tried. Credits are reduced to the name: rights notes, account prefixes, and
+upload notes are removed, and a URL alone becomes its account, site, or DOI.
 
 ### Sound classes
 
 Non-species sound classes live in `overrides/sound_classes.csv`. These records use
 their English display name as `scientific_name`, carry `record_type: sound_class`, and
 are grouped separately from biological taxa: `Anthropogenic`, `Geophony`, `Human`,
-`Music`, and `Soundscape`.
+`Music`, and `Soundscape`. The CSV always wins: the build takes reviewed fields from it
+and only labels and images from the collector's cache.

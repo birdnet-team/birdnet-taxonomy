@@ -1,2 +1,7 @@
 scientific_name,locale,action,find,replace,notes
 Rana italica,it,replace,(Rana appenninica),(Rana italica),Common name written as the scientific name
+Scinax rogerioi,en,reject_article,Scinax rogerioi,,The English article is a copy of Scinax cabralensis under this title
+Allophryne ruthveni,en,replace,"the family Allophrynidae, the only family in its genus.",the family Allophrynidae.,LLM misread its source
+Anabrus cerciata,en,replace,"The big-tooth anabru,","The big-tooth anabrus,",LLM singularised a name
+Mecocerculus hellmayri,ru,replace,"to gatunek ptaka z podrodziny Elaeniinae w rodzinie tyrankowatych, występujący w Argentynie, Boliwii i Peru.","— вид птиц из подсемейства Elaeniinae семейства тиранновых, обитающий в Аргентине, Боливии и Перу.",LLM switched to Polish mid-sentence
+Canis lycaon,ja,replace,"（The eastern wolf (Canis lupus lycaon), also known as the timber wolf, Algonquin wolf or eastern timber wolf,）",（Canis lupus lycaon）,English sentence pasted into the Japanese lead

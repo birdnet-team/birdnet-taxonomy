@@ -3,7 +3,9 @@
 How an audio model's outputs map onto the taxonomy. Contributor rules are in [CONTRIBUTING.md](../CONTRIBUTING.md#model-labels).
 
 `overrides/model_labels/<model>.csv` holds one row per output of an audio model
-and maps it onto the taxonomy, so a model can keep its own labels:
+and maps it onto the taxonomy, so a model can keep its own labels. These files are
+private and not in the repository: the folder is gitignored. Without a crosswalk the
+build warns, and species kept only for a model label are dropped.
 
 | Column | Meaning |
 |--------|---------|
@@ -19,7 +21,9 @@ and maps it onto the taxonomy, so a model can keep its own labels:
 | `note` | Optional specifics that replace the code's standard wording |
 
 `redirect_to` says which class a label should end up in, and `status` says when:
-`remove` merges it now, `keep` leaves it an output until a future model. The target
+`remove` merges it now, `keep` leaves it an output until a future model. A label AviList
+treats as a subspecies of its record has reason `subspecies`: it stays an output while it
+has training samples. Reason `duplicate` is for another name of the same taxon. The target
 must be a surviving label with training samples that does not redirect itself. Each
 `alias` goes on the record of the redirect target, or on the label's own record, and
 stays one-way. A record that redirects keeps winning lookups of its own name, so a
