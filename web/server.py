@@ -6,7 +6,7 @@ Provides:
   - HTML pages: home/search, species detail
   - REST API: /api/species, /api/species/{name}, /api/search, /api/stats
   - Image proxy: /api/image/{scientific_name}?size=  (WebP, cached)
-  - Auto-generated docs at /docs (Swagger) and /redoc
+  - Auto-generated docs at /docs (Swagger)
 
 Usage:
     python -m web.server                   # start on port 8000
@@ -241,7 +241,7 @@ class StatsResponse(BaseModel):
     """Dataset statistics."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
     total_species: int = Field(..., examples=[18093])
-    groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2196, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 5, "Geophony": 3}])
+    groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Insecta": 2842, "Amphibia": 2302, "Mammalia": 1369, "Reptilia": 215, "Actinopterygii": 155, "Anthropogenic": 56}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
 
 

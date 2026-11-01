@@ -101,12 +101,15 @@ Codes are checked before common names, so a code wins when a name in another lan
 | `/api/species/{name}` | Single species detail (JSON) with field selection; an unknown name returns a placeholder record (see below) |
 | `/api/search?q=` | Search species by name with full query options |
 | `/api/suggest?q=` | Autocomplete suggestions (`limit`, `lang`) |
-| `/api/locales` | List locale codes present in the dataset |
+| `/api/locales` | List the locales in the dataset as `code` and `name` objects; `en` is not listed |
 | `/api/download/csv`, `/json`, `/zip` | Download the release files, named `BirdNET_Taxonomy_<version>.csv` and so on |
 | `/api/fields` | List all available field names |
 | `/api/groups` | List taxon groups with counts |
 | `/api/stats` | Dataset statistics |
 | `/docs` | Interactive API docs (Swagger UI) |
+
+`gbif_id`, `ncbi_id`, and `birdlife_id` are strings in `/api/species` and `/api/search`,
+and integers in `/api/species/{name}`. The release files always hold strings.
 
 ## API Query Parameters
 
@@ -141,7 +144,7 @@ curl '/api/species?group=Aves&has_image=true&sort=-commonness&per_page=10&fields
 # German and French names/descriptions for a species
 curl '/api/species/Anas%20platyrhynchos?locale=de,fr&fields=scientific_name,common_names,descriptions'
 
-# Export all mammals as CSV
+# Export the first 500 mammals as CSV (500 is the page limit; add page=2 for the next)
 curl '/api/species?group=Mammalia&per_page=500&format=csv' > mammals.csv
 
 # Search with field selection

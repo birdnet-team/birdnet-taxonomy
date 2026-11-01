@@ -2,7 +2,7 @@
 
 How each collector works, what it stores, and which flags it takes. For the fields in the final metadata, see [metadata.md](metadata.md).
 
-Run collectors in order — later steps depend on earlier output. All scripts are incremental (rerunning skips already-processed species). Use `--limit N` to cap new items per run, or `--dry-run` to preview.
+Run collectors in order — later steps depend on earlier output. All scripts are incremental (rerunning skips already-processed species). Use `--limit N` to cap new items per run, or `--dry-run` to preview, where a step has them: AviList has neither, and Avicommons and the build have no `--limit`.
 
 | Step | Command | Output |
 |------|---------|--------|
@@ -20,7 +20,7 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 12. Build | `python -m build.metadata` | `dist/BirdNET_Taxonomy_<version>.{json,csv,zip}`, `raw_data/taxonomy.json` |
 | 13. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
 
-Steps 1–2 collect taxonomy. Steps 3–4 enrich species with common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 downloads the Avicommons bird photo index, referenced next to each bird's own image. Step 10 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 11 is optional LLM-based translation and description shortening (enabled through `llm.enabled` in `config.yml`). Step 12 merges everything into the final output — no API calls, purely offline — and also writes `raw_data/taxonomy.json`, which later collector runs use as their species list. Step 13 downloads and crops images for the built species list.
+Steps 1–2 collect taxonomy. Steps 3–4 enrich species with common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 downloads the Avicommons bird photo index, referenced next to each bird's own image. Step 10 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 11 is optional LLM-based translation and description shortening (`llm.enabled` in `config.yml` decides whether the build uses its text). Step 12 merges everything into the final output — no API calls, purely offline — and also writes `raw_data/taxonomy.json`, which later collector runs use as their species list. Step 13 downloads and crops images for the built species list.
 
 ## Step 1 — AviList
 
@@ -134,7 +134,8 @@ carries through to `description_sources`. Service endpoint, rate limit, and
 default target locales live under `translation` in `config.yml`. By default it
 uses MyMemory (`translation.email` / `--email` doubles the free daily quota)
 and only fills German, Spanish, French, Czech (`cs`), Italian, and Portuguese.
-For LibreTranslate, use `--provider libretranslate` and, if the instance needs
+For LibreTranslate, use `--provider libretranslate --endpoint <instance URL>`, with
+`--service-name` for the name in the provenance label, and, if the instance needs
 a key, name its variable in `translation.api_key_env` (e.g.
 `LIBRETRANSLATE_API_KEY`) and set it in `.env`.
 
@@ -258,7 +259,7 @@ only labels and images from the cache.
 
 ## Step 11 — LLM Translation
 
-Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia extracts — no content is generated from scratch:
+Uses an LLM (Gemini, OpenAI, or Anthropic) for three tasks on existing Wikipedia extracts — no content is generated from scratch. On a fresh clone `raw_data/taxonomy.json` does not exist yet, so run this step again after the first build: it needs that file for the published common names and the identity checks.
 
 - **Phase 1 — Shorten:** Finds extracts exceeding `max_extract_words` (default 500 words) and asks the LLM to condense them to `target_words` (default 150 words), preserving the original language and key facts (appearance, habitat, range, behaviour).
 - **Phase 2 — Translate:** Finds species that have an English extract but are missing translations for the configured target locales — a native Wikipedia stub under 25 words counts as missing when the English text has at least 40 words. Sends the English text for translation into all missing locales at once.
@@ -358,7 +359,10 @@ python -m utils.audit_descriptions --output dev/description_audit.csv
 ```
 
 By default this report includes short excerpts in every available locale plus
-English release-gate gaps. Add `--english-only` to report only the English gate.
+English release-gate gaps. Add `--english-only` to report only the English gate,
+`--min-english-words N` to change the gate, or `--strict` to exit with an error on
+gaps. `python -m utils.audit_metadata` checks the built metadata the same way, with
+`--min-english-words N`, `--sample-limit N`, `--strict`, and `--self-test`.
 Prefer Wikipedia quality refetches before optional LLM fallback:
 
 ```bash
@@ -387,7 +391,7 @@ Batch-downloads species images as WebP files with content-aware smart cropping. 
 
 When `image_crop_anchor` is set in `overrides/species_overrides.csv`, smart crop is bypassed and a fixed 3×3 anchor crop is used instead.
 
-**Dummy images:** On startup, generates a grayscale dummy WebP (neutral gray background with centered BirdNET logo) for each size. When a download or conversion fails, the dummy is copied as the species' named file so every species has an image file.
+**Dummy images:** On startup, generates a grayscale dummy WebP (neutral gray background with centered BirdNET logo) for each size. When a crop or conversion fails, the dummy is copied as the species' named file and the next run tries again. When a download fails, no file is written and the image proxy serves the dummy. A fresh install has no dummy until this step has run, so such images return 404 until then.
 
 The collector also prunes obsolete cached `.webp` files and stale `.state` metadata left behind by older naming schemes or old fallback files.
 

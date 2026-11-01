@@ -4,7 +4,7 @@ What the taxonomy includes, and how names, identifiers, descriptions, and images
 
 ## Taxon Groups
 
-Configured in `config.yml`. Birds include all species; other groups are limited to species with sound observations on iNaturalist.
+Configured in `config.yml`. Birds include all species; other groups are limited to species with sound observations on iNaturalist, plus the reviewed species in `overrides/priority_species.csv`, which need none.
 
 | Group | iNat Taxon ID | Mode | Min sound observations |
 |-------|---------------|------|------------------------|
@@ -47,8 +47,8 @@ are part of the accepted name.
   names. Every iNaturalist bird resolves to its AviList species (by exact name,
   English name within the same genus or epithet stem, eBird code, or as an
   AviList subspecies) and the AviList scientific name becomes canonical.
-- iNat taxa that AviList lumps or treats as subspecies (e.g. *Corvus cornix* →
-  *Corvus corone*) are folded into that species as `scientific_name_aliases`.
+- iNat taxa that AviList lumps or treats as subspecies (e.g. *Acanthis hornemanni*
+  → *Acanthis flammea*) are folded into that species as `scientific_name_aliases`.
 - Reviewed exceptions in `overrides/bird_splits.csv` stay separate species
   (e.g. Hooded Crow *Corvus cornix*): they keep their own name, iNat data, eBird
   code, and English name (looked up by scientific name in the eBird taxonomy).

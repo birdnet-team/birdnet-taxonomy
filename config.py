@@ -7,8 +7,8 @@ to all settings. All scripts should use this instead of hardcoding values.
 Usage:
     from config import load_config
     cfg = load_config()
-    print(cfg["llm"]["locales"])  # ['en', 'de', 'fr', ...]
-    print(cfg["inat"]["per_page"])   # 200
+    print(cfg["llm"]["locales"])  # ['de', 'fr', 'it', ...]
+    print(cfg["inat"]["save_every"])  # 500
 """
 
 import os

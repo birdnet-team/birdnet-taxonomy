@@ -116,6 +116,8 @@ Reviewed common-name search aliases for species live in
 alias per row. Use them for search terms that are not names but should find a
 species, e.g. `human vocal` or `speech` for *Homo sapiens*. Real names belong
 in the source data, and scientific synonyms in `overrides/species_aliases.csv`.
+`overrides/label_aliases.csv` (`scientific_name`, `alias`, `kind`) holds further
+reviewed aliases of either kind.
 
 The build fails on unknown species, invalid or duplicate aliases, or an alias
 that is another species' common name. A sound class may share a name with an alias:

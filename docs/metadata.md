@@ -6,6 +6,44 @@ What the build publishes and how to read it. The steps that produce it are in [p
 
 The JSON output contains full multilingual descriptions and every collected common-name locale. The CSV output is a lighter export and does not include description excerpts; scientific and common-name aliases and metadata quality flags are exported as pipe-separated fields. It has one `common_name_<locale>` column per locale listed under `csv_export.locales` in `config.yml`, so the column set stays stable between builds.
 
+## Fields
+
+Every record in the JSON output has these fields. A missing identifier is an empty string,
+except `inat_id` and `observationorg_id`, which are integers or `null`.
+
+| Field | Meaning |
+|-------|---------|
+| `birdnet_id` | `BN` and five digits; see [BirdNET IDs](#birdnet-ids) |
+| `scientific_name` | Canonical binomial name; for a sound class, its English display name |
+| `common_name` | English display name, or the scientific name when there is none |
+| `common_name_alt` | The Clements/eBird English name of a bird, when it differs from `common_name` |
+| `taxon_group` | Group such as `Aves`; sound classes use `Anthropogenic`, `Geophony`, `Human`, `Music`, or `Soundscape` |
+| `record_type` | `species` or `sound_class` |
+| `common_names` | Locale → common name |
+| `common_name_aliases`, `scientific_name_aliases` | Search aliases; see [Aliases and Description Sources](#aliases-and-description-sources) |
+| `descriptions` | Locale → description |
+| `description_source` | Where the English description comes from; if there is none, the first other locale's source. Empty without a description |
+| `description_sources` | Locale → source of that description |
+| `translate_locales` | Locales whose description is LLM text |
+| `wikipedia_urls` | Locale → Wikipedia article |
+| `image`, `image_author`, `image_license`, `image_source` | The species image and its credit; see [Image Fields](#image-fields) |
+| `image_crop_anchor` | `1`–`9` when a reviewed crop position overrides smart crop, otherwise `null` |
+| `avicommons_image` | Reference to a bird's Avicommons photo, or `null` |
+| `inat_id`, `ebird_code`, `gbif_id`, `ncbi_id`, `avibase_id`, `birdlife_id`, `ml_taxon_code`, `xc_name`, `observationorg_id`, `wikidata_qid` | External identifiers; see [Identifiers](taxonomy.md#identifiers) |
+| `commonness` | See [Commonness](#commonness); `null` for sound classes |
+| `metadata_quality_score`, `metadata_quality_flags` | See [Quality Filter](#quality-filter) |
+| `low_resource` | See [Low-Resource Records](#low-resource-records) |
+| `audioset_id`, `parent` | Sound classes only: the AudioSet ID and the parent class, which can be empty |
+
+Description sources are `wikipedia`, `llm` (LLM translation or shortening of Wikipedia
+text), `llm_fallback` (LLM text merged from Wikipedia articles in other languages), and
+`audioset` (AudioSet's wording for a sound class). `utils.translate` writes its own label,
+such as `Source: Wikipedia, translated by MyMemory`.
+
+The CSV has no `common_names`, `descriptions`, `description_sources`, `translate_locales`,
+`wikipedia_urls`, `image_crop_anchor`, `audioset_id`, or `parent`, and flattens the image
+objects as described under [Image Fields](#image-fields).
+
 ## Aliases and Description Sources
 
 The JSON output also includes `description_sources`, a per-locale source map,
@@ -15,9 +53,11 @@ resolve to the canonical species. Non-species sound classes use
 `common_name_aliases` are both search fallbacks rather than biological names.
 Reviewed manual scientific-name bridges live in `overrides/species_aliases.csv`,
 and one of these outranks any source that gives the same name to another species.
-Species get `common_name_aliases` only from `overrides/common_name_aliases.csv`
+Species get `common_name_aliases` from `overrides/common_name_aliases.csv`
 (columns `scientific_name`, `alias`, `notes`): reviewed search terms that are
-not names, such as `human vocal` for *Homo sapiens*. The build fails on unknown
+not names, such as `human vocal` for *Homo sapiens*. `overrides/label_aliases.csv`
+(columns `scientific_name`, `alias`, `kind`) adds further reviewed scientific and
+common-name aliases. The build fails on unknown
 species, invalid or duplicate aliases, or an alias that is another species'
 common name.
 The build also filters source-derived aliases that collide with another
@@ -35,6 +75,15 @@ under `metadata_quality.keep_groups` (birds: AviList is the authority) are
 scored but never dropped, so a new AviList split stays even before other
 sources cover it. With `metadata_quality.keep_registered`, the same holds for any
 species with a BirdNET ID in `bn_ids.json`.
+
+`metadata_quality_flags` lists what a record lacks:
+
+- `missing_english_description`: no English description
+- `short_english_description`: an English description under 40 words
+- `few_localized_descriptions`: at most one locale has 40 words or more
+- `missing_image`: no real image
+- `weak_external_ids`: fewer than two external identifiers
+- `missing_common_name`: no common name other than the scientific name
 
 ## Low-Resource Records
 

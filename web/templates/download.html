@@ -96,8 +96,8 @@
         The BirdNET taxonomy dataset contains structured metadata for
         <strong>{{ total_species|default(0, true) }}</strong> species,
         including scientific and common names, taxonomy, external identifiers,
-        commonness, descriptions, images, and translations in
-        {{ locale_count }} languages.
+        commonness, descriptions, images, and common names in
+        {{ locale_count }} languages and regional variants.
         Version <strong>{{ taxonomy_version }}</strong>.
     </p>
     <p>
@@ -114,7 +114,7 @@
         <h3>CSV</h3>
         <div class="dl-desc">
             Flat tabular format. One row per species, one column per field.
-            Common names for each locale are in separate columns.
+            Common names for the main locales are in separate columns.
             Easy to open in Excel, R, pandas, or any spreadsheet tool.
         </div>
         {% if csv_size %}<div class="dl-meta">{{ csv_size }}</div>{% endif %}
@@ -148,7 +148,7 @@
         <li><strong>Commonness</strong> — how often a species is observed on iNaturalist, as a 0–100 percentile within its taxon group (not abundance)</li>
         <li><strong>Descriptions</strong> — species descriptions with source attribution</li>
         <li><strong>Images</strong> — image URLs, attribution, and license info, plus a reference to the matching <a href="https://avicommons.org">Avicommons</a> photo for birds</li>
-        <li><strong>Translations</strong> — common names in {{ locale_count }} languages</li>
+        <li><strong>Translations</strong> — common names in {{ locale_count }} languages and regional variants, descriptions in about twenty languages</li>
     </ul>
 </div>
 
