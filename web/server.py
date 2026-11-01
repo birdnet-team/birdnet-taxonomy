@@ -1053,33 +1053,6 @@ async def api_fields():
     return sorted(_ALL_FIELDS)
 
 
-@app.get("/api/model-labels/{model}", tags=["API"], response_model=list[dict[str, str]],
-         responses={404: {"description": "Unknown model"}})
-async def api_model_labels(
-    model: str,
-    status: str = Query("", description="Filter by status: keep, pending, or review"),
-):
-    """List an audio model's labels and how each maps onto the taxonomy.
-
-    One row per surviving model output: its taxonomy record and the
-    `redirect_to` label it merges into, if any. Removed labels and the
-    reasons given to the model developer are not published.
-    """
-    path = _data_dir() / "model_labels" / f"{Path(model).name}.csv"
-    if not path.exists():
-        raise HTTPException(404, f"No model labels for '{model}'")
-    with open(path, encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        if "status" not in (reader.fieldnames or []):
-            raise HTTPException(404, f"No model labels for '{model}'")
-        rows = [row for row in reader if row["status"] != "remove"]
-    return [
-        {key: value for key, value in row.items()
-         if key not in ("rename_to", "reason", "reason_text")}
-        for row in rows if not status or row["status"] == status
-    ]
-
-
 @app.get("/api/search", tags=["API"],
          response_model=SearchResponse,
          response_model_exclude_none=True)

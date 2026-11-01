@@ -104,7 +104,6 @@ HTML species pages redirect to the canonical scientific name URL when accessed v
 | `/api/locales` | List locale codes present in the dataset |
 | `/api/download/csv`, `/json`, `/zip` | Download the release files, named `BirdNET_Taxonomy_<version>.csv` and so on |
 | `/api/fields` | List all available field names |
-| `/api/model-labels/{model}` | An audio model's surviving labels and how each maps onto the taxonomy; filter with `status` |
 | `/api/groups` | List taxon groups with counts |
 | `/api/stats` | Dataset statistics |
 | `/docs` | Interactive API docs (Swagger UI) |
