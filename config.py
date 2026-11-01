@@ -18,6 +18,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = ROOT / "config.yml"
+RELEASE_PREFIX = "BirdNET_Taxonomy_"
 
 
 def load_config() -> dict:
@@ -44,6 +45,11 @@ def get_taxon_groups() -> list[dict]:
 def get_taxonomy_version() -> str:
     """Shorthand: return the taxonomy version string."""
     return str(load_config().get("taxonomy", {}).get("version", "")).strip()
+
+
+def release_file(directory: Path, extension: str) -> Path:
+    """Path of a release file, which carries the taxonomy version in its name."""
+    return directory / f"{RELEASE_PREFIX}{get_taxonomy_version()}.{extension}"
 
 
 # Map locale codes to human-readable language names.

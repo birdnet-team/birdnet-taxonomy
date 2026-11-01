@@ -7,8 +7,8 @@ A web UI and REST API for browsing and serving the dataset.
 Browse and search the dataset through a web UI and REST API:
 
 ```bash
-python -m web.server            # serves dist/species_metadata.json
-python -m web.server --dev      # serves dev/species_metadata.json
+python -m web.server            # serves dist/BirdNET_Taxonomy_<version>.json
+python -m web.server --dev      # serves dev/BirdNET_Taxonomy_<version>.json
 ```
 
 | Flag | Description |
@@ -19,7 +19,8 @@ python -m web.server --dev      # serves dev/species_metadata.json
 | `--workers N` | Worker processes (default: 1; not combinable with `--reload`) |
 | `--reload` | Auto-reload on code changes |
 
-The server loads the metadata at startup; restart it after a new build.
+The server loads the metadata at startup; restart it after a new build. It reads the file
+for the version in `config.yml`, so a version bump needs a build too.
 
 Or with hot-reload during development:
 
@@ -61,7 +62,7 @@ is built so that visitors talk to it and nobody else:
 - **No visitor data in logs.** `python -m web.server` prints one line per request to the
   console, for example `2026-11-01 10:15:02 200 GET /species/Turdus merula (3 ms)`: time,
   status, method, path, duration. It has no address, user agent, or query string, and
-  nothing is written to disk. Image and static requests appear only when they fail. The
+  nothing is written to disk. Image, static, and uptime check requests appear only when they fail. The
   output lasts as long as the terminal or `screen` scrollback keeps it.
 
 The gateway in front of the server is separate and keeps its own access logs, as described
@@ -90,17 +91,18 @@ HTML species pages redirect to the canonical scientific name URL when accessed v
 
 | Route | Description |
 |-------|-------------|
-| `/` | Home page — search, browse, filter by taxon group |
+| `/` | Home page — search, browse, filter by taxon group. Browsing shows the most common species first, a search its best matches first |
 | `/species/{name}` | Species detail page (HTML) |
 | `/about` | About the dataset (HTML) |
 | `/download` | Download page (HTML) |
+| `/ping` | Uptime check for monitors such as Uptime Kuma: `200` with `{"status": "ok", ...}`, or `503` when no metadata is loaded. Never cached |
 | `/api/image/{name}?size=` | Image proxy — `thumb` (150×100), `medium` (480×320, default) |
 | `/api/species` | List species (JSON/CSV) with filtering, sorting, field selection; CSV omits description excerpts |
 | `/api/species/{name}` | Single species detail (JSON) with field selection; an unknown name returns a placeholder record (see below) |
 | `/api/search?q=` | Search species by name with full query options |
 | `/api/suggest?q=` | Autocomplete suggestions (`limit`, `lang`) |
 | `/api/locales` | List locale codes present in the dataset |
-| `/api/download/csv`, `/json`, `/zip` | Download the release files |
+| `/api/download/csv`, `/json`, `/zip` | Download the release files, named `BirdNET_Taxonomy_<version>.csv` and so on |
 | `/api/fields` | List all available field names |
 | `/api/model-labels/{model}` | An audio model's surviving labels and how each maps onto the taxonomy; filter with `status` |
 | `/api/groups` | List taxon groups with counts |

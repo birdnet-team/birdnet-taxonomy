@@ -17,7 +17,7 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 9. Avicommons | `python -m collectors.avicommons` | `raw_data/avicommons_data.json` |
 | 10. Sound Classes | `python -m collectors.sound_classes` | `raw_data/sound_classes.json` |
 | 11. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
-| 12. Build | `python -m build.metadata` | `dist/species_metadata.{json,csv,zip}`, `dist/model_labels/`, `raw_data/taxonomy.json` |
+| 12. Build | `python -m build.metadata` | `dist/BirdNET_Taxonomy_<version>.{json,csv,zip}`, `dist/model_labels/`, `raw_data/taxonomy.json` |
 | 13. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
 
 Steps 1–2 collect taxonomy. Steps 3–4 enrich species with common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 downloads the Avicommons bird photo index, referenced next to each bird's own image. Step 10 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 11 is optional LLM-based translation and description shortening (enabled through `llm.enabled` in `config.yml`). Step 12 merges everything into the final output — no API calls, purely offline — and also writes `raw_data/taxonomy.json`, which later collector runs use as their species list. Step 13 downloads and crops images for the built species list.
@@ -350,7 +350,7 @@ The build also writes one CSV per model crosswalk; see [model-labels.md](model-l
 Focused description coverage can be audited with:
 
 ```bash
-python -m utils.audit_descriptions dist/species_metadata.json --output dev/description_audit.csv
+python -m utils.audit_descriptions --output dev/description_audit.csv
 ```
 
 By default this report includes short excerpts in every available locale plus

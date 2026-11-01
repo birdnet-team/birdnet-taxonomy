@@ -41,7 +41,7 @@ from fastapi.templating import Jinja2Templates
 
 from config import (
     ROOT, LOCALE_NAMES, get_taxonomy_version, load_config,
-    load_root_path, load_host_name,
+    load_root_path, load_host_name, release_file,
 )
 
 _taxonomy_version = get_taxonomy_version()
@@ -280,7 +280,7 @@ _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; "
     "style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'"
 )
-_UNLOGGED_PATHS = ("/api/image/", "/static/")
+_UNLOGGED_PATHS = ("/api/image/", "/static/", "/ping")
 
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/birdnet-taxonomy)"
 
@@ -342,20 +342,20 @@ def _find_species(identifier: str) -> dict | None:
 
 
 def load_data(dev: bool = False):
-    """Load species_metadata.json into memory."""
+    """Load the release JSON into memory."""
     global _species_list, _species_by_name, _species_by_common
     global _species_by_ebird, _species_by_ml_code, _species_by_xc, _species_by_birdnet, _species_by_inat_id, _species_by_alias
     global _search_index, _all_locales
 
     for d in (["dev", "dist"] if dev else ["dist", "dev"]):
-        path = ROOT / d / "species_metadata.json"
+        path = release_file(ROOT / d, "json")
         if path.exists():
             with open(path, encoding="utf-8") as f:
                 _species_list = json.load(f)
             print(f"Loaded {len(_species_list)} species from {path}")
             break
     else:
-        print("WARNING: No species_metadata.json found. "
+        print(f"WARNING: No {release_file(ROOT, 'json').name} found. "
               "Run: python -m build.metadata")
         _species_list = []
 
@@ -503,8 +503,8 @@ async def privacy_middleware(request: FRequest, call_next):
     """Keep browsers on this site, and print a request line to the console.
 
     The line goes to stdout only and leaves out everything about the visitor:
-    no address, user agent, or query string. Image and static requests appear
-    only when they fail.
+    no address, user agent, or query string. Image, static, and uptime check
+    requests appear only when they fail.
     """
     started = time.perf_counter()
     response = await call_next(request)
@@ -667,8 +667,12 @@ async def image_proxy(scientific_name: str,
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def home(request: FRequest, q: str = "", group: str = "",
-               lang: str = "", sort: str = "bn", page: int = 1, per_page: int = 51):
-    """Home page with search and species listing."""
+               lang: str = "", sort: str = "", page: int = 1, per_page: int = 51):
+    """Home page with search and species listing.
+
+    Without a chosen sort, browsing shows the most common species first and a
+    search keeps its best-match order.
+    """
     results = _search(q, group)
 
     def _name_sort_key(r):
@@ -681,7 +685,7 @@ async def home(request: FRequest, q: str = "", group: str = "",
         results = sorted(results, key=_name_sort_key)
     elif sort == "z-a":
         results = sorted(results, key=_name_sort_key, reverse=True)
-    elif sort == "common":
+    elif sort == "common" or not (sort or q):
         results = sorted(results, key=lambda r: r.get("commonness") or 0, reverse=True)
     elif sort == "bn":
         results = sorted(results, key=lambda r: r.get("birdnet_id") or "")
@@ -732,9 +736,9 @@ async def download_page(request: FRequest):
         request,
         total_species=len(_species_list),
         locale_count=locale_count,
-        csv_size=_format_size(dd / "species_metadata.csv"),
-        json_size=_format_size(dd / "species_metadata.json"),
-        zip_size=_format_size(dd / "species_metadata.zip"),
+        csv_size=_format_size(release_file(dd, "csv")),
+        json_size=_format_size(release_file(dd, "json")),
+        zip_size=_format_size(release_file(dd, "zip")),
     ))
 
 
@@ -1000,6 +1004,17 @@ def _to_csv(records: list[dict], fields: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 # REST API
 # ---------------------------------------------------------------------------
+
+@app.get("/ping", tags=["API"], responses={503: {"description": "No metadata loaded"}})
+@app.head("/ping", include_in_schema=False)
+async def ping():
+    """Uptime check: 200 while the server holds its data, 503 when it holds none."""
+    return JSONResponse(
+        {"status": "ok" if _species_list else "no data", "taxonomy_version": _taxonomy_version},
+        status_code=200 if _species_list else 503,
+        headers={"Cache-Control": "no-store"},
+    )
+
 
 @app.get("/api/stats", tags=["API"], response_model=StatsResponse)
 async def api_stats():
@@ -1321,36 +1336,32 @@ def _search(q: str, group: str = "") -> list[dict]:
 def _data_dir() -> Path:
     return ROOT / ("dev" if _dev_mode else "dist")
 
-def _download_filename(ext: str) -> str:
-    v = _taxonomy_version.lstrip("v") if _taxonomy_version else "unknown"
-    return f"birdnet_taxonomy_{v}.{ext}"
-
 @app.get("/api/download/csv", tags=["Download"],
          summary="Download species metadata as CSV")
 async def download_csv():
-    path = _data_dir() / "species_metadata.csv"
+    path = release_file(_data_dir(), "csv")
     if not path.exists():
         raise HTTPException(404, "CSV file not available. Run build first.")
     return FileResponse(path, media_type="text/csv",
-                        filename=_download_filename("csv"))
+                        filename=path.name)
 
 @app.get("/api/download/json", tags=["Download"],
          summary="Download species metadata as JSON")
 async def download_json():
-    path = _data_dir() / "species_metadata.json"
+    path = release_file(_data_dir(), "json")
     if not path.exists():
         raise HTTPException(404, "JSON file not available. Run build first.")
     return FileResponse(path, media_type="application/json",
-                        filename=_download_filename("json"))
+                        filename=path.name)
 
 @app.get("/api/download/zip", tags=["Download"],
          summary="Download species metadata as ZIP (CSV + JSON)")
 async def download_zip():
-    path = _data_dir() / "species_metadata.zip"
+    path = release_file(_data_dir(), "zip")
     if not path.exists():
         raise HTTPException(404, "ZIP file not available. Run build with --no-zip disabled.")
     return FileResponse(path, media_type="application/zip",
-                        filename=_download_filename("zip"))
+                        filename=path.name)
 
 
 # ---------------------------------------------------------------------------

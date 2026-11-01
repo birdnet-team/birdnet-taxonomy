@@ -10,10 +10,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from config import ROOT, load_config
+from config import ROOT, load_config, release_file
 from utils.description_quality import word_count
 
-DEFAULT_METADATA = ROOT / "dist" / "species_metadata.json"
+DEFAULT_METADATA = release_file(ROOT / "dist", "json")
 DEFAULT_REPORT = ROOT / "dev" / "description_audit.csv"
 
 
