@@ -33,9 +33,8 @@ insects) or matching the configured thin-record rule are dropped and listed in t
 configured report CSV, defaulting to `dev/metadata_quality_report.csv`. Groups
 under `metadata_quality.keep_groups` (birds: AviList is the authority) are
 scored but never dropped, so a new AviList split stays even before other
-sources cover it. With `metadata_quality.keep_model_labels`, the same holds for
-species with status `keep` in a model crosswalk, and for any species with a BirdNET ID
-in `bn_ids.json`, so a low-scoring species only leaves at a `--reassign-ids`.
+sources cover it. With `metadata_quality.keep_registered`, the same holds for any
+species with a BirdNET ID in `bn_ids.json`.
 
 ## Low-Resource Records
 

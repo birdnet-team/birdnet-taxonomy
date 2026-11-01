@@ -82,7 +82,6 @@ python -m web.server
 | [Pipeline](docs/pipeline.md) | Each collector, its flags, the build, image generation, and the project layout |
 | [Taxonomy rules](docs/taxonomy.md) | Taxon groups, and how names, identifiers, descriptions, and images are chosen |
 | [Metadata reference](docs/metadata.md) | Output files and fields, quality filtering, and BirdNET IDs |
-| [Model labels](docs/model-labels.md) | Mapping audio model outputs onto the taxonomy |
 | [Web server and API](docs/web-api.md) | Running and deploying the server, routes, and query parameters |
 | [Contributing](CONTRIBUTING.md) | Workflow, naming rules, and manual overrides |
 

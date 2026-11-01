@@ -118,27 +118,8 @@ species, e.g. `human vocal` or `speech` for *Homo sapiens*. Real names belong
 in the source data, and scientific synonyms in `overrides/species_aliases.csv`.
 
 The build fails on unknown species, invalid or duplicate aliases, or an alias
-that is another species' common name (unless that record redirects to this one
-in a model crosswalk).
-
-## Model Labels
-
-`overrides/model_labels/<model>.csv` maps each output of an audio model onto the
-taxonomy. These crosswalks are private: the folder is gitignored, so never commit it.
-A build without one gives the same records and skips only the files for the model
-developer. [docs/model-labels.md](docs/model-labels.md) describes the columns. Keep the taxonomy lean: a label that is
-a duplicate, sketchy, or not useful stays out, with status `remove`, and the export
-tells the model developer to prune it.
-
-- Give every `remove` and `review` row a `reason`, so the CSV for the model developer can
-  say why. Use `note` for specifics the standard wording misses. Reasons stay out of
-  taxonomy records, the release zip and the API.
-- Set `redirect_to` only if the target is a surviving label with training samples. Two
-  labels for one record need it, and the build fails without: keep the label that matches
-  the record's name.
-- Set `status` to `pending` when a label's record is planned, and to `keep` once the
-  record exists. The build fails if either no longer matches the records.
-- Never rename a species to fit a label. Model names become aliases.
+that is another species' common name. A sound class may share a name with an alias:
+its own name wins lookups.
 
 ## Priority Species
 

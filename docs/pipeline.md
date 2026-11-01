@@ -17,7 +17,7 @@ Run collectors in order — later steps depend on earlier output. All scripts ar
 | 9. Avicommons | `python -m collectors.avicommons` | `raw_data/avicommons_data.json` |
 | 10. Sound Classes | `python -m collectors.sound_classes` | `raw_data/sound_classes.json` |
 | 11. LLM Translation (optional) | `python -m collectors.translate` | `raw_data/translate_data.json` |
-| 12. Build | `python -m build.metadata` | `dist/BirdNET_Taxonomy_<version>.{json,csv,zip}`, `dist/model_labels/`, `raw_data/taxonomy.json` |
+| 12. Build | `python -m build.metadata` | `dist/BirdNET_Taxonomy_<version>.{json,csv,zip}`, `raw_data/taxonomy.json` |
 | 13. Images (optional) | `python -m collectors.images` | `dist/images/` (`--dev` → `dev/images/`) |
 
 Steps 1–2 collect taxonomy. Steps 3–4 enrich species with common names, external identifiers, and Wikidata images. Step 5 fetches localized Wikipedia summaries. Steps 6–8 discover Macaulay Library taxon codes, Xeno-Canto name mappings, and observation.org species IDs for cross-referencing audio sources. Step 9 downloads the Avicommons bird photo index, referenced next to each bird's own image. Step 10 collects configured non-species sound classes and their Wikidata labels/Wikimedia images. Step 11 is optional LLM-based translation and description shortening (enabled through `llm.enabled` in `config.yml`). Step 12 merges everything into the final output — no API calls, purely offline — and also writes `raw_data/taxonomy.json`, which later collector runs use as their species list. Step 13 downloads and crops images for the built species list.
@@ -243,8 +243,7 @@ soundscape categories. `audioset_id` and `parent` place a class in the AudioSet 
 wording, published with `description_source: audioset`.
 Each class can list `|`-separated common-name aliases (e.g. `chain saw` and `power saw`
 for `Chainsaw`) so those searches resolve to the canonical entry. Human sounds are
-individual classes in the `Human` group, and redirect to the species record *Homo
-sapiens* (Mammalia) in the model crosswalk. *Homo sapiens* keeps search aliases such as
+individual classes in the `Human` group. *Homo sapiens* (Mammalia) keeps search aliases such as
 `human vocal` and `speech` from `overrides/common_name_aliases.csv`; a class's own name
 still wins an exact lookup. The build includes only classes listed in the CSV; a class
 removed there is dropped from the build even though the collector's cache keeps it. A
@@ -341,14 +340,14 @@ per-locale, with native Wikipedia text kept over a translation where it is
 substantive. With `llm.enabled: false` the build uses only Wikipedia
 descriptions. eBird text is never published, so the data can stay under CC BY-SA 4.0.
 
-The build also writes one CSV per model crosswalk; see [model-labels.md](model-labels.md). Output fields, quality filtering, and BirdNET IDs are covered in [metadata.md](metadata.md).
+Output fields, quality filtering, and BirdNET IDs are covered in [metadata.md](metadata.md).
 
 | Flag | Description |
 |------|-------------|
 | `--dev` | Write to dev/ instead of dist/ |
 | `--merge-only` | Skip taxonomy rebuild, re-merge only |
 | `--no-zip` | Skip zip archive creation |
-| `--reassign-ids` | Regenerate all BirdNET IDs from scratch (pre-release only); needs the private crosswalks |
+| `--reassign-ids` | Regenerate all BirdNET IDs from scratch (pre-release only) |
 | `--strict-validation` | Fail if release-gate metadata audit findings remain |
 | `--dry-run` | Show stats without writing |
 
@@ -431,8 +430,7 @@ overrides/
     bird_splits.csv        # Git-tracked birds kept separate from an AviList lump
     common_name_aliases.csv  # Git-tracked manual common-name search aliases
     description_overrides.csv  # Git-tracked rejected articles and text fixes
-    model_aliases.csv      # Git-tracked aliases from the model crosswalks, updated by the build
-    model_labels/          # Private, gitignored crosswalks from audio model outputs to the taxonomy
+    label_aliases.csv      # Git-tracked aliases from audio model labels
     priority_species.csv   # Git-tracked reviewed taxonomy additions
     sound_classes.csv      # Git-tracked reviewed non-species sound classes
     species_aliases.csv    # Git-tracked manual scientific-name aliases
