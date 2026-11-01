@@ -698,7 +698,7 @@ async def home(request: FRequest, q: str = "", group: str = "",
 
     groups = sorted(set(r.get("taxon_group", "") for r in _species_list if r.get("taxon_group")))
 
-    return templates.TemplateResponse("home.html", _template_context(
+    return templates.TemplateResponse(request, "home.html", _template_context(
         request,
         species=page_results,
         query=q,
@@ -732,7 +732,7 @@ async def download_page(request: FRequest):
     """Download page."""
     dd = _data_dir()
     locale_count = len(_all_locales)
-    return templates.TemplateResponse("download.html", _template_context(
+    return templates.TemplateResponse(request, "download.html", _template_context(
         request,
         total_species=len(_species_list),
         locale_count=locale_count,
@@ -745,7 +745,7 @@ async def download_page(request: FRequest):
 @app.get("/about", response_class=HTMLResponse, include_in_schema=False)
 async def about_page(request: FRequest):
     """About page."""
-    return templates.TemplateResponse("about.html", _template_context(request))
+    return templates.TemplateResponse(request, "about.html", _template_context(request))
 
 
 @app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
@@ -783,7 +783,7 @@ async def species_page(request: FRequest, scientific_name: str, lang: str = ""):
         return RedirectResponse(url=redirect_url, status_code=302)
 
     lang_name = dict(_all_locales).get(lang, lang) if lang else ""
-    return templates.TemplateResponse("species.html", _template_context(
+    return templates.TemplateResponse(request, "species.html", _template_context(
         request,
         s=rec,
         lang=lang,
