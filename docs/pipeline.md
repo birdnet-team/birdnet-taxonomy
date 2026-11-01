@@ -430,7 +430,7 @@ overrides/
     bird_splits.csv        # Git-tracked birds kept separate from an AviList lump
     common_name_aliases.csv  # Git-tracked manual common-name search aliases
     description_overrides.csv  # Git-tracked rejected articles and text fixes
-    label_aliases.csv      # Git-tracked aliases from audio model labels
+    label_aliases.csv      # Git-tracked reviewed name aliases
     priority_species.csv   # Git-tracked reviewed taxonomy additions
     sound_classes.csv      # Git-tracked reviewed non-species sound classes
     species_aliases.csv    # Git-tracked manual scientific-name aliases

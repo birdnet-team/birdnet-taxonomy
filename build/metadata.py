@@ -586,7 +586,7 @@ def load_priority_only_species(cfg: dict) -> set[str]:
 
 
 def load_label_aliases() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Aliases from audio model labels in overrides/label_aliases.csv:
+    """Reviewed aliases in overrides/label_aliases.csv:
     {species: scientific aliases} and {species: common-name aliases}."""
     scientific: dict[str, list[str]] = {}
     common: dict[str, list[str]] = {}
