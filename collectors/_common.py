@@ -15,6 +15,7 @@ from urllib.parse import unquote
 import json
 import os
 import re
+import unicodedata
 import signal
 import threading
 import time
@@ -129,6 +130,9 @@ def is_clean_common_name(name: str) -> bool:
     """Return True for final common names allowed in metadata."""
     clean = (name or "").strip()
     if not clean or _BAD_DISPLAY_NAME_CHARS_RE.search(clean):
+        return False
+    # Private-use and unassigned code points are broken text.
+    if any(unicodedata.category(c) in ("Co", "Cn") for c in clean):
         return False
     return not re.search(r"\s{2,}", clean)
 

@@ -104,9 +104,11 @@ names become aliases of the replacement taxon.
   species in lower-case English); file names, catalogue numbers, names ending
   in a disambiguation number, wiki pages in a namespace ("Category:..."), or
   `sp.`/`ssp.` placeholders.
-- Localized names are one name: a comma list keeps its first alternative, and
-  words mixing look-alike letters of two scripts (a Latin "c" in a Russian
-  name) are repaired.
+- Localized names are one name: a comma list keeps its first alternative, a
+  `〔…〕` note is dropped, and words mixing look-alike letters of two scripts (a
+  Latin "c" in a Russian name) are repaired. Stray invisible characters are
+  removed, but not the zero-width joiners that some scripts spell with, and a name
+  with private-use or unassigned characters is rejected.
 - When two non-bird species share an English display name on iNat, the one
   whose English Wikipedia lead gives that name keeps it (then one with no other
   English name, then the more-observed one). The others take an unused English
@@ -155,8 +157,8 @@ the file, else the most commonly observed). A photo whose license requires attri
 (anything but public domain or CC0) is only used with a known author, and
 Commons files of a skull, skeleton, or postage stamp, or whose file name names
 another species of the taxonomy, are skipped; otherwise the next image source
-is tried. Credits are reduced to the name: rights notes, account prefixes, and
-upload notes are removed, and a URL alone becomes its account, site, or DOI.
+is tried. Credits are reduced to the name: rights notes, account prefixes, upload
+notes, and email addresses are removed, and a URL alone becomes its account, site, or DOI.
 
 ### Sound classes
 

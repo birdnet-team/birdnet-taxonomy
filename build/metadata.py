@@ -227,7 +227,15 @@ _ACCOUNT_PREFIX_RE = re.compile(
     r"(?:\ben:)?\b[Uu]ser:|^[Cc]reator:|^Photographer:\s*|^(?:iNaturalist|NaturaLista) user:\s*"
     r"|^No machine-readable author provided\.\s*|^See more at:\s*")
 _AUTHOR_TAIL_RE = re.compile(
-    r"\s+(?:assumed\b.*|Uploaded by .*|You can contact me .*|This is a retouched picture.*)$")
+    r"\s+(?:assumed\b.*|Uploaded by .*|You can contact me .*|This is a retouched picture.*"
+    r"|[\w.+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}.*)$")
+_MAILTO_RE = re.compile(r"\s*\(?mailto:[^\s)]*\)?")
+# Commons credits of an edited file: "Source.jpg: Name from Place derivative
+# work: Name", or the two parts the other way round.
+_DERIVATIVE_CREDIT_RE = re.compile(
+    r"^.*?\.(?:jpe?g|png|tiff?):\s*(.+?)(?: from .+?)?\s+derivative work:\s*(.+)$", re.IGNORECASE)
+_DERIVATIVE_FIRST_RE = re.compile(
+    r"^derivative work:\s*(\S+)\s+\S+\.(?:jpe?g|png|tiff?):\s*(.+)$", re.IGNORECASE)
 # Attribution URLs, whole or with the slashes already stripped.
 _FLICKR_CREDIT_RE = re.compile(r"https?:/*(?:www\.)?flickr\.com/*(?:photos|people)/*([\w@-]+)\S*")
 _INAT_CREDIT_RE = re.compile(r"\s*https?:/*(?:www\.)?inaturalist\.org/*people/*(\S+)")
@@ -238,14 +246,19 @@ _SITE_CREDIT_RE = re.compile(
 
 def _tidy_image_author(author: str) -> str:
     """Reduce an image credit to the name: no rights notes, account prefixes,
-    upload notes or raw URLs (a URL alone becomes its account or site)."""
-    text = _RIGHTS_TAIL_RE.sub("", re.sub(r"\s+", " ", author)).strip(" ,")
+    upload notes, email addresses or raw URLs (a URL alone becomes its account
+    or site)."""
+    text = _MAILTO_RE.sub("", author)
+    text = _RIGHTS_TAIL_RE.sub("", re.sub(r"\s+", " ", text)).strip(" ,")
     text = _AUTHOR_TAIL_RE.sub("", _ACCOUNT_PREFIX_RE.sub("", text)).strip()
     inat = _INAT_CREDIT_RE.search(text)
     if inat:
         text = _INAT_CREDIT_RE.sub("", text).strip() or inat.group(1)
     text = _FLICKR_CREDIT_RE.sub(r"\1", text)
     text = _DOI_CREDIT_RE.sub(r"doi:\1/\2", text)
+    text = _DERIVATIVE_CREDIT_RE.sub(r"\1, \2", text)
+    text = _DERIVATIVE_FIRST_RE.sub(r"\2, \1", text)
+    text = text.replace("Unknown authorUnknown author", "Unknown author")
     return _SITE_CREDIT_RE.sub(r"\1", text).strip(" ,")
 
 
@@ -348,7 +361,7 @@ def load_avicommons(cfg: dict) -> dict[str, dict]:
             "sci": (p.get("sciName") or "").strip(),
             "name": (p.get("name") or "").strip(),
             **{size: f"{base}/{code}-{key}-{px}.jpg" for size, px in sizes.items()},
-            "author": _fix_mojibake(html.unescape(author)),
+            "author": _MAILTO_RE.sub("", _fix_mojibake(html.unescape(author))),
             "license": lic,
         }
     return result
@@ -2040,10 +2053,16 @@ def _repair_homoglyphs(name: str) -> str:
         for word in name.split(" "))
 
 
+# Invisible characters that are never part of a name. The zero-width joiners
+# U+200C and U+200D are: Persian, Malayalam and Sinhala spell with them.
+_STRAY_NAME_CHARS_RE = re.compile("[\u00ad\u200b\u200e\u200f\ufeff\ue000-\uf8ff]")
+
+
 def _first_alternative(name: str) -> str:
-    """A display name is one name: strip list quotes, keep the first of a comma
-    list. A comma before a year is an author citation, left for the junk filter."""
-    name = name.strip('"')
+    """A display name is one name: drop stray invisible characters, strip list
+    quotes, keep the first of a comma list or the part before a 〔...〕 note. A
+    comma before a year is an author citation, left for the junk filter."""
+    name = _STRAY_NAME_CHARS_RE.sub("", name).strip().strip('"').partition("〔")[0].strip()
     first, _, rest = name.partition(",")
     return name if re.search(r"\d", rest) else first.strip()
 
