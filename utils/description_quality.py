@@ -35,9 +35,20 @@ _DISAMBIGUATION_RE = re.compile(
 )
 
 
+# English notice pages left after a split ("Tropical pewee has been split into three species:").
+_SPLIT_NOTICE_RE = re.compile(r"^[^\n]{0,80}\b(?:has|have) been split into\b", re.IGNORECASE)
+# Hatnotes at the start of an article ("The name X can also refer to Y.").
+_HATNOTE_RE = re.compile(
+    r"^(?:The name |In [^,\n]{0,40}, |For |This article discusses )[^\n]{0,200}?"
+    r"(?:can also (?:refer to|mean)|, see |is distinct from)[^\n]{0,160}?\.\s+(?=[A-Z])"
+)
+
+
 def is_disambiguation_text(text: str) -> bool:
-    """Return True for Wikipedia disambiguation-page text (a list, not a description)."""
-    return bool(_DISAMBIGUATION_RE.search((text or "").strip()))
+    """Return True for Wikipedia disambiguation or split-notice text (not a description)."""
+    text = (text or "").strip()
+    return bool(_DISAMBIGUATION_RE.search(text)
+                or (len(text.split()) <= 60 and _SPLIT_NOTICE_RE.search(text)))
 
 
 def normalize_space(text: str) -> str:
@@ -228,14 +239,50 @@ def _clean_paragraph(paragraph: str, seen: set[str]) -> str:
     return normalize_space(" ".join(kept))
 
 
+_INVISIBLE_RE = re.compile("[\u00ad\u200b\ufeff]")
+_SENTENCE_END_RE = re.compile(r"[.!?…)\"”»。！？]$")
+_AUTHOR_YEAR_RE = re.compile(r"\([A-Z][^()]*,\s*\d{4}\)")
+# A sentence ends after a word or number: "E. a. minor" is an abbreviation.
+_LAST_SENTENCE_RE = re.compile(r"^.*(?:[^\W_]{2}|[)\"”»])[.!?…。！？](?=\s)", re.DOTALL)
+_LIST_TAIL_RE = re.compile(r"^[A-Z]\. [a-z]\. |^[A-Z][a-z]{3,} [a-z]{4,} [a-z]{4,} [A-Z(]|\bClick Here\b")
+
+
+def _finish_last_sentence(text: str) -> str:
+    """Drop a subspecies list after the last full sentence; a plain sentence
+    that only lacks its full stop gets one."""
+    text = text.rstrip(" :;,")
+    if not text or ord(text[-1]) >= 0x2E80:
+        return text
+    head = _LAST_SENTENCE_RE.match(text)
+    tail = text[head.end():].strip() if head else ""
+    if tail and (_AUTHOR_YEAR_RE.search(tail) or _LIST_TAIL_RE.search(tail)):
+        return head.group(0).strip()
+    return text if _SENTENCE_END_RE.search(text) else f"{text}."
+
+
+# Sentences where an LLM talks about its sources instead of the species.
+_LLM_META_RE = re.compile(
+    r"\b(?:provided|available) (?:sources?|records?|texts?|articles?)\b|\bcurrent records\b"
+    r"|\bspecific details\b[^.]*\b(?:limited|unknown|unavailable)\b",
+    re.IGNORECASE,
+)
+
+
+def drop_llm_meta_sentences(text: str) -> str:
+    """Remove sentences about the sources from LLM text."""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return " ".join(s for s in sentences if not _LLM_META_RE.search(s))
+
+
 def clean_description_text(text: str) -> str:
-    """Clean stored descriptions: drop section headings, reference-type
+    """Clean stored descriptions: drop hatnotes, section headings, reference-type
     tails and reference-list text, subspecies and synonym lists, citation
     marks, sentences with leftover wiki markup, and repeated sentences."""
     if not text:
         return text
     kept: list[str] = []
     seen: set[str] = set()
+    text = _HATNOTE_RE.sub("", text.lstrip(), count=1)
     for heading, body in _split_sections(text.replace("\r\n", "\n")):
         if heading and _END_SECTIONS.match(heading):
             break
@@ -251,7 +298,8 @@ def clean_description_text(text: str) -> str:
                 kept.append(cleaned)
     if kept:
         kept[-1] = _drop_list_intro(kept[-1])
-    return "\n\n".join(p for p in kept if p).strip()
+    cleaned_text = "\n\n".join(p for p in kept if p).strip()
+    return _INVISIBLE_RE.sub("", _finish_last_sentence(cleaned_text))
 
 
 def select_description_text(full_text: str, min_words: int, target_words: int,

@@ -40,6 +40,7 @@ from tqdm import tqdm
 
 from config import load_config
 from collectors._common import (
+    load_manual_species_aliases, rejected_articles, strip_rejected_articles,
     RAW_DIR, USER_AGENT, setup_shutdown, is_shutting_down,
     RateLimiter, is_full_species_name, load_json, save_json,
     clean_aliases, same_epithet_stem,
@@ -174,12 +175,25 @@ def load_species_with_wikipedia() -> dict[str, str]:
 
 def _sitelink_only_species(existing: dict, taxonomy: dict, wikidata: dict,
                            locales: list[str]) -> list[tuple[str, dict[str, str]]]:
-    """Species with no Wikipedia data and no English article, but articles in
-    other configured locales (Wikidata sitelinks)."""
+    """Species without a stored English article but with articles in other
+    configured locales (Wikidata sitelinks). A species that has Wikipedia data
+    fills the locales it lacks; one without any needs no English sitelink."""
     items = []
     for sci, entry in taxonomy.items():
         names = [sci, *entry.get("source_names", [])]
-        if entry.get("record_type") == "sound_class" or any(existing.get(n) for n in names):
+        if entry.get("record_type") == "sound_class":
+            continue
+        records = [existing[n] for n in names if existing.get(n)]
+        if any(r.get("extract") or (r.get("extracts") or {}).get("en") for r in records):
+            continue
+        if records:
+            stored = {loc for r in records for loc in r.get("wikipedia_urls") or {}}
+            links = next(((wikidata.get(n) or {}).get("wikipedia_sitelinks") for n in names
+                          if (wikidata.get(n) or {}).get("wikipedia_sitelinks")), {})
+            links = {loc: t for loc, t in links.items()
+                     if loc in locales and loc != "en" and loc not in stored}
+            if links:
+                items.append((sci, links))
             continue
         links = next(((wikidata.get(n) or {}).get("wikipedia_sitelinks") for n in names
                       if (wikidata.get(n) or {}).get("wikipedia_sitelinks")), {})
@@ -194,12 +208,41 @@ def _sitelink_only_species(existing: dict, taxonomy: dict, wikidata: dict,
 _LEAD_BINOMIAL_RE = re.compile(r"\(([A-Z][a-z]+ [a-z][a-z-]+)[,)]")
 
 
-def _usable_english(rec: dict, sci: str, names: list[str], other_species: set[str]) -> bool:
+def _usable_english(rec: dict, sci: str, names: list[str], other_species: set[str],
+                    common_name: str = "") -> bool:
     """The build's test for a stored English article: it is about this species."""
     text = rec.get("extract") or (rec.get("extracts") or {}).get("en", "")
     return bool(text) and not is_disambiguation_text(text) and describes_species(
-        text, rec.get("title", ""), names, other_species=other_species,
+        text, rec.get("title", ""), names, common_name, other_species=other_species,
     ) and not names_other_species(text, names, other_species)
+
+
+def _drop_unusable_articles(existing: dict, taxonomy: dict) -> int:
+    """Remove stored English articles the build would reject.
+
+    Such an article is about another taxon, or only announces a split, and
+    its other locales are langlinks of the same wrong page. Removing them lets
+    the species' own articles come in through Wikidata sitelinks. Returns the
+    number of records cleaned.
+    """
+    other_species = set(taxonomy)
+    reviewed = load_manual_species_aliases()
+    dropped = 0
+    for sci, entry in taxonomy.items():
+        rec = existing.get(sci)
+        if not rec or entry.get("record_type") == "sound_class":
+            continue
+        if not (rec.get("extract") or (rec.get("extracts") or {}).get("en")):
+            continue
+        names = [sci, *entry.get("source_names", []), *entry.get("scientific_name_aliases", []),
+                 *entry.get("xc_aliases", []), *reviewed.get(sci, [])]
+        if _usable_english(rec, sci, names, other_species, entry.get("preferred_common_name", "")):
+            continue
+        for field in ("title", "extract", "description", "extracts", "wikipedia_urls",
+                      "extract_sources"):
+            rec.pop(field, None)
+        dropped += 1
+    return dropped
 
 
 def _name_title_species(species: dict[str, str], existing: dict,
@@ -1147,6 +1190,8 @@ def main():
     print(f"  Found {len(species)} species with Wikipedia URLs")
 
     existing = load_json(OUTPUT_FILE)
+    rejected = rejected_articles()
+    strip_rejected_articles(existing, rejected)
     print(f"  Already have Wikipedia data for {len(existing)} species")
     taxonomy = load_json(TAXONOMY_FILE)
     # The stored English article is the accepted one (it may have been
@@ -1291,6 +1336,11 @@ def main():
         )
 
     # Species whose only Wikipedia articles are non-English (Wikidata sitelinks)
+    strip_rejected_articles(existing, rejected)
+    unusable = _drop_unusable_articles(existing, taxonomy)
+    if unusable:
+        print(f"\nRemoved {unusable} stored articles about another taxon")
+        save_json(existing, OUTPUT_FILE)
     sitelink_items = _sitelink_only_species(existing, taxonomy, load_json(WIKIDATA_FILE),
                                             target_locales)
     if args.limit:
@@ -1429,6 +1479,7 @@ def main():
 
     # ── Final save (with image licenses) ──────────────────────────────
     _assemble_records(all_work, english_data, locale_extracts, title_licenses, existing)
+    strip_rejected_articles(existing, rejected)
     save_json(existing, OUTPUT_FILE)
 
     success = sum(1 for _, t in all_work if t in english_data)

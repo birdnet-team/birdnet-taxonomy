@@ -8,7 +8,7 @@ Combines two phases:
             images, and external identifiers. All data is read from
             pre-collected JSON files — no API calls.
   Phase 2 — Merge: Enrich each species with a single description using the
-            priority Claude > Wikipedia > eBird, then write the final output.
+            priority LLM > Wikipedia, then write the final output.
 
 Input files (all in raw_data/):
   - inat_data.json         (from collectors/inat.py)
@@ -24,6 +24,7 @@ Output:
   - dist/species_metadata.json
   - dist/species_metadata.csv
   - dist/species_metadata.zip
+  - dist/model_labels/<model>.csv  (from overrides/model_labels/<model>.csv)
 
 Usage:
     python -m build.metadata [--merge-only] [--dry-run] [--no-zip] [--dev]
@@ -37,6 +38,7 @@ import io
 import json
 import os
 import re
+import unicodedata
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -44,14 +46,16 @@ from pathlib import Path
 from urllib.parse import quote, unquote
 from config import load_config, image_url_prefix, LOCALE_NAMES
 from collectors._common import (
+    load_description_overrides, rejected_articles, strip_rejected_articles,
     ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE, TRUSTED_XC_METHODS,
     clean_aliases, is_clean_common_name, is_clean_scientific_name,
-    is_full_species_name, load_json, load_manual_species_aliases,
+    is_full_species_name, load_json, load_manual_sound_classes, load_manual_species_aliases,
     related_species_names, same_epithet_stem, save_json, xc_record_method,
 )
 from utils.audit_metadata import audit_records, has_failures, print_report
 from utils.description_quality import (
-    clean_description_text, describes_species, is_disambiguation_text, names_other_species,
+    clean_description_text, contains_species_identity, describes_species,
+    drop_llm_meta_sentences, is_disambiguation_text, names_other_species,
     word_count,
 )
 
@@ -76,7 +80,42 @@ MANUAL_OVERRIDES_FILE = ROOT / "overrides" / "species_overrides.csv"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
 MANUAL_COMMON_ALIASES_FILE = ROOT / "overrides" / "common_name_aliases.csv"
 MANUAL_SPLITS_FILE = ROOT / "overrides" / "bird_splits.csv"
+PRIORITY_SPECIES_FILE = ROOT / "overrides" / "priority_species.csv"
+MODEL_LABELS_DIR = ROOT / "overrides" / "model_labels"
 BN_IDS_FILE = ROOT / "bn_ids.json"
+
+MODEL_LABEL_COLUMNS = ("mario_id", "model_label", "train_count", "status", "scientific_name",
+                       "taxon_group", "redirect_to", "alias", "reason", "note")
+MODEL_LABEL_EXPORT_COLUMNS = ("mario_id", "model_label", "train_count", "status", "rename_to",
+                              "redirect_to", "redirect_mario_id", "reason", "reason_text",
+                              "scientific_name", "common_name", "birdnet_id", "taxon_group")
+# Reason codes and the wording relayed to the model developer; a row's own
+# note replaces the wording. Every removed or undecided label needs a reason.
+MODEL_LABEL_REASONS = {
+    "duplicate": "Duplicate of another label",
+    "near_identical_sound": "Same sound as the redirect target",
+    "not_single_class": "Not a single class: it could be several different sounds or sources",
+    "no_training_data": "No training samples",
+    "extinct": "Extinct, and the taxonomy excludes extinct species",
+    "plant": "A plant, and the taxonomy covers animals and sound classes",
+    "not_species": "Not a species or a usable sound class",
+    "retired_name": "Name retired on iNaturalist with no accepted replacement",
+    "subspecies": "Subspecies of the redirect target, to merge in a future model",
+    "human_sound": "Human sound, to merge into Homo sapiens in a future model",
+    "pet_sound": "Sound of a pet species, to merge into that species in a future model",
+    "new_species": "Species not added to the taxonomy yet",
+    "new_sound_class": "Sound class not added to the taxonomy yet",
+    "uncertain_name": "Name needs a manual check",
+    "no_inat_taxon": "Not found on iNaturalist, GBIF, or Catalogue of Life",
+    "unlikely_sound": "Not known to produce sound, so the recordings are probably mislabelled",
+}
+# keep: output with a final record. pending: its record is not added yet.
+# remove: output to drop. review: undecided, no record claimed.
+MODEL_LABEL_STATUSES = {"keep", "pending", "remove", "review"}
+# Aliases of these labels are sound names, never scientific synonyms.
+MODEL_LABEL_SOUND_REASONS = {"human_sound", "pet_sound", "near_identical_sound", "not_single_class"}
+# These labels name something other than their record, so a differing name is no rename.
+MODEL_LABEL_NO_RENAME_REASONS = {"subspecies", "pet_sound"}
 
 ID_FIELDS = (
     "inat_id", "ebird_code", "gbif_id", "ncbi_id", "avibase_id",
@@ -87,9 +126,6 @@ EXTERNAL_ID_FIELDS = (
     "ml_taxon_code", "xc_name", "observationorg_id",
 )
 WIKIDATA_ID_FIELDS = ("gbif_id", "ncbi_id", "avibase_id", "birdlife_id", "wikidata_qid")
-
-# og:description of eBird pages without a species account (generic site text).
-EBIRD_BOILERPLATE = re.compile(r"^\s*(Learn about\b|eBird transforms\b)")
 
 # AviList extinction statuses that exclude a species. Possibly extinct and
 # extinct-in-the-wild species stay: they can still be recorded.
@@ -127,11 +163,27 @@ XC_EPITHET_GROUPS = {"Aves", "Mammalia", "Amphibia"}
 # Image helpers
 # ---------------------------------------------------------------------------
 
+def _fix_mojibake(text: str) -> str:
+    """Repair UTF-8 text that was decoded as Latin-1 ("JÃ¶rg" for "Jörg")."""
+    if "Ã" not in text and "â€" not in text:
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
 def _parse_image_author(attribution: str, source: str = "") -> str:
     """Extract author name from attribution strings."""
     if not attribution:
         return ""
-    text = html.unescape(attribution).strip()
+    text = _fix_mojibake(html.unescape(attribution).strip())
+    uploader = re.search(r"(?:original uploader was|photograph was taken by)\s+(.+?)"
+                         r"(?:\s+at\s+(?:\w+\s+)?\S*wikipedia|\s+and released|\.(?:\s|$)|$)",
+                         text, re.IGNORECASE)
+    if uploader:
+        text = uploader.group(1)
+    text = re.sub(r"\s+at\s+(?:\w+\s+)?wikipedia\b.*$", "", text, flags=re.IGNORECASE)
 
     if source == "ebird" or (" - " in text and not text.startswith("(")):
         text = text.split(" - ", 1)[-1].strip()
@@ -145,7 +197,7 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
         # "uploaded by X" → keep only X  (+ multilingual variants)
         m = re.search(
             r",?\s*(?:uploaded\s+by|uploadet\s+af|subido\s+por"
-            r"|carregado\s+por|загрузил|lähettänyt|feltöltötte:"
+            r"|carregado\s+por|загрузил|lähettänyt|feltöltötte:|yükleyen:|hochgeladen\s+von"
             r"|によって投稿されました"
             r"|由\s*.+?\s*上传"
             r")\s*(.+)",
@@ -157,6 +209,12 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
             r",?\s*(?:"
             r"(?:no|some|all)\s+(?:known\s+)?(?:copy)?rights?\s+(?:reserved|restrictions)"
             r"|alcuni\s+diritti\s+riservati"
+            r"|algunos\s+derechos\s+reservados"
+            r"|alguns\s+direitos\s+reservados"
+            r"|einige\s+Rechte\s+vorbehalten"
+            r"|bazı\s+hakları\s+saklıdır"
+            r"|sin\s+restricciones\s+conocidas\s+de\s+derechos"
+            r"|sem\s+restrições\s+de\s+direitos\s+autorais\s+conhecidas"
             r"|certains\s+droits\s+réservés"
             r"|kai\s+kurios\s+teisės\s+saugomos"
             r"|visos\s+teisės\s+saugomos"
@@ -286,7 +344,7 @@ def load_avicommons(cfg: dict) -> dict[str, dict]:
             "sci": (p.get("sciName") or "").strip(),
             "name": (p.get("name") or "").strip(),
             **{size: f"{base}/{code}-{key}-{px}.jpg" for size, px in sizes.items()},
-            "author": author,
+            "author": _fix_mojibake(html.unescape(author)),
             "license": lic,
         }
     return result
@@ -401,6 +459,7 @@ def load_manual_overrides() -> dict[str, dict]:
             overrides[sci] = {
                 **image_fields,
                 "image_crop_anchor": crop_anchor,
+                "gbif_id": (row.get("gbif_id") or "").strip(),
                 "source_url": (row.get("source_url") or "").strip(),
                 "notes": (row.get("notes") or "").strip(),
             }
@@ -513,6 +572,182 @@ def load_bird_splits() -> dict[str, str]:
     return splits
 
 
+def load_priority_only_species(cfg: dict) -> set[str]:
+    """Species allowed in priority_only groups: those on the reviewed list."""
+    groups = {g["name"] for g in cfg.get("taxon_groups", []) if g.get("priority_only")}
+    with open(PRIORITY_SPECIES_FILE, encoding="utf-8", newline="") as f:
+        return {row["scientific_name"].strip() for row in csv.DictReader(f)
+                if row["taxon_group"].strip() in groups}
+
+
+def _link_model_redirects(path: Path, rows: list[dict]) -> None:
+    """Point each row with `redirect_to` at its target row (`_target`).
+
+    A target is the surviving label: not removed, with training samples, not
+    itself redirected. Only removed rows may share a label with another row.
+    """
+    targets: dict[str, dict] = {}
+    for row in rows:
+        if row["status"] != "remove":
+            if row["model_label"] in targets:
+                raise ValueError(f"{path}: duplicate label '{row['model_label']}'")
+            targets[row["model_label"]] = row
+    for row in rows:
+        if not row["redirect_to"]:
+            continue
+        target = targets.get(row["redirect_to"])
+        problem = (
+            "is unknown or removed" if target is None
+            else "is the label itself" if target is row
+            else "is awaiting review" if target["status"] == "review"
+            else "has no training samples" if not int(target["train_count"] or 0)
+            else "redirects too" if target["redirect_to"]
+            else ""
+        )
+        if problem:
+            raise ValueError(
+                f"{path}: label {row['mario_id']}: redirect_to '{row['redirect_to']}' {problem}"
+            )
+        row["_target"] = target
+
+
+def load_model_labels() -> dict[str, list[dict]]:
+    """Load repo-tracked crosswalks from model outputs to taxonomy records.
+
+    Returns {model name: rows}, one CSV per model in overrides/model_labels/.
+    """
+    models: dict[str, list[dict]] = {}
+    for path in sorted(MODEL_LABELS_DIR.glob("*.csv")):
+        rows: list[dict] = []
+        seen: set[str] = set()
+        with open(path, encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            missing = set(MODEL_LABEL_COLUMNS) - set(reader.fieldnames or [])
+            if missing:
+                raise ValueError(f"{path}: missing required columns: {', '.join(sorted(missing))}")
+            for line_no, raw in enumerate(reader, start=2):
+                row = {key: (raw.get(key) or "").strip() for key in MODEL_LABEL_COLUMNS}
+                if not row["mario_id"] or row["mario_id"] in seen:
+                    raise ValueError(f"{path}: line {line_no}: missing or duplicate mario_id")
+                if row["status"] not in MODEL_LABEL_STATUSES:
+                    raise ValueError(f"{path}: line {line_no}: invalid status '{row['status']}'")
+                if row["train_count"] and not row["train_count"].isdigit():
+                    raise ValueError(
+                        f"{path}: line {line_no}: invalid train_count '{row['train_count']}'"
+                    )
+                if row["status"] in ("keep", "pending") and not row["scientific_name"]:
+                    raise ValueError(f"{path}: line {line_no}: {row['status']} needs scientific_name")
+                if row["reason"] and row["reason"] not in MODEL_LABEL_REASONS:
+                    raise ValueError(f"{path}: line {line_no}: invalid reason '{row['reason']}'")
+                if row["status"] in ("remove", "review") and not row["reason"]:
+                    raise ValueError(f"{path}: line {line_no}: {row['status']} needs a reason")
+                seen.add(row["mario_id"])
+                rows.append(row)
+        _link_model_redirects(path, rows)
+        models[path.stem] = rows
+    return models
+
+
+def model_label_aliases(model_labels: dict[str, list[dict]],
+                        taxonomy: dict) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Scientific and common-name aliases the crosswalks imply.
+
+    A label's alias goes on its redirect target's record, otherwise on its own.
+    Aliases are one-way, and wait until that record exists.
+    """
+    scientific: dict[str, list[str]] = {}
+    common: dict[str, list[str]] = {}
+    for rows in model_labels.values():
+        for row in rows:
+            owner = row["_target"]["scientific_name"] if "_target" in row else row["scientific_name"]
+            alias = row["alias"]
+            if not alias or alias == owner or row["status"] == "review" or owner not in taxonomy:
+                continue
+            if row["reason"] in MODEL_LABEL_SOUND_REASONS:
+                common.setdefault(owner, []).append(alias)
+            elif is_clean_scientific_name(alias):
+                scientific.setdefault(owner, []).append(alias)
+    return scientific, common
+
+
+def model_label_redirects(model_labels: dict[str, list[dict]]) -> dict[str, str]:
+    """Map each record that redirects to its target record."""
+    return {
+        row["scientific_name"]: row["_target"]["scientific_name"]
+        for rows in model_labels.values() for row in rows
+        if "_target" in row and row["scientific_name"]
+        and row["scientific_name"] != row["_target"]["scientific_name"]
+    }
+
+
+def model_label_exports(model_labels: dict[str, list[dict]],
+                        records: list[dict]) -> dict[str, list[dict]]:
+    """Check the crosswalks against the final records and build their exports."""
+    by_name = {rec["scientific_name"]: rec for rec in records}
+    exports: dict[str, list[dict]] = {}
+    errors: list[str] = []
+    for model, rows in model_labels.items():
+        exports[model] = []
+        surviving: dict[str, str] = {}
+        for row in rows:
+            rec = by_name.get(row["scientific_name"])
+            if row["status"] == "keep" and rec is None:
+                errors.append(f"{model} {row['mario_id']}: '{row['scientific_name']}' is not a record")
+            if row["status"] in ("keep", "pending") and "_target" not in row:
+                first = surviving.setdefault(row["scientific_name"], row["mario_id"])
+                if first != row["mario_id"]:
+                    errors.append(f"{model} {row['mario_id']}: same record as label {first}, "
+                                  "set redirect_to on one of them")
+            if row["status"] == "pending" and rec is not None:
+                errors.append(f"{model} {row['mario_id']}: '{row['scientific_name']}' "
+                              "is a record now, set status to keep")
+            exports[model].append({
+                **{key: row[key] for key in MODEL_LABEL_COLUMNS if key in MODEL_LABEL_EXPORT_COLUMNS},
+                "redirect_mario_id": row["_target"]["mario_id"] if "_target" in row else "",
+                "reason_text": row["note"] or (
+                    f"Duplicate of {row['redirect_to']}"
+                    if row["reason"] == "duplicate" and row["redirect_to"]
+                    else MODEL_LABEL_REASONS.get(row["reason"], "")
+                ),
+                "rename_to": row["scientific_name"] if (
+                    row["status"] in ("keep", "pending")
+                    and row["reason"] not in MODEL_LABEL_NO_RENAME_REASONS
+                    and row["scientific_name"] != row["model_label"]
+                ) else "",
+                "common_name": (rec or {}).get("common_name", ""),
+                "birdnet_id": (rec or {}).get("birdnet_id", ""),
+                "taxon_group": (rec or {}).get("taxon_group") or row["taxon_group"],
+            })
+    if errors:
+        joined = "; ".join(errors[:10])
+        if len(errors) > 10:
+            joined += f"; ... (+{len(errors) - 10} more)"
+        raise ValueError(f"Model label crosswalk: {joined}")
+    return exports
+
+
+def write_model_label_exports(exports: dict[str, list[dict]], out_dir: Path) -> None:
+    """Write one CSV per model to <out_dir>/model_labels/ (atomic).
+
+    These go to the model developer, so they stay out of the release zip.
+    """
+    folder = out_dir / "model_labels"
+    folder.mkdir(parents=True, exist_ok=True)
+    for model, rows in exports.items():
+        path = folder / f"{model}.csv"
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=MODEL_LABEL_EXPORT_COLUMNS, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        counts = Counter(row["status"] for row in rows)
+        print(f"  Model labels: {path} ({len(rows)} labels: "
+              f"{', '.join(f'{n} {status}' for status, n in counts.most_common())})")
+
+
 def is_sound_class_record(record: dict) -> bool:
     return record.get("record_type") == "sound_class"
 
@@ -535,14 +770,13 @@ def clean_common_aliases(values: list[str] | tuple[str, ...] | set[str]) -> list
 
 
 def load_sound_classes() -> dict[str, dict]:
-    """Load configured non-species sound classes collected offline.
+    """Load reviewed non-species sound classes collected offline.
 
-    Cached classes no longer listed under `sound_classes` in config.yml are
+    Cached classes no longer listed in overrides/sound_classes.csv are
     skipped (the collector keeps them in its cache).
     """
     classes = load_json(SOUND_CLASSES_FILE)
-    configured = {str(c.get("name") or "").strip()
-                  for c in load_config().get("sound_classes", []) or []}
+    configured = {row["name"] for row in load_manual_sound_classes()}
     result: dict[str, dict] = {}
     for name, rec in classes.items():
         sci = str(rec.get("scientific_name") or name).strip()
@@ -580,6 +814,9 @@ def load_sound_classes() -> dict[str, dict]:
             ),
             "record_type": "sound_class",
             "wikidata_qid": rec.get("wikidata_qid", ""),
+            "audioset_id": rec.get("audioset_id", ""),
+            "parent": rec.get("parent", ""),
+            "description": rec.get("description", ""),
         }
         result[sci]["common_names"].setdefault("en", sci)
     return result
@@ -637,6 +874,14 @@ def _raw_lookup(data: dict, names: list[str]) -> dict:
         if rec:
             return rec
     return {}
+
+
+def _richest_record(wiki: dict, names: list[str]) -> dict:
+    """The Wikipedia record with the most text among a species' names, so a
+    thin record under a new name never hides a full one under its old name."""
+    records = [wiki[n] for n in names if wiki.get(n)]
+    return max(records, key=lambda r: len(r.get("extract") or "") + sum(
+        len(t) for t in (r.get("extracts") or {}).values()), default={})
 
 
 def _own_aliases(sci: str, taxonomy: dict, names: list[str]) -> list[str]:
@@ -961,17 +1206,22 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
                    allowed_groups: set[str] | None = None,
                    avilist_subspecies: dict[tuple[str, str], set[str]] | None = None,
                    bird_splits: dict[str, str] | None = None,
+                   priority_only_groups: set[str] | None = None,
+                   priority_only_species: set[str] | None = None,
                    ) -> tuple[dict, dict]:
     """Cross-reference iNat, AviList, Wikidata, and eBird to build a taxonomy.
 
     All data is read from pre-collected JSON files — no API calls.
     If allowed_groups is provided, only species in those taxon groups are
-    included (plus AviList-only birds when "Aves" is allowed).
+    included (plus AviList-only birds when "Aves" is allowed). Groups in
+    priority_only_groups keep only priority_only_species.
     Returns (taxonomy_dict, stats_dict).
     """
     taxonomy: dict[str, dict] = {}
     avilist_subspecies = avilist_subspecies or {}
     bird_splits = bird_splits or {}
+    priority_only_groups = priority_only_groups or set()
+    priority_only_species = priority_only_species or set()
 
     avi_by_sci = {row["scientific_name"]: row for row in avilist_rows}
     for sci, parent in bird_splits.items():
@@ -1015,14 +1265,24 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     # Pass 0: taxa iNat has retired (swaps/merges). Their names become
     # aliases of the replacement taxon instead of duplicate species.
     retired_names: dict[int, list[str]] = {}
+    split_names: set[str] = set()
     for key, rec in inat.items():
         if rec.get("inat_id") is None or rec.get("is_active", True):
             continue
         stats["excluded_inactive"] += 1
-        for tid in rec.get("current_synonymous_taxon_ids") or []:
+        replacements = rec.get("current_synonymous_taxon_ids") or []
+        if len(replacements) > 1:
+            split_names.update(n for n in (key, rec.get("inat_name")) if n)
+        for tid in replacements:
             retired_names.setdefault(tid, []).extend(
                 n for n in (key, rec.get("inat_name")) if n
             )
+
+    def retired_source_names(inat_id: int, name: str) -> list[str]:
+        """Retired names whose raw data belongs to this species. After a split
+        that is only the species keeping the epithet."""
+        return [n for n in retired_names.get(inat_id, [])
+                if n not in split_names or same_epithet_stem(n.split()[-1], name.split()[-1])]
 
     # Pass 1: resolve active iNat species to canonical names. Birds resolve to
     # their AviList species (AviList is the bird authority); several iNat
@@ -1031,7 +1291,9 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     split_claims: dict[str, list[tuple]] = {}
     other_claims: dict[str, list[tuple]] = {}
     for key, rec in inat.items():
-        if rec.get("inat_id") is None or not rec.get("is_active", True):
+        # Reviewed priority species can lack an iNat taxon.
+        if ((rec.get("inat_id") is None and not rec.get("priority_source"))
+                or not rec.get("is_active", True)):
             continue
         name = rec.get("inat_name") or key
         if not is_full_species_name(name):
@@ -1045,7 +1307,10 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
         if allowed_groups and rec.get("taxon_group") not in allowed_groups:
             stats["excluded_group"] += 1
             continue
-        claim = (-(rec.get("observations_count") or 0), rec["inat_id"], key)
+        if rec.get("taxon_group") in priority_only_groups and key not in priority_only_species:
+            stats["excluded_group"] += 1
+            continue
+        claim = (-(rec.get("observations_count") or 0), rec["inat_id"] or 0, key)
         if rec.get("taxon_group") != "Aves":
             other_claims.setdefault(name, []).append(claim)
             continue
@@ -1086,6 +1351,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             if other_key != key:
                 aliases.extend(claim_names(other_key))
             aliases.extend(retired_names.get(inat_id, []))
+            source_names.extend(retired_source_names(inat_id, target))
         avilist_en = avi_row["common_name_avilist"] or avi_row["common_name_clements"]
         clements_en = avi_row["common_name_clements"]
         pref_name = avilist_en or rec.get("preferred_common_name", "")
@@ -1121,6 +1387,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             if other_key != key:
                 aliases.extend(claim_names(other_key))
             aliases.extend(retired_names.get(inat_id, []))
+            source_names.extend(retired_source_names(inat_id, sci))
         # No AviList English name exists for a lumped taxon: use eBird's
         # (Clements) name for the same scientific name, else iNat's.
         ebird_en = next((ebird_tax[c].get("common_name", "") for c in ebird_by_sci.get(sci, [])
@@ -1160,6 +1427,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             if other_key != key:
                 aliases.extend(claim_names(other_key))
             aliases.extend(retired_names.get(inat_id, []))
+            source_names.extend(retired_source_names(inat_id, name))
         common_names = _inat_common_names(rec)
         taxonomy[name] = _new_entry(
             inat_id=rec["inat_id"],
@@ -1170,6 +1438,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             common_names=common_names,
             common_name_sources={loc: "inat" for loc in common_names},
             observations_count=rec.get("observations_count", 0),
+            gbif_id=str(rec.get("priority_gbif_id") or ""),
             match_source="non_bird",
             english_names=rec.get("english_names", []),
             source_names=source_names,
@@ -1243,6 +1512,12 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             entry["scientific_name_aliases"] = _own_aliases(
                 sci, taxonomy, [*entry["scientific_name_aliases"], *wd.get("aliases", [])]
             )
+    # A reviewed alias outranks synonym sources, which can follow one half of a split.
+    manual_owners = {a: sci for sci, names in manual_aliases.items() for a in names}
+    for sci, entry in taxonomy.items():
+        entry["scientific_name_aliases"] = [
+            a for a in entry["scientific_name_aliases"] if manual_owners.get(a, sci) == sci
+        ]
 
     # Pass 3c: Xeno-Canto names, validated against every other species' names
     xc_data = load_json(XC_DATA_FILE)
@@ -1708,6 +1983,7 @@ def _metadata_quality(record: dict) -> tuple[int, list[str], int]:
 def _apply_metadata_quality_filter(
     records: list[dict],
     quality_cfg: dict | None,
+    model_species: set[str] | None = None,
 ) -> list[dict]:
     if not (quality_cfg or {}).get("enabled", False):
         return records
@@ -1719,6 +1995,7 @@ def _apply_metadata_quality_filter(
     }
     drop_thin = bool(quality_cfg.get("drop_if_missing_image_and_description", False))
     keep_groups = {str(g) for g in quality_cfg.get("keep_groups", []) or []}
+    keep_species = (model_species or set()) if quality_cfg.get("keep_model_labels", False) else set()
     max_thin_external_ids = int(
         quality_cfg.get("max_external_ids_for_thin_records", 1) or 0
     )
@@ -1750,13 +2027,15 @@ def _apply_metadata_quality_filter(
 
         reasons: list[str] = []
         threshold = group_min_scores.get(str(record.get("taxon_group") or ""), min_score)
-        if record.get("taxon_group") in keep_groups:
+        always_keep = (record.get("taxon_group") in keep_groups
+                       or record.get("scientific_name") in keep_species)
+        if always_keep:
             threshold = 0
         elif threshold and score < threshold:
             reasons.append(f"score_below_{threshold}")
         if (
             drop_thin
-            and record.get("taxon_group") not in keep_groups
+            and not always_keep
             and "missing_image" in flags
             and "missing_english_description" in flags
             and external_id_count <= max_thin_external_ids
@@ -1817,19 +2096,136 @@ ID_FORMATS = {
 _BINOMIAL_SHAPE_RE = re.compile(r"[A-Z][a-z]+ [a-z][a-z-]+")
 # Localized "names" that are file names, catalogue numbers, or carry a
 # disambiguation number ("कालो धनेश २") (Wikidata labels).
-_JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}|\s\d+$", re.IGNORECASE)
+_JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}|\s\d+$|\bspp?\.(?:$|\s)", re.IGNORECASE)
 _SMALL_WORDS = {"a", "an", "and", "of", "the", "in", "on", "or", "de", "del", "des", "du", "la", "le",
                 "el", "al", "von", "van", "der", "den", "di", "da", "do", "dos", "das", "y"}
 
 
+def _foreign_script_name(loc: str, name: str, sound_class: bool) -> bool:
+    """A sound class label left in Latin script, or a Latin word inside an
+    Arabic or Hebrew name, is an untranslated fragment."""
+    primary = re.split(r"[-_]", loc)[0]
+    if primary in ("ar", "fa", "he") and re.search(r"[A-Za-z]", name):
+        return True
+    return sound_class and primary in NON_LATIN_LOCALES and bool(_LATIN_ONLY_RE.fullmatch(name.strip()))
+
+
+def _name_key(name: str) -> str:
+    """Compare display names ignoring case, spaces and hyphens, so "Tree Frog"
+    and "Treefrog" count as one name."""
+    return re.sub(r"[\s-]", "", name).lower()
+
+
 def _title_case(name: str) -> str:
     """AviList-style capitalisation for English names ("chestnut short-tailed
-    bat" → "Chestnut Short-tailed Bat"); never lowercases a letter."""
+    bat" → "Chestnut Short-tailed Bat"), with "13-year" in lower case."""
     words = name.split(" ")
-    return " ".join(
+    titled = " ".join(
         w if (i and w in _SMALL_WORDS) else w[:1].upper() + w[1:]
         for i, w in enumerate(words)
     )
+    return re.sub(r"(?<=\d-)[A-Z]", lambda m: m.group().lower(), titled)
+
+
+# Openings of a genus article in the main description languages.
+_GENUS_TEXT_RE = re.compile(
+    r"^[^.\n]{0,70}(?:\b(?:is|are) a genus of\b|\bist eine (?:\w+ )?Gattung\b"
+    r"|\best un genre\b|\bes un género\b|\bè un genere\b|\bé um género\b|\bé um gênero\b"
+    r"|\bis een geslacht\b|\bär ett (?:\w+ )?släkte\b|\b(?:on|ovat) [^.\n]{0,40}\bsuku\b"
+    r"|\bто род\b|— род\b|下的一个属|属の総称|\bjest rodzajem\b|\bje rod\b|\bbir cinsidir\b)",
+)
+
+
+def _apply_description_replacements(records: list[dict], overrides: list[dict]) -> int:
+    """Apply reviewed text fixes. A fix that no longer matches fails the build,
+    so it cannot silently stop working."""
+    by_name = {rec["scientific_name"]: rec for rec in records}
+    applied = 0
+    for row in overrides:
+        rec = by_name.get(row["scientific_name"])
+        if row["action"] != "replace" or not rec or row["locale"] not in rec["descriptions"]:
+            continue
+        text = rec["descriptions"][row["locale"]]
+        if row["find"] not in text and row["replace"] not in text:
+            raise ValueError(f"Description override no longer matches: {row['scientific_name']} "
+                             f"[{row['locale']}]: {row['find']!r}")
+        rec["descriptions"][row["locale"]] = text.replace(row["find"], row["replace"])
+        applied += 1
+    return applied
+
+
+def _drop_description(rec: dict, loc: str) -> None:
+    """Remove one locale's description and everything that points at it."""
+    rec["descriptions"].pop(loc, None)
+    rec["description_sources"].pop(loc, None)
+    rec["wikipedia_urls"].pop(loc, None)
+    if loc in rec.get("translate_locales", []):
+        rec["translate_locales"].remove(loc)
+
+
+def _drop_misplaced_texts(records: list[dict]) -> int:
+    """Drop texts that do not belong on one species record.
+
+    A genus article on a species of a genus with several species is not about
+    that species, and translations of it go too. A text shared by several
+    species stays with those it names. LLM text needs a Wikipedia article to
+    credit, since the license requires it.
+    """
+    species = [r for r in records if not is_sound_class_record(r)]
+    genus_size = Counter(r["scientific_name"].split()[0] for r in species)
+    shared: dict[tuple[str, str], list[dict]] = {}
+    dropped = 0
+    for rec in species:
+        multiple = genus_size[rec["scientific_name"].split()[0]] > 1
+        for loc, text in list(rec["descriptions"].items()):
+            if multiple and _GENUS_TEXT_RE.search(text[:160]):
+                translations = [
+                    other for other, src in rec["description_sources"].items()
+                    if loc == "en" and other != "en" and src == "llm"
+                ] if rec["description_sources"].get(loc) else []
+                for gone in (loc, *translations):
+                    _drop_description(rec, gone)
+                    dropped += 1
+            elif loc in rec["descriptions"]:
+                shared.setdefault((loc, text), []).append(rec)
+    for (loc, text), group in shared.items():
+        if len(group) < 2:
+            continue
+        named = [r for r in group if contains_species_identity(
+            text, [r["scientific_name"], *r.get("scientific_name_aliases", [])])]
+        for rec in group if named else []:
+            if rec not in named:
+                _drop_description(rec, loc)
+                dropped += 1
+    for rec in species:
+        if not rec["wikipedia_urls"]:
+            for loc, src in list(rec["description_sources"].items()):
+                if src.startswith("llm"):
+                    _drop_description(rec, loc)
+                    dropped += 1
+        sources = rec["description_sources"]
+        rec["description_source"] = sources.get("en") or next(iter(sources.values()), "")
+    return dropped
+
+
+def _mark_low_resource(records: list[dict]) -> int:
+    """Mark records without a real image or English description.
+
+    A sound class needs only an image. A record
+    without a real image gets proxy URLs, which serve the dummy image.
+    """
+    image_prefix = image_url_prefix()
+    for rec in records:
+        has_image = bool(rec.get("image"))
+        has_text = is_sound_class_record(rec) or bool((rec.get("descriptions") or {}).get("en"))
+        rec["low_resource"] = not (has_image and has_text)
+        if not has_image:
+            encoded_sci = quote(rec["scientific_name"], safe="")
+            rec["image"] = {
+                "thumb": f"{image_prefix}/api/image/{encoded_sci}?size=thumb",
+                "medium": f"{image_prefix}/api/image/{encoded_sci}?size=medium",
+            }
+    return sum(rec["low_resource"] for rec in records)
 
 
 def _dedupe_images(records: list[dict]) -> int:
@@ -1897,8 +2293,9 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
     for rec in records:
         if rec.get("record_type") == "sound_class" or rec["common_name"] == rec["scientific_name"]:
             continue
-        groups.setdefault(rec["common_name"].lower(), []).append(rec)
-    used = {rec["common_name"].lower() for rec in records}
+        groups.setdefault(_name_key(rec["common_name"]), []).append(rec)
+    used = {_name_key(rec["common_name"]) for rec in records}
+    genera = {rec["scientific_name"].split()[0] for rec in records}  # "Litoria Genimaculata"
     renamed = 0
     for name, group in groups.items():
         if len(group) < 2:
@@ -1913,12 +2310,14 @@ def _resolve_display_name_collisions(records: list[dict], taxonomy: dict) -> int
             inat_names = taxonomy.get(sci, {}).get("english_names", [])
             names = attested[sci] + [_title_case(n) for n in inat_names]
             candidates[sci] = [n for n in names if is_clean_common_name(n)]
+        shared = group[0]["common_name"].lower()
         # Spelling variants ("Northern Freetail Bat") count as the shared name.
         def variant(n: str) -> bool:
-            return difflib.SequenceMatcher(None, n.lower(), name).ratio() >= 0.9
+            return difflib.SequenceMatcher(None, n.lower(), shared).ratio() >= 0.9
 
         def unused(sci: str) -> list[str]:
-            return [n for n in candidates[sci] if n.lower() not in used and not variant(n)]
+            return [n for n in candidates[sci] if _name_key(n) not in used and not variant(n)
+                    and not (len(n.split()) == 2 and n.split()[0] in genera)]
 
         group.sort(key=lambda r: (
             r.get("taxon_group") != "Aves",
@@ -2033,14 +2432,17 @@ def _align_llm_species_names(records: list[dict]) -> int:
     return changed
 
 
-def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
+def build_metadata(taxonomy: dict, wiki: dict,
                    translate: dict = None,
                    manual_overrides: dict | None = None,
                    manual_aliases: dict[str, list[str]] | None = None,
                    reassign_ids: bool = False,
                    quality_cfg: dict | None = None,
                    avicommons: dict[str, dict] | None = None,
-                   manual_common_aliases: dict[str, list[str]] | None = None) -> list[dict]:
+                   manual_common_aliases: dict[str, list[str]] | None = None,
+                   model_species: set[str] | None = None,
+                   redirects: dict[str, str] | None = None,
+                   description_overrides: list[dict] | None = None) -> list[dict]:
     """Merge taxonomy + raw sources into final species records.
 
     Each record:
@@ -2073,6 +2475,8 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         avicommons = {}
     if manual_common_aliases is None:
         manual_common_aliases = {}
+    if redirects is None:
+        redirects = {}
 
     image_prefix = image_url_prefix()
     min_english_words = int(load_config().get("descriptions", {}).get("min_english_words", 40))
@@ -2084,7 +2488,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
     # it names first (the others are usually splits linking the parent).
     article_claims: dict[str, list[tuple[int, str]]] = {}
     for sci, tax in taxonomy.items():
-        wp = _raw_lookup(wiki, _entry_names(sci, tax))
+        wp = _richest_record(wiki, _entry_names(sci, tax))
         url = (wp.get("wikipedia_urls") or {}).get("en")
         text = (wp.get("extract") or "").lower()
         if url and text:
@@ -2092,14 +2496,6 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             positions = [p for p in positions if p >= 0]
             article_claims.setdefault(url, []).append((min(positions) if positions else 10**9, sci))
     article_owner = {url: min(claims)[1] for url, claims in article_claims.items() if len(claims) > 1}
-    # eBird pages are scraped per code; a code is the stable link even when
-    # the scientific name the page was fetched under has changed.
-    ebird_by_code: dict[str, dict] = {}
-    for rec in ebird.values():
-        code = rec.get("ebird_code")
-        if code and (rec.get("description") or code not in ebird_by_code):
-            ebird_by_code[code] = rec
-
     for sci_name, tax in taxonomy.items():
         if is_sound_class_record(tax):
             if not is_clean_sound_class_name(sci_name):
@@ -2107,8 +2503,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         elif not is_clean_scientific_name(sci_name):
             continue
         names = _entry_names(sci_name, tax)
-        wp = _raw_lookup(wiki, names)
-        eb = ebird_by_code.get(tax.get("ebird_code", ""), {})
+        wp = _richest_record(wiki, names)
         cl = _raw_lookup(translate, names)
         identity_names = clean_aliases([
             *names, *tax.get("scientific_name_aliases", []), *tax.get("xc_aliases", []),
@@ -2129,7 +2524,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             wrong_article += 1
 
         # Descriptions: locale → text.
-        # Base layer: Wikipedia (multi-locale) or eBird (English-only).
+        # Base layer: Wikipedia (multi-locale).
         # Claude overlay: replaces only the locales it provides.
         descriptions: dict[str, str] = {}
         description_sources: dict[str, str] = {}
@@ -2170,11 +2565,6 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                 # Wikipedia's canonical form writes spaces as underscores.
                 wikipedia_urls[loc] = url.replace("%20", "_").replace(" ", "_")
 
-        if (not descriptions.get("en") and eb.get("description")
-                and not EBIRD_BOILERPLATE.match(eb["description"])):
-            descriptions["en"] = eb["description"]
-            description_sources["en"] = "ebird"
-
         # LLM overlay — replace only the locales the LLM provides
         translate_locales: list[str] = []
         cl_extracts = cl.get("extracts", {})
@@ -2192,7 +2582,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             # substantive native text (e.g. an article found later) replaces it.
             if loc in fallback_locales and word_count(native) >= min_english_words:
                 continue
-            text = clean_description_text(text)
+            text = drop_llm_meta_sentences(clean_description_text(text))
             # Guard against malformed locale keys (e.g. an LLM echoing the
             # literal "locale" placeholder from a prompt example).
             if (text and loc in LOCALE_NAMES and not is_disambiguation_text(text)
@@ -2206,6 +2596,10 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
         description_source = description_sources.get("en", "")
         if not description_source and descriptions:
             description_source = next(iter(description_sources.values()), "")
+
+        if tax.get("description"):  # sound classes: AudioSet's own wording
+            descriptions["en"] = tax["description"]
+            description_sources["en"] = description_source = "audioset"
 
         desc_sources[description_source or "none"] += 1
         override = manual_overrides.get(sci_name, {})
@@ -2242,7 +2636,9 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                 for loc, name in (tax.get("common_names", {}) or {}).items()
             )
             if is_clean_common_name(name) and not _JUNK_NAME_RE.search(name)
+            and not _foreign_script_name(loc, name, is_sound_class_record(tax))
         }
+        common_names = {loc: unicodedata.normalize("NFC", n) for loc, n in common_names.items()}
         # The English entry is the display name (none when that falls back to
         # the scientific name: such entries are synonyms or other languages).
         if is_sound_class_record(tax):
@@ -2291,26 +2687,29 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
             "wikipedia_urls": wikipedia_urls,
             "scientific_name_aliases": aliases,
             "image": image,
-            "image_author": image_author,
+            "image_author": _fix_mojibake(html.unescape(html.unescape(image_author))),
             "image_license": image_license,
             "image_source": image_source,
             "image_crop_anchor": override.get("image_crop_anchor"),
             "avicommons_image": None,
             "inat_id": tax.get("inat_id"),
             "ebird_code": tax.get("ebird_code", ""),
-            "gbif_id": tax.get("gbif_id", ""),
+            "gbif_id": override.get("gbif_id") or tax.get("gbif_id", ""),
             "ncbi_id": tax.get("ncbi_id", ""),
             "avibase_id": tax.get("avibase_id", ""),
             "birdlife_id": tax.get("birdlife_id", ""),
             "ml_taxon_code": tax.get("ml_taxon_code", ""),
             "xc_name": tax.get("xc_name", ""),
-            "observationorg_id": tax.get("observationorg_id", ""),
+            "observationorg_id": tax.get("observationorg_id") or None,
             "wikidata_qid": tax.get("wikidata_qid", ""),
             "commonness": None,  # set once the final species set is known
             # iNat observation count: build-internal (quality score and
             # tie-breaks), not published.
             "_observations": tax.get("observations_count", 0),
         }
+        if is_sound_class_record(tax):
+            record["audioset_id"] = tax.get("audioset_id", "")
+            record["parent"] = tax.get("parent", "")
         for field, pattern in ID_FORMATS.items():
             if record.get(field) not in (None, "") and not pattern.fullmatch(str(record[field])):
                 record[field] = ""
@@ -2329,17 +2728,21 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
                 avicommons_rejected.append(f"{av['sci']} ({record['ebird_code']}) ≠ {sci_name}")
         records.append(record)
 
-    records = _apply_metadata_quality_filter(records, quality_cfg)
+    print(f"  Texts dropped: {_drop_misplaced_texts(records)} (genus articles, "
+          "shared texts, LLM text without a source link)")
+    records = _apply_metadata_quality_filter(records, quality_cfg, model_species)
     print(f"  Identifiers dropped for an invalid format: {invalid_ids}")
     print(f"  Images kept on one species only (shared photo): {_dedupe_images(records)} removed")
+    print(f"  Low-resource records: {_mark_low_resource(records)}")
     renamed = _resolve_display_name_collisions(records, taxonomy)
     print(f"  Display names: {renamed} species renamed (name shared with another species)")
-    # A manual common-name alias must not be another species' display name.
+    # A manual common-name alias must not be another species' display name,
+    # unless that record redirects here: its own name wins lookups meanwhile.
     name_owner = {r["common_name"].lower(): r["scientific_name"] for r in records}
     for sci, values in manual_common_aliases.items():
         for alias in values:
             owner = name_owner.get(alias.lower(), sci)
-            if owner != sci:
+            if owner != sci and redirects.get(owner) != sci:
                 raise ValueError(
                     f"{MANUAL_COMMON_ALIASES_FILE}: alias '{alias}' for '{sci}' "
                     f"is the common name of '{owner}'"
@@ -2348,6 +2751,7 @@ def build_metadata(taxonomy: dict, ebird: dict, wiki: dict,
           "(same name on a more-observed species or the article's title species)")
     print(f"  LLM descriptions: {_align_llm_species_names(records)} aligned with the "
           "localized common name")
+    print(f"  Description overrides: {_apply_description_replacements(records, description_overrides or [])}")
 
     # Assign BirdNET species IDs (persistent; ranges per record kind)
     _assign_bn_ids(records, reassign_ids)
@@ -2423,7 +2827,7 @@ def records_to_csv(records: list[dict], locales: list[str] | None = None) -> str
         "observationorg_id", "wikidata_qid",
         "commonness",
         "description_source",
-        "metadata_quality_score", "metadata_quality_flags",
+        "metadata_quality_score", "metadata_quality_flags", "low_resource",
         "image_url",
         "image_author", "image_license", "image_source",
         "avicommons_image_url", "avicommons_image_author", "avicommons_image_license",
@@ -2440,6 +2844,7 @@ def records_to_csv(records: list[dict], locales: list[str] | None = None) -> str
         row["scientific_name_aliases"] = "|".join(rec.get("scientific_name_aliases", []))
         row["common_name_aliases"] = "|".join(rec.get("common_name_aliases", []))
         row["metadata_quality_flags"] = "|".join(rec.get("metadata_quality_flags", []))
+        row["low_resource"] = "1" if rec.get("low_resource") else "0"
         row["image_url"] = (rec.get("image") or {}).get("medium", "")
         av = rec.get("avicommons_image") or {}
         row["avicommons_image_url"] = av.get("medium", "")
@@ -2495,8 +2900,11 @@ def main():
 
         print("\nBuilding taxonomy...")
         allowed_groups = {g["name"] for g in cfg.get("taxon_groups", [])}
+        priority_only_groups = {g["name"] for g in cfg.get("taxon_groups", [])
+                                if g.get("priority_only")}
         taxonomy, stats = build_taxonomy(inat, avilist_rows, allowed_groups,
-                                         avilist_subspecies, load_bird_splits())
+                                         avilist_subspecies, load_bird_splits(),
+                                         priority_only_groups, load_priority_only_species(cfg))
         print_taxonomy_stats(taxonomy, stats)
 
         if not args.dry_run:
@@ -2518,12 +2926,15 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("\nLoading enrichment data...")
-    ebird = load_json(EBIRD_DATA_FILE)
     wiki = load_json(WIKI_DATA_FILE)
+    description_overrides = load_description_overrides()
+    unknown = sorted({r["scientific_name"] for r in description_overrides} - set(taxonomy))
+    if unknown:
+        raise ValueError(f"Description overrides reference unknown species: {', '.join(unknown)}")
+    strip_rejected_articles(wiki, rejected_articles())
     llm_cfg = cfg.get("llm") or cfg.get("claude", {})
     llm_enabled = bool(llm_cfg.get("enabled", False))
     translate = load_json(TRANSLATE_DATA_FILE) if llm_enabled else {}
-    print(f"  eBird:     {len(ebird):>8} species")
     print(f"  Wikipedia: {len(wiki):>8} species")
     avicommons = load_avicommons(cfg)
     print(f"  Avicommons: {len(avicommons):>7} photos")
@@ -2561,11 +2972,19 @@ def main():
         )
     print(f"  Common aliases: {sum(len(v) for v in manual_common_aliases.values()):>4} manual "
           f"common-name aliases ({len(manual_common_aliases)} species)")
+    model_labels = load_model_labels()
+    model_scientific, model_common = model_label_aliases(model_labels, taxonomy)
+    for sci, values in model_scientific.items():
+        manual_aliases[sci] = [*manual_aliases.get(sci, []), *values]
+    for sci, values in model_common.items():
+        manual_common_aliases[sci] = [*manual_common_aliases.get(sci, []), *values]
+    print(f"  Model labels: {len(model_labels)} crosswalks, "
+          f"{sum(len(v) for v in model_scientific.values())} scientific and "
+          f"{sum(len(v) for v in model_common.values())} common-name aliases")
 
     print("\nMerging...")
     records = build_metadata(
         taxonomy,
-        ebird,
         wiki,
         translate,
         manual_overrides,
@@ -2574,7 +2993,12 @@ def main():
         quality_cfg=cfg.get("metadata_quality", {}),
         avicommons=avicommons,
         manual_common_aliases=manual_common_aliases,
+        description_overrides=description_overrides,
+        model_species={row["scientific_name"] for rows in model_labels.values()
+                       for row in rows if row["status"] == "keep"},
+        redirects=model_label_redirects(model_labels),
     )
+    model_exports = model_label_exports(model_labels, records)
 
     print("\nAuditing final metadata...")
     desc_cfg = cfg.get("descriptions", {})
@@ -2610,6 +3034,7 @@ def main():
     os.replace(tmp, csv_path)
     csv_size = csv_path.stat().st_size
     print(f"  CSV:  {csv_path} ({csv_size / 1024 / 1024:.1f} MB)")
+    write_model_label_exports(model_exports, out_dir)
 
     # Zip
     if not args.no_zip:
@@ -2617,6 +3042,7 @@ def main():
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.write(json_path, "species_metadata.json")
             zf.write(csv_path, "species_metadata.csv")
+            zf.write(ROOT / "LICENSE-DATA.md", "LICENSE-DATA.md")
         zip_size = zip_path.stat().st_size
         print(f"  ZIP:  {zip_path} ({zip_size / 1024 / 1024:.1f} MB)")
 

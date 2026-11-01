@@ -62,6 +62,7 @@ def audit_records(records: list[dict[str, Any]],
     alias_conflicts: dict[str, list[str]] = {}
     optional_missing: dict[str, int] = {field: 0 for field in OPTIONAL_ID_FIELDS}
     image_missing = 0
+    low_resource = 0
     groups = Counter()
     desc_sources = Counter()
 
@@ -78,8 +79,11 @@ def audit_records(records: list[dict[str, Any]],
         groups[str(record.get("taxon_group") or "")] += 1
         desc_sources[str(record.get("description_source") or "")] += 1
 
+        # Records marked low_resource are reported, not failed, for missing text.
+        is_low_resource = bool(record.get("low_resource"))
+        low_resource += is_low_resource
         for field in REQUIRED_FIELDS:
-            if not record.get(field):
+            if not record.get(field) and not (is_low_resource and field == "description_source"):
                 missing_required[field].append(rec_id)
 
         descriptions = record.get("descriptions")
@@ -89,7 +93,8 @@ def audit_records(records: list[dict[str, Any]],
         if _is_sound_class(record):
             pass
         elif not english:
-            missing_required["descriptions.en"].append(rec_id)
+            if not is_low_resource:
+                missing_required["descriptions.en"].append(rec_id)
         else:
             words = word_count(english)
             if words < min_english_words:
@@ -143,7 +148,7 @@ def audit_records(records: list[dict[str, Any]],
             common_name_owners[common].append(rec_id)
 
         image = record.get("image")
-        if not (isinstance(image, dict) and (image.get("src") or image.get("medium"))):
+        if not (isinstance(image, dict) and image.get("src")):
             image_missing += 1
 
     for alias, species in alias_to_species.items():
@@ -177,6 +182,7 @@ def audit_records(records: list[dict[str, Any]],
         "duplicate_common_names": duplicate_common_names,
         "optional_missing": optional_missing,
         "image_missing": image_missing,
+        "low_resource": low_resource,
     }
 
 
@@ -244,6 +250,7 @@ def print_report(report: dict[str, Any], sample_limit: int) -> None:
     for field, count in report["optional_missing"].items():
         print(f"  {field}: {count}")
     print(f"  image: {report['image_missing']}")
+    print(f"\nLow-resource records (reported, not failed): {report['low_resource']}")
 
 
 def has_failures(report: dict[str, Any]) -> bool:

@@ -6,8 +6,8 @@ changes so your work matches the project's conventions.
 ## What this project is
 
 A data pipeline that collects, merges, and serves species metadata for **BirdNET+
-Taxonomy**. It covers birds, mammals, insects, reptiles, and amphibians, plus a few
-configured non-species sound classes (e.g. rain, engines). A chain of
+Taxonomy**. It covers birds, mammals, insects, reptiles, amphibians, fish, spiders,
+and crustaceans, plus reviewed non-species sound classes (e.g. rain, engines). A chain of
 **collectors** fetch from external sources into `raw_data/`, a **build** step merges
 everything offline into final metadata, and a **FastAPI web server** browses and
 serves the dataset (HTML UI, REST API, image proxy).
@@ -29,14 +29,15 @@ serves the dataset (HTML UI, REST API, image proxy).
 - **The build step is purely offline.** `build/metadata.py` must not make network
   calls. It only merges data already present in `raw_data/`.
 - **Species only, with canonical names.** The pipeline tracks binomial species,
-  not genera, higher ranks, subspecies, or hybrids. Subspecies are folded into
+  not genera, higher ranks, subspecies, or hybrids. Hybrid-origin taxa that iNaturalist lists as species
+  (*Pelophylax esculentus*, *P. grafi*) are a reviewed exception. Subspecies are folded into
   their top-level species for now. Use the shared binomial-name filter in
   `collectors/_common.py`; do not reinvent name validation. Final scientific and
   common names must be canonical display names only: no parenthetical qualifiers,
   bracketed notes, slashes, symbols, or informal annotations. Regular spaces,
   apostrophes, and dashes/hyphens are fine when they are part of the accepted
-  name. The only non-species records are the sound classes configured under
-  `sound_classes` in `config.yml` (`record_type: sound_class`).
+  name. The only non-species records are the sound classes listed in
+  `overrides/sound_classes.csv` (`record_type: sound_class`).
 
 ## Pipeline order
 
@@ -47,7 +48,7 @@ Collectors depend on earlier output, so order matters:
 10. Sound Classes → 11. LLM Translation (optional) → 12. Build → 13. Images (optional)
 
 Steps 1–2 establish taxonomy; 3–8 enrich and cross-reference; 9 downloads the
-Avicommons bird photo index; 10 collects the configured sound classes; 11
+Avicommons bird photo index; 10 collects the reviewed sound classes; 11
 optionally fills description gaps via LLM (Gemini/OpenAI/Anthropic); 12 merges
 everything (and writes `raw_data/taxonomy.json`, which later collector runs use);
 13 generates images for the built species list.
@@ -55,9 +56,11 @@ everything (and writes `raw_data/taxonomy.json`, which later collector runs use)
 ## Taxon groups
 
 - Active groups are defined in `config.yml` under `taxon_groups`: **Aves, Mammalia,
-  Insecta, Reptilia, Amphibia**. Birds include all species (AviList authority);
-  other groups are limited to species with sound observations on iNaturalist above a
-  `min_observations` threshold.
+  Insecta, Reptilia, Amphibia, Actinopterygii, Chondrichthyes, Arachnida,
+  Malacostraca**. Birds include all
+  species (AviList authority); other groups are limited to species with sound
+  observations on iNaturalist above a `min_observations` threshold. Groups marked
+  `priority_only` hold only the species in `overrides/priority_species.csv`.
 - Disabled groups are kept as comments in `config.yml`; their cached data is retained
   but excluded from builds via the `allowed_groups` filter in `build_taxonomy()`.
 - **AviList is the authority** for bird taxonomy and English common names. The
@@ -86,8 +89,34 @@ everything (and writes `raw_data/taxonomy.json`, which later collector runs use)
 - If any image field (`image_url`, `image_author`, `image_license`, `image_source`)
   is set, **all four are required**.
 - `image_crop_anchor` is an optional `1`–`9` 3×3 grid position that bypasses smart
-  crop. Build validation is strict and fails on duplicate rows, partial image
-  overrides, invalid anchors, or unknown species.
+  crop. `gbif_id` is an optional replacement for a wrong GBIF key. Build validation
+  is strict and fails on duplicate rows, partial image overrides, invalid anchors,
+  or unknown species.
+
+## Persistent fixes
+
+`raw_data/` is a cache and stays out of git, so a fix made there is lost on the next crawl.
+Every data fix must live in a tracked file that the collectors and the build obey:
+`overrides/` for reviewed values, or a rule in the code. Never hand-edit `raw_data/` as the
+only copy of a fix.
+
+- `overrides/description_overrides.csv`: `reject_article` removes a Wikipedia article for
+  the collector, the translator and the build. `replace` is a literal text fix, and the
+  build fails if it stops matching. Articles that fail the identity check are removed
+  automatically and need no row.
+- `overrides/species_overrides.csv`: images, crop anchors, and `gbif_id`.
+- `overrides/priority_species.csv`: a row's `inat_id` wins over any cached record.
+
+## Model labels
+
+- `overrides/model_labels/<model>.csv` maps each audio model output onto the taxonomy.
+  Base species names never change to fit a label; model names become aliases.
+- `redirect_to` names the label another should merge into, and generates a one-way
+  alias. Set it only if the target is a surviving label with training samples.
+- Keep the taxonomy lean. Duplicate, sketchy, or useless labels stay out, with status
+  `remove` and a `reason`. The exported CSV tells the model developer what to prune and
+  why, and which labels to rename. That detail never goes on taxonomy records, in the
+  release zip, or in the API.
 
 ## Images
 
@@ -109,21 +138,59 @@ everything (and writes `raw_data/taxonomy.json`, which later collector runs use)
   `HOST_NAME` (both from `.env`). Template/site links are root-path-relative; image
   URLs are absolute. Keep species and image URLs URL-encoded.
 
+## Privacy
+
+- Visitors' browsers talk only to our server. Bundle fonts, scripts, and styles in
+  `web/static/` and reach external resources through the server; external URLs are plain
+  links. The `Content-Security-Policy` in `web/server.py` enforces this: never loosen it
+  to allow another host.
+- Logs go to the console only, with no IP address, user agent, or query string. Never write
+  them to disk.
+- The footer links the main BirdNET privacy policy and legal notice. Do not add a separate
+  statement.
+
 ## Repository hygiene
 
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`
   and the files in `overrides/` (`species_overrides.csv`, `species_aliases.csv`,
-  `common_name_aliases.csv`, `bird_splits.csv`, `priority_species.csv`) are
-  git-tracked and meaningful.
+  `common_name_aliases.csv`, `bird_splits.csv`, `priority_species.csv`,
+  `sound_classes.csv`, `description_overrides.csv`, `model_labels/`) are git-tracked and
+  meaningful.
 - Secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.)
   live in `.env`, never in `config.yml` or source.
   `utils/llm.py` auto-detects which LLM key is present and uses it.
 
+## Version bumps
+
+`taxonomy.version` in `config.yml` is the source of the version, and the website reads it
+from there. A bump must update every hardcoded mention in the same change, then grep for
+the old version to confirm none is left:
+
+- `README.md`: the current version
+- `LICENSE-DATA.md`: the credit example
+- `docs/taxonomy.md`, `docs/pipeline.md`, `docs/metadata.md`: the current version, and the
+  last ID reassignment if IDs changed
+
+## Licensing
+
+- Code is MIT (`LICENSE`). The CSV and JSON data are CC BY-SA 4.0 (`LICENSE-DATA.md`).
+  Images are excluded and keep their own licenses.
+- Published text must be compatible with CC BY-SA 4.0. eBird descriptions are not, so
+  they are never published. Check a new text source's license before using it.
+
 ## Documentation rule
 
 When you change environment variables, metadata fields, API behavior, image handling,
-CLI flags, or contributor workflow, update **`README.md`** (and `CONTRIBUTING.md` where
-relevant) in the same change. Keep the docs consistent with the code.
+CLI flags, or contributor workflow, update the matching file in **`docs/`** (and
+`CONTRIBUTING.md` where relevant) in the same change. Keep the docs consistent with the
+code. `README.md` stays lean, with the overview and quick start only; detail and
+reasoning go in `docs/`:
+
+- `docs/pipeline.md`: collectors, flags, build, images, project layout
+- `docs/taxonomy.md`: taxon groups and selection rules
+- `docs/metadata.md`: output fields, quality filter, BirdNET IDs
+- `docs/model-labels.md`: audio model crosswalks
+- `docs/web-api.md`: web server, deployment, API
 
 ## Working style
 

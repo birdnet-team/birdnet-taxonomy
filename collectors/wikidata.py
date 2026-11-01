@@ -629,7 +629,7 @@ def _load_species_list(cfg: dict) -> dict[str, int | None]:
             inat_id = rec.get("inat_id")
             if not rec.get("is_active", True):
                 continue  # taxon retired on iNat; the build drops it
-            if inat_id is not None and is_full_species_name(sci):
+            if is_full_species_name(sci):  # reviewed species can lack an iNat taxon
                 species[sci] = inat_id
 
     # From AviList CSV (adds species not in iNat)

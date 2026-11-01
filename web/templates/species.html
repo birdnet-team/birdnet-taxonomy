@@ -52,7 +52,6 @@
     }
     .species-info .desc-source.src-claude { background: #d4edda; color: #155724; }
     .species-info .desc-source.src-wikipedia { background: #cce5ff; color: #004085; }
-    .species-info .desc-source.src-ebird { background: #fff3cd; color: #856404; }
 
     .info-table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
     .info-table td {
@@ -229,11 +228,7 @@
 {# Locale-specific common name (falls back to English) #}
 {% set display_common = (s.common_names or {}).get(lang, s.common_name) if lang else s.common_name %}
 
-<p style="margin-bottom: 1rem;"><a href="{{ base }}/" id="backLink">&larr; Back to browse</a></p>
-<script>{
-    const u = sessionStorage.getItem('browseUrl');
-    if (u) document.getElementById('backLink').href = u;
-}</script>
+<p style="margin-bottom: 1rem;"><a href="{{ base }}/" onclick="if (document.referrer.startsWith(location.origin + '{{ base }}/') && !document.referrer.includes('/species/')) { history.back(); return false; }">&larr; Back to browse</a></p>
 
 <div class="species-header">
     <div class="species-photo">
@@ -302,8 +297,6 @@
         {% else %}
         <span class="desc-source src-wikipedia">wikipedia</span>
         {% endif %}
-        {% elif primary_source == 'ebird' and s.ebird_code %}
-        <a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank" class="desc-source src-ebird" style="text-decoration:none">ebird</a>
         {% endif %}
         {% if lang and lang != 'en' %}
         {% if desc_active %}
@@ -329,8 +322,6 @@
             <span class="desc-source src-claude">claude</span>
             {% elif wiki_urls.get(desc_lang) %}
             <a href="{{ wiki_urls[desc_lang] }}" target="_blank" class="desc-source src-wikipedia" style="text-decoration:none">wikipedia</a>
-            {% elif t_source == 'ebird' and s.ebird_code %}
-            <a href="https://ebird.org/species/{{ s.ebird_code }}" target="_blank" class="desc-source src-ebird" style="text-decoration:none">ebird</a>
             {% endif %}
         </summary>
         <div class="trans-text">{{ text }}</div>

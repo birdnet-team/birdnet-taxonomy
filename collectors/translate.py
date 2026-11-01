@@ -29,7 +29,7 @@ from tqdm import tqdm
 from config import load_config, LOCALE_NAMES
 from collectors._common import (
     ROOT, RAW_DIR, setup_shutdown, is_shutting_down,
-    load_json, save_json,
+    load_json, rejected_articles, save_json, strip_rejected_articles,
 )
 from utils.description_quality import (
     clean_description_text, is_disambiguation_text, names_other_species,
@@ -496,6 +496,8 @@ def main() -> None:
                         help="Only translate locales without any text (leave native stubs)")
     parser.add_argument("--retranslate-stale", action="store_true",
                         help="Also redo LLM translations made from an older English source")
+    parser.add_argument("--species-file", default="",
+                        help="Only process the species in this file, one name per line")
     parser.add_argument(
         "--provider", default="",
         choices=provider_choices,
@@ -546,6 +548,11 @@ def main() -> None:
                            for loc, t in rec.get("extracts", {}).items() if t and loc in known}
     if not wiki:
         raise SystemExit("ERROR: wikipedia_data.json not found. Run collectors/wikipedia.py first.")
+    strip_rejected_articles(wiki, rejected_articles())
+    if args.species_file:
+        with open(args.species_file, encoding="utf-8") as fh:
+            selected = {line.strip() for line in fh if line.strip()}
+        wiki = {sci: rec for sci, rec in wiki.items() if sci in selected}
 
     existing = _load_existing_outputs()
 
@@ -633,9 +640,9 @@ def main() -> None:
             if not en_text:
                 needs_fallback.append((sci, sources))
             elif (_word_count(en_text) < min_english
-                    and max(map(_word_count, sources.values())) >= max(min_english, 2 * _word_count(en_text))):
-                # English stub, but a much richer article in another language:
-                # write English from both (sourced facts only).
+                    and sum(map(_word_count, sources.values())) >= max(min_english, 2 * _word_count(en_text))):
+                # English stub, but much more text in other languages:
+                # write English from all of them (sourced facts only).
                 needs_fallback.append((sci, {"en": en_text, **sources}))
 
     if args.limit:

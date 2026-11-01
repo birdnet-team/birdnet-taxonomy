@@ -11,6 +11,7 @@ Provides common infrastructure used by all collectors and build steps:
 
 import hashlib
 import csv
+from urllib.parse import unquote
 import json
 import os
 import re
@@ -26,6 +27,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw_data"
 MANUAL_ALIASES_FILE = ROOT / "overrides" / "species_aliases.csv"
+DESCRIPTION_OVERRIDES_FILE = ROOT / "overrides" / "description_overrides.csv"
+MANUAL_SOUND_CLASSES_FILE = ROOT / "overrides" / "sound_classes.csv"
 
 USER_AGENT = "BirdNET Species Metadata Crawler (https://github.com/birdnet-team/birdnet-taxonomy)"
 
@@ -106,7 +109,7 @@ def save_json(data, path: Path):
 
 
 _FULL_SPECIES_NAME_RE = re.compile(r"^[A-Z][A-Za-z.-]+ [a-z][A-Za-z.-]+$")
-_BAD_DISPLAY_NAME_CHARS_RE = re.compile(r"[\(\)\[\]\{\}/\\<>|]")
+_BAD_DISPLAY_NAME_CHARS_RE = re.compile(r"[\(\)\[\]\{\}/\\<>|=（）［］／＝]")
 
 
 def is_full_species_name(name: str) -> bool:
@@ -117,7 +120,7 @@ def is_full_species_name(name: str) -> bool:
 def is_clean_scientific_name(name: str) -> bool:
     """Return True for final scientific names allowed in metadata."""
     clean = (name or "").strip()
-    if not clean or _BAD_DISPLAY_NAME_CHARS_RE.search(clean):
+    if not clean or "." in clean or _BAD_DISPLAY_NAME_CHARS_RE.search(clean):
         return False
     return is_full_species_name(clean)
 
@@ -257,6 +260,86 @@ def shared_id_species(existing: dict, field: str) -> set[str]:
         if value not in (None, ""):
             owners.setdefault(str(value), []).append(sci)
     return {sci for names in owners.values() if len(names) > 1 for sci in names}
+
+
+def load_manual_sound_classes() -> list[dict]:
+    """Load the reviewed non-species sound classes.
+
+    `aliases` and `scientific_aliases` are `|`-separated in the CSV.
+    """
+    rows: list[dict] = []
+    with MANUAL_SOUND_CLASSES_FILE.open(encoding="utf-8", newline="") as f:
+        for line_no, raw in enumerate(csv.DictReader(f), start=2):
+            row = {key: (value or "").strip() for key, value in raw.items()}
+            if not row.get("name") or not row.get("group"):
+                raise ValueError(
+                    f"{MANUAL_SOUND_CLASSES_FILE}: line {line_no}: name and group are required"
+                )
+            if not is_clean_common_name(row["name"]):
+                raise ValueError(
+                    f"{MANUAL_SOUND_CLASSES_FILE}: line {line_no}: invalid name '{row['name']}'"
+                )
+            for field in ("aliases", "scientific_aliases"):
+                row[field] = [value for value in row.get(field, "").split("|") if value]
+            rows.append(row)
+    return rows
+
+
+def load_description_overrides() -> list[dict]:
+    """Load reviewed description fixes, which survive any crawl or rebuild.
+
+    reject_article: a Wikipedia article is not about this species. With find
+    set, only the article of that title; otherwise any article in the locale.
+    replace: a literal text fix in the published description.
+    """
+    if not DESCRIPTION_OVERRIDES_FILE.exists():
+        return []
+    rows: list[dict] = []
+    seen: set[tuple] = set()
+    with DESCRIPTION_OVERRIDES_FILE.open(encoding="utf-8", newline="") as f:
+        for line_no, row in enumerate(csv.DictReader(f), start=2):
+            row = {k: (v or "").strip() for k, v in row.items()}
+            key = (row["scientific_name"], row["locale"], row["action"], row["find"])
+            if row["action"] not in ("reject_article", "replace"):
+                raise ValueError(f"{DESCRIPTION_OVERRIDES_FILE}: line {line_no}: "
+                                 f"unknown action '{row['action']}'")
+            if not row["scientific_name"] or not row["locale"]:
+                raise ValueError(f"{DESCRIPTION_OVERRIDES_FILE}: line {line_no}: "
+                                 "scientific_name and locale are required")
+            if row["action"] == "replace" and not row["find"]:
+                raise ValueError(f"{DESCRIPTION_OVERRIDES_FILE}: line {line_no}: "
+                                 "replace needs find")
+            if key in seen:
+                raise ValueError(f"{DESCRIPTION_OVERRIDES_FILE}: line {line_no}: duplicate row")
+            seen.add(key)
+            rows.append(row)
+    return rows
+
+
+def rejected_articles() -> dict[str, dict[str, str]]:
+    """Species → locale → rejected article title ("" for any article)."""
+    rejected: dict[str, dict[str, str]] = {}
+    for row in load_description_overrides():
+        if row["action"] == "reject_article":
+            rejected.setdefault(row["scientific_name"], {})[row["locale"]] = row["find"]
+    return rejected
+
+
+def strip_rejected_articles(wiki: dict, rejected: dict[str, dict[str, str]]) -> None:
+    """Remove rejected articles from Wikipedia data, in place."""
+    for sci, locales in rejected.items():
+        rec = wiki.get(sci)
+        if not rec:
+            continue
+        for loc, title in locales.items():
+            url = unquote((rec.get("wikipedia_urls") or {}).get(loc, "")).replace("_", " ")
+            if title and not url.endswith(f"/{title}"):
+                continue
+            for field in ("extracts", "wikipedia_urls", "extract_sources"):
+                (rec.get(field) or {}).pop(loc, None)
+            if loc == "en":
+                for field in ("title", "extract", "description"):
+                    rec.pop(field, None)
 
 
 def load_manual_species_aliases() -> dict[str, list[str]]:

@@ -2,7 +2,7 @@
 """
 Collect non-species sound class labels and Wikimedia Commons images.
 
-Input:  config.yml sound_classes
+Input:  overrides/sound_classes.csv
 Output: raw_data/sound_classes.json
 
 Usage:
@@ -14,10 +14,9 @@ import json
 import urllib.parse
 import urllib.request
 
-from config import load_config
 from collectors._common import (
     RAW_DIR, USER_AGENT, LOCALE_NORMALIZE,
-    is_clean_common_name, load_json, save_json,
+    is_clean_common_name, load_json, load_manual_sound_classes, save_json,
 )
 from collectors.wikidata import check_commons_licenses
 
@@ -88,24 +87,10 @@ def _clean_aliases(values: list[str]) -> list[str]:
 
 def _load_configured_classes() -> list[dict]:
     rows = []
-    for entry in load_config().get("sound_classes", []) or []:
-        name = str(entry.get("name") or "").strip()
-        group = str(entry.get("group") or "").strip()
-        qid = str(entry.get("wikidata_qid") or "").strip()
-        if not name or not group:
-            raise ValueError("sound_classes entries require name and group")
-        if not is_clean_common_name(name):
-            raise ValueError(f"Invalid sound class name: {name}")
-        rows.append({
-            "name": name,
-            "group": group,
-            "wikidata_qid": qid,
-            "image_file": str(entry.get("image_file") or "").strip(),
-            "aliases": _clean_aliases(entry.get("aliases", []) or []),
-            "scientific_aliases": _clean_aliases(
-                entry.get("scientific_aliases", []) or []
-            ),
-        })
+    for row in load_manual_sound_classes():
+        row["aliases"] = _clean_aliases(row["aliases"])
+        row["scientific_aliases"] = _clean_aliases(row["scientific_aliases"])
+        rows.append(row)
     return rows
 
 
@@ -148,6 +133,8 @@ def main() -> None:
     for row in targets:
         if row.get("image_file"):
             image_files[row["name"]] = row["image_file"]
+    # SVG drawings can't go through the WebP image pipeline.
+    image_files = {name: f for name, f in image_files.items() if not f.lower().endswith(".svg")}
     images = check_commons_licenses(image_files)
 
     data = dict(existing)
@@ -165,6 +152,9 @@ def main() -> None:
             "taxon_group": row["group"],
             "record_type": "sound_class",
             "wikidata_qid": qid,
+            "audioset_id": row.get("audioset_id", ""),
+            "parent": row.get("parent", ""),
+            "description": row.get("description", ""),
             "common_names": common_names,
             "common_name_aliases": row["aliases"],
             "scientific_name_aliases": row["scientific_aliases"],

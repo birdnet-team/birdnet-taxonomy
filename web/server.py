@@ -21,8 +21,10 @@ import argparse
 import csv
 import io
 import json
+import logging
 import os
 import re
+import time
 import unicodedata
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -31,6 +33,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
+from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator
 from utils.images import ImageSize, save_species_image
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -135,6 +138,12 @@ class SpeciesRecord(BaseModel):
     commonness: Optional[float] = Field(
         None, description="How often the species is observed on iNaturalist, as a percentile (0-100) within its taxon group; not abundance",
         examples=[100.0])
+    audioset_id: Optional[str] = Field(None, description="AudioSet ontology ID (sound classes)", examples=["/m/09x0r"])
+    parent: Optional[str] = Field(None, description="Nearest broader sound class in the AudioSet hierarchy (sound classes)", examples=["Speech"])
+    low_resource: Optional[bool] = Field(
+        None,
+        description="true when the record has no real image or English description; image URLs then serve the dummy image",
+        examples=[False])
     found: Optional[bool] = Field(
         None,
         description="false on the placeholder returned for an unknown name (fallback=true); absent on real records",
@@ -190,7 +199,7 @@ class SpeciesRecord(BaseModel):
 class PaginatedSpecies(BaseModel):
     """Paginated list of species records."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
-    total: int = Field(..., examples=[16536])
+    total: int = Field(..., examples=[18093])
     page: int = Field(..., examples=[1])
     per_page: int = Field(..., examples=[50])
     results: list[dict[str, Any]] = Field(...)
@@ -199,7 +208,7 @@ class PaginatedSpecies(BaseModel):
         "json_schema_extra": {
             "examples": [{
                 "taxonomy_version": _taxonomy_version,
-                "total": 16536,
+                "total": 18093,
                 "page": 1,
                 "per_page": 2,
                 "results": [_SPECIES_LIST_EXAMPLE],
@@ -229,7 +238,7 @@ class SearchResponse(PaginatedSpecies):
 class StatsResponse(BaseModel):
     """Dataset statistics."""
     taxonomy_version: str = Field(..., examples=[_taxonomy_version])
-    total_species: int = Field(..., examples=[16536])
+    total_species: int = Field(..., examples=[18093])
     groups: dict[str, int] = Field(..., examples=[{"Aves": 11022, "Mammalia": 1166, "Insecta": 2196, "Amphibia": 1940, "Reptilia": 204, "Anthropogenic": 5, "Geophony": 3}])
     locales: list[str] = Field(..., examples=[["af", "ar", "bg", "de", "es", "fr", "ja", "ko", "zh"]])
 
@@ -265,6 +274,13 @@ def _quote_path(value: Any) -> str:
 _root_path = load_root_path()
 _host_name = load_host_name()
 _site_title = "BirdNET+ Taxonomy"
+
+# Browsers load from this site only, so no third party sees a visitor.
+_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'"
+)
+_UNLOGGED_PATHS = ("/api/image/", "/static/")
 
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/birdnet-taxonomy)"
 
@@ -459,21 +475,47 @@ async def lifespan(application: FastAPI):
         load_data(dev=dev)
     _init_image_config(dev=dev)
     templates.env.globals["quote_path"] = _quote_path
+    # uvicorn's access log prints client addresses; privacy_middleware replaces it.
+    logging.getLogger("uvicorn.access").disabled = True
     yield
 
 
 app = FastAPI(
     title=f"BirdNET+ Taxonomy API {_taxonomy_version}".strip(),
-    description="Browse and query species metadata for BirdNET models.",
+    description=(
+        "Browse and query species metadata for BirdNET models.\n\n"
+        "[Privacy](https://birdnet.cornell.edu/privacy/) · "
+        "[Legal notice](https://birdnet.cornell.edu/legal/)"
+    ),
     version="1.0.0",
     lifespan=lifespan,
     root_path=_root_path,
-    docs_url="/docs",
+    docs_url=None,
     redoc_url=None,
     openapi_url="/openapi.json",
 )
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+@app.middleware("http")
+async def privacy_middleware(request: FRequest, call_next):
+    """Keep browsers on this site, and print a request line to the console.
+
+    The line goes to stdout only and leaves out everything about the visitor:
+    no address, user agent, or query string. Image and static requests appear
+    only when they fail.
+    """
+    started = time.perf_counter()
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _CONTENT_SECURITY_POLICY
+    response.headers["Referrer-Policy"] = "same-origin"
+    path = request.scope["path"]
+    if response.status_code >= 400 or not path.startswith(_UNLOGGED_PATHS):
+        elapsed = (time.perf_counter() - started) * 1000
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {response.status_code} {request.method} "
+              f"{quote(path, safe='/ ')[:200]} ({elapsed:.0f} ms)", flush=True)
+    return response
 
 
 @app.middleware("http")
@@ -702,6 +744,20 @@ async def about_page(request: FRequest):
     return templates.TemplateResponse("about.html", _template_context(request))
 
 
+@app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
+async def api_docs(request: FRequest):
+    """Swagger UI from our own static files, with its online validator off."""
+    base = request.scope.get("root_path") or _root_path
+    return get_swagger_ui_html(
+        openapi_url=f"{base}{app.openapi_url}",
+        title=app.title,
+        swagger_js_url=f"{base}/static/swagger-ui-bundle.js",
+        swagger_css_url=f"{base}/static/swagger-ui.css",
+        swagger_favicon_url=f"{base}/static/logo.png",
+        swagger_ui_parameters={"validatorUrl": None},
+    )
+
+
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
          include_in_schema=False)
 async def species_page(request: FRequest, scientific_name: str, lang: str = ""):
@@ -855,7 +911,7 @@ def _filter_species(data: list[dict], *,
 
     if has_image:
         want = has_image.lower() in ("true", "1", "yes")
-        result = [r for r in result if bool((r.get("image") or {}).get("medium") or r.get("image_url")) == want]
+        result = [r for r in result if bool((r.get("image") or {}).get("src") or r.get("image_url")) == want]
 
     if has_description:
         want = has_description.lower() in ("true", "1", "yes")
@@ -982,6 +1038,33 @@ async def api_fields():
     return sorted(_ALL_FIELDS)
 
 
+@app.get("/api/model-labels/{model}", tags=["API"], response_model=list[dict[str, str]],
+         responses={404: {"description": "Unknown model"}})
+async def api_model_labels(
+    model: str,
+    status: str = Query("", description="Filter by status: keep, pending, or review"),
+):
+    """List an audio model's labels and how each maps onto the taxonomy.
+
+    One row per surviving model output: its taxonomy record and the
+    `redirect_to` label it merges into, if any. Removed labels and the
+    reasons given to the model developer are not published.
+    """
+    path = _data_dir() / "model_labels" / f"{Path(model).name}.csv"
+    if not path.exists():
+        raise HTTPException(404, f"No model labels for '{model}'")
+    with open(path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        if "status" not in (reader.fieldnames or []):
+            raise HTTPException(404, f"No model labels for '{model}'")
+        rows = [row for row in reader if row["status"] != "remove"]
+    return [
+        {key: value for key, value in row.items()
+         if key not in ("rename_to", "reason", "reason_text")}
+        for row in rows if not status or row["status"] == status
+    ]
+
+
 @app.get("/api/search", tags=["API"],
          response_model=SearchResponse,
          response_model_exclude_none=True)
@@ -990,7 +1073,7 @@ async def api_search(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (wikipedia, ebird, llm, llm_fallback)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, audioset, llm, llm_fallback)"),
     min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
     max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
     sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),
@@ -1064,7 +1147,7 @@ async def api_species_list(
     group: str = Query("", description="Filter by taxon group"),
     has_image: str = Query("", description="Filter: true/false"),
     has_description: str = Query("", description="Filter: true/false"),
-    description_source: str = Query("", description="Filter by source (wikipedia, ebird, llm, llm_fallback)"),
+    description_source: str = Query("", description="Filter by source (wikipedia, audioset, llm, llm_fallback)"),
     min_commonness: Optional[float] = Query(None, ge=0, le=100, description="Minimum commonness (0-100)"),
     max_commonness: Optional[float] = Query(None, ge=0, le=100, description="Maximum commonness (0-100)"),
     sort: str = Query("", description="Sort field (prefix '-' for desc, e.g. -commonness)"),
@@ -1299,6 +1382,7 @@ def main():
         port=args.port,
         reload=args.reload,
         workers=args.workers if args.workers > 1 else None,
+        ws="none",  # no WebSocket routes; uvicorn logs client addresses on rejected upgrades
     )
 
 
