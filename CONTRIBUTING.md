@@ -43,7 +43,7 @@ HOST_NAME=https://birdnet.cornell.edu
 
 1. Update or collect raw source data as needed.
 2. Rebuild metadata with `python -m build.metadata` or `python -m build.metadata --merge-only`.
-3. If description coverage changed, run `python -m utils.audit_descriptions dist/species_metadata.json --output dev/description_audit.csv` or the same command against `dev/species_metadata.json`.
+3. If description coverage changed, run `python -m utils.audit_descriptions --output dev/description_audit.csv` or the same command against `dev/BirdNET_Taxonomy_<version>.json`.
 4. If image behavior changed, run `python -m collectors.images` or test the image proxy directly.
 5. Verify the resulting files in `dist/` or `dev/`.
 6. Update documentation when behavior or contributor workflow changes.

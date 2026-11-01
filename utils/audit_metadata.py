@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from collectors._common import is_clean_common_name, is_clean_scientific_name
+from config import release_file
 from utils.description_quality import word_count
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_METADATA = ROOT / "dist" / "species_metadata.json"
+DEFAULT_METADATA = release_file(ROOT / "dist", "json")
 
 REQUIRED_FIELDS = (
     "birdnet_id",

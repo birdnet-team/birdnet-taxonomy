@@ -104,7 +104,7 @@ See also the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 The **code** in this repository is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-The **taxonomy data**, meaning `species_metadata.csv` and `species_metadata.json`, is licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). See [LICENSE-DATA.md](LICENSE-DATA.md) for what that covers and how to credit the sources.
+The **taxonomy data**, meaning `BirdNET_Taxonomy_<version>.csv` and `.json`, is licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). See [LICENSE-DATA.md](LICENSE-DATA.md) for what that covers and how to credit the sources.
 
 Neither license covers the **images**, which the data only links to. Each image has its own license and author (`image_license` and `image_author`), and most restrict reuse: more than 60% are non-commercial, and about 15% are © Macaulay Library.
 

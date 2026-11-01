@@ -34,7 +34,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from collectors._common import ROOT, is_shutting_down, setup_shutdown
-from config import load_config
+from config import load_config, release_file
 from utils.images import (
     ImageSize,
     crop_and_resize,
@@ -101,13 +101,13 @@ def _generate_dummy_images(base_dir: Path, sizes: dict[str, ImageSize],
 
 
 def _load_species(dev: bool) -> list[dict]:
-    """Load species_metadata.json from dev/ or dist/."""
+    """Load the release JSON from dev/ or dist/."""
     for d in (["dev", "dist"] if dev else ["dist", "dev"]):
-        path = ROOT / d / "species_metadata.json"
+        path = release_file(ROOT / d, "json")
         if path.exists():
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
-    print("ERROR: No species_metadata.json found. Run: python -m build.metadata")
+    print("ERROR: No release JSON found. Run: python -m build.metadata")
     sys.exit(1)
 
 

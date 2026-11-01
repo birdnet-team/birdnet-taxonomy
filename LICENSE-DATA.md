@@ -1,6 +1,6 @@
 # Data License
 
-The BirdNET+ Taxonomy data files, `species_metadata.csv` and `species_metadata.json`,
+The BirdNET+ Taxonomy data files, `BirdNET_Taxonomy_<version>.csv` and `.json`,
 are licensed under the [Creative Commons Attribution-ShareAlike 4.0 International
 License](https://creativecommons.org/licenses/by-sa/4.0/) (CC BY-SA 4.0).
 

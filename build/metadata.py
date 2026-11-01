@@ -21,9 +21,9 @@ Input files (all in raw_data/):
   - AviList CSV            (from collectors/avilist.py)
 
 Output:
-  - dist/species_metadata.json
-  - dist/species_metadata.csv
-  - dist/species_metadata.zip
+  - dist/BirdNET_Taxonomy_<version>.json
+  - dist/BirdNET_Taxonomy_<version>.csv
+  - dist/BirdNET_Taxonomy_<version>.zip
   - dist/model_labels/<model>.csv  (from overrides/model_labels/<model>.csv)
 
 Usage:
@@ -44,7 +44,7 @@ from collections import Counter
 from pathlib import Path
 
 from urllib.parse import quote, unquote
-from config import load_config, image_url_prefix, LOCALE_NAMES
+from config import RELEASE_PREFIX, load_config, image_url_prefix, release_file, LOCALE_NAMES
 from collectors._common import (
     load_description_overrides, rejected_articles, strip_rejected_articles,
     ROOT, RAW_DIR, ACCEPTABLE_LICENSES, LOCALE_NORMALIZE, TRUSTED_XC_METHODS,
@@ -3013,7 +3013,7 @@ def main():
         raise SystemExit(1)
 
     # Write JSON (atomic)
-    json_path = out_dir / "species_metadata.json"
+    json_path = release_file(out_dir, "json")
     tmp = json_path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
@@ -3024,7 +3024,7 @@ def main():
     print(f"\n  JSON: {json_path} ({json_size / 1024 / 1024:.1f} MB)")
 
     # Write CSV (atomic)
-    csv_path = out_dir / "species_metadata.csv"
+    csv_path = release_file(out_dir, "csv")
     csv_text = records_to_csv(records, cfg.get("csv_export", {}).get("locales"))
     tmp = csv_path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
@@ -3038,13 +3038,18 @@ def main():
 
     # Zip
     if not args.no_zip:
-        zip_path = out_dir / "species_metadata.zip"
+        zip_path = release_file(out_dir, "zip")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(json_path, "species_metadata.json")
-            zf.write(csv_path, "species_metadata.csv")
+            zf.write(json_path, json_path.name)
+            zf.write(csv_path, csv_path.name)
             zf.write(ROOT / "LICENSE-DATA.md", "LICENSE-DATA.md")
         zip_size = zip_path.stat().st_size
         print(f"  ZIP:  {zip_path} ({zip_size / 1024 / 1024:.1f} MB)")
+
+    # The name carries the version, so a bump would leave the old release behind.
+    for old in out_dir.glob(f"{RELEASE_PREFIX}*"):
+        if old.stem != json_path.stem:
+            old.unlink()
 
     print("\nDone!")
 

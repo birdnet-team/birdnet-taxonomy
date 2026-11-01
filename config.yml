@@ -152,7 +152,7 @@ metadata_quality:
   # dropped either: gaps are marked low_resource instead.
   keep_model_labels: true
 
-# Release CSV export (dist/species_metadata.csv). The JSON carries every
+# Release CSV export (dist/BirdNET_Taxonomy_<version>.csv). The JSON carries every
 # locale; the CSV gets one common_name_<locale> column per locale listed here,
 # so the column set stays stable when locale coverage shifts between builds.
 csv_export:

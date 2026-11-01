@@ -163,8 +163,9 @@ only copy of a fix.
 ## Version bumps
 
 `taxonomy.version` in `config.yml` is the source of the version, and the website reads it
-from there. A bump must update every hardcoded mention in the same change, then grep for
-the old version to confirm none is left:
+from there. The release files carry it in their name (`BirdNET_Taxonomy_<version>.csv`), so
+the server and collectors need a build after a bump. A bump must update every hardcoded
+mention in the same change, then grep for the old version to confirm none is left:
 
 - `README.md`: the current version
 - `LICENSE-DATA.md`: the credit example
