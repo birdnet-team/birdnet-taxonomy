@@ -4,8 +4,13 @@ How an audio model's outputs map onto the taxonomy. Contributor rules are in [CO
 
 `overrides/model_labels/<model>.csv` holds one row per output of an audio model
 and maps it onto the taxonomy, so a model can keep its own labels. These files are
-private and not in the repository: the folder is gitignored. Without a crosswalk the
-build warns, and species kept only for a model label are dropped.
+private and not in the repository: the folder is gitignored.
+
+A build without a crosswalk gives the same records and skips only the files for the model
+developer. Species with a BirdNET ID stay, and the aliases a crosswalk implies are kept in
+the tracked `overrides/model_aliases.csv` (`scientific_name`, `alias`, `kind`), which holds
+only names already published on the records. The build updates that file whenever a
+crosswalk is present. `--reassign-ids` refuses to run without a crosswalk.
 
 | Column | Meaning |
 |--------|---------|

@@ -111,8 +111,11 @@ only copy of a fix.
 
 - `overrides/model_labels/<model>.csv` maps each audio model output onto the taxonomy.
   Base species names never change to fit a label; model names become aliases.
-- Crosswalks are private. The folder is gitignored and must never be committed. Without it
-  the build warns and drops species kept only for a model label.
+- Crosswalks are private. The folder is gitignored and must never be committed. A build
+  without it gives the same records and skips only the developer files, because species
+  with a BirdNET ID stay, and `overrides/model_aliases.csv` holds the aliases. The build
+  keeps that file in step whenever a crosswalk is present. `--reassign-ids` needs the
+  crosswalk and refuses to run without it.
 - `redirect_to` names the label another should merge into, and generates a one-way
   alias. Set it only if the target is a surviving label with training samples.
 - Keep the taxonomy lean. Duplicate, sketchy, or useless labels stay out, with status
@@ -156,7 +159,7 @@ only copy of a fix.
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`
   and the files in `overrides/` (`species_overrides.csv`, `species_aliases.csv`,
   `common_name_aliases.csv`, `bird_splits.csv`, `priority_species.csv`,
-  `sound_classes.csv`, `description_overrides.csv`) are git-tracked and
+  `sound_classes.csv`, `description_overrides.csv`, `model_aliases.csv`) are git-tracked and
   meaningful.
 - Secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `XC_API_KEY`, etc.)
   live in `.env`, never in `config.yml` or source.
