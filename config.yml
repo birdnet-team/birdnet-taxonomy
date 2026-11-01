@@ -149,7 +149,8 @@ metadata_quality:
   keep_groups:
     - Aves
   # Species a model outputs (status keep in overrides/model_labels/) are never
-  # dropped either: gaps are marked low_resource instead.
+  # dropped either: gaps are marked low_resource instead. Species with a BirdNET
+  # ID also stay, until a --reassign-ids.
   keep_model_labels: true
 
 # Release CSV export (dist/BirdNET_Taxonomy_<version>.csv). The JSON carries every

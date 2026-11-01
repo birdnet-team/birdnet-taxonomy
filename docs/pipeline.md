@@ -348,7 +348,7 @@ The build also writes one CSV per model crosswalk; see [model-labels.md](model-l
 | `--dev` | Write to dev/ instead of dist/ |
 | `--merge-only` | Skip taxonomy rebuild, re-merge only |
 | `--no-zip` | Skip zip archive creation |
-| `--reassign-ids` | Regenerate all BirdNET IDs from scratch (pre-release only) |
+| `--reassign-ids` | Regenerate all BirdNET IDs from scratch (pre-release only); needs the private crosswalks |
 | `--strict-validation` | Fail if release-gate metadata audit findings remain |
 | `--dry-run` | Show stats without writing |
 
@@ -431,6 +431,7 @@ overrides/
     bird_splits.csv        # Git-tracked birds kept separate from an AviList lump
     common_name_aliases.csv  # Git-tracked manual common-name search aliases
     description_overrides.csv  # Git-tracked rejected articles and text fixes
+    model_aliases.csv      # Git-tracked aliases from the model crosswalks, updated by the build
     model_labels/          # Private, gitignored crosswalks from audio model outputs to the taxonomy
     priority_species.csv   # Git-tracked reviewed taxonomy additions
     sound_classes.csv      # Git-tracked reviewed non-species sound classes

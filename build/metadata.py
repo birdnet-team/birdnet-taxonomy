@@ -83,6 +83,7 @@ MANUAL_COMMON_ALIASES_FILE = ROOT / "overrides" / "common_name_aliases.csv"
 MANUAL_SPLITS_FILE = ROOT / "overrides" / "bird_splits.csv"
 PRIORITY_SPECIES_FILE = ROOT / "overrides" / "priority_species.csv"
 MODEL_LABELS_DIR = ROOT / "overrides" / "model_labels"
+MODEL_ALIASES_FILE = ROOT / "overrides" / "model_aliases.csv"
 MODEL_HANDOVER_DIR = RAW_DIR / "model_handover"
 BN_IDS_FILE = ROOT / "bn_ids.json"
 
@@ -708,6 +709,44 @@ def model_label_aliases(model_labels: dict[str, list[dict]],
             elif is_clean_scientific_name(alias):
                 scientific.setdefault(owner, []).append(alias)
     return scientific, common
+
+
+def load_model_aliases() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Aliases the private crosswalks imply, from the tracked overrides/model_aliases.csv.
+
+    The file holds only names already published on the records, so a build
+    without a crosswalk gives the same records.
+    """
+    scientific: dict[str, list[str]] = {}
+    common: dict[str, list[str]] = {}
+    if MODEL_ALIASES_FILE.exists():
+        with open(MODEL_ALIASES_FILE, encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                target = scientific if row["kind"] == "scientific" else common
+                target.setdefault(row["scientific_name"], []).append(row["alias"])
+    return scientific, common
+
+
+def save_model_aliases(scientific: dict[str, list[str]], common: dict[str, list[str]],
+                       records: list[dict]) -> None:
+    """Keep overrides/model_aliases.csv in step with the crosswalks. Only aliases
+    that reached a published record are written (atomic)."""
+    by_name = {rec["scientific_name"]: rec for rec in records}
+    rows = [
+        {"scientific_name": sci, "alias": alias, "kind": kind}
+        for kind, field, aliases in (("scientific", "scientific_name_aliases", scientific),
+                                     ("common", "common_name_aliases", common))
+        for sci, values in sorted(aliases.items())
+        for alias in values
+        if sci in by_name and alias in by_name[sci][field]
+    ]
+    tmp = MODEL_ALIASES_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["scientific_name", "alias", "kind"],
+                                lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+    os.replace(tmp, MODEL_ALIASES_FILE)
 
 
 def model_label_redirects(model_labels: dict[str, list[dict]]) -> dict[str, str]:
@@ -2945,7 +2984,11 @@ def build_metadata(taxonomy: dict, wiki: dict,
 
     print(f"  Texts dropped: {_drop_misplaced_texts(records)} (genus articles, "
           "shared texts, LLM text without a source link)")
-    records = _apply_metadata_quality_filter(records, quality_cfg, model_species)
+    # A species with a BirdNET ID stays until a reassignment, so a build gives
+    # the same records with or without the private crosswalks.
+    registered = set() if reassign_ids else set(_load_bn_ids())
+    records = _apply_metadata_quality_filter(records, quality_cfg,
+                                             (model_species or set()) | registered)
     print(f"  Identifiers dropped for an invalid format: {invalid_ids}")
     print(f"  Images kept on one species only (shared photo): {_dedupe_images(records)} removed")
     print(f"  Low-resource records: {_mark_low_resource(records)}")
@@ -3188,15 +3231,17 @@ def main():
     print(f"  Common aliases: {sum(len(v) for v in manual_common_aliases.values()):>4} manual "
           f"common-name aliases ({len(manual_common_aliases)} species)")
     model_labels = load_model_labels()
-    model_scientific, model_common = model_label_aliases(model_labels, taxonomy)
+    if args.reassign_ids and not model_labels:
+        raise SystemExit("--reassign-ids needs the private crosswalks in overrides/model_labels/: "
+                         "without them, species kept only for a model label would lose their IDs")
+    model_scientific, model_common = (model_label_aliases(model_labels, taxonomy)
+                                      if model_labels else load_model_aliases())
     for sci, values in model_scientific.items():
         manual_aliases[sci] = [*manual_aliases.get(sci, []), *values]
     for sci, values in model_common.items():
         manual_common_aliases[sci] = [*manual_common_aliases.get(sci, []), *values]
     if not model_labels:
-        print("  WARNING: no model crosswalk in overrides/model_labels/ (it is not in the "
-              "repo). Species kept only for a model label are dropped, so this build "
-              "differs from the published release.")
+        print("  No private crosswalk: records are unaffected, developer files are skipped")
     print(f"  Model labels: {len(model_labels)} crosswalks, "
           f"{sum(len(v) for v in model_scientific.values())} scientific and "
           f"{sum(len(v) for v in model_common.values())} common-name aliases")
@@ -3218,6 +3263,8 @@ def main():
         redirects=model_label_redirects(model_labels),
     )
     model_exports = model_label_exports(model_labels, records)
+    if model_labels:
+        save_model_aliases(model_scientific, model_common, records)
 
     print("\nAuditing final metadata...")
     desc_cfg = cfg.get("descriptions", {})
