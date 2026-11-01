@@ -228,11 +228,7 @@
 {# Locale-specific common name (falls back to English) #}
 {% set display_common = (s.common_names or {}).get(lang, s.common_name) if lang else s.common_name %}
 
-<p style="margin-bottom: 1rem;"><a href="{{ base }}/" id="backLink">&larr; Back to browse</a></p>
-<script>{
-    const u = sessionStorage.getItem('browseUrl');
-    if (u) document.getElementById('backLink').href = u;
-}</script>
+<p style="margin-bottom: 1rem;"><a href="{{ base }}/" onclick="if (document.referrer.startsWith(location.origin + '{{ base }}/') && !document.referrer.includes('/species/')) { history.back(); return false; }">&larr; Back to browse</a></p>
 
 <div class="species-header">
     <div class="species-photo">

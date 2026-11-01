@@ -138,6 +138,17 @@ only copy of a fix.
   `HOST_NAME` (both from `.env`). Template/site links are root-path-relative; image
   URLs are absolute. Keep species and image URLs URL-encoded.
 
+## Privacy
+
+- Visitors' browsers talk only to our server. Bundle fonts, scripts, and styles in
+  `web/static/` and reach external resources through the server; external URLs are plain
+  links. The `Content-Security-Policy` in `web/server.py` enforces this: never loosen it
+  to allow another host.
+- Logs go to the console only, with no IP address, user agent, or query string. Never write
+  them to disk.
+- The footer links the main BirdNET privacy policy and legal notice. Do not add a separate
+  statement.
+
 ## Repository hygiene
 
 - `raw_data/`, `dev/`, and `dist/` are gitignored build/cache artifacts. `bn_ids.json`

@@ -21,8 +21,10 @@ import argparse
 import csv
 import io
 import json
+import logging
 import os
 import re
+import time
 import unicodedata
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -31,6 +33,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request as FRequest
+from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator
 from utils.images import ImageSize, save_species_image
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -272,6 +275,13 @@ _root_path = load_root_path()
 _host_name = load_host_name()
 _site_title = "BirdNET+ Taxonomy"
 
+# Browsers load from this site only, so no third party sees a visitor.
+_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'"
+)
+_UNLOGGED_PATHS = ("/api/image/", "/static/")
+
 USER_AGENT = "BirdNET Species Data Bot (https://github.com/birdnet-team/birdnet-taxonomy)"
 
 # ---------------------------------------------------------------------------
@@ -465,21 +475,47 @@ async def lifespan(application: FastAPI):
         load_data(dev=dev)
     _init_image_config(dev=dev)
     templates.env.globals["quote_path"] = _quote_path
+    # uvicorn's access log prints client addresses; privacy_middleware replaces it.
+    logging.getLogger("uvicorn.access").disabled = True
     yield
 
 
 app = FastAPI(
     title=f"BirdNET+ Taxonomy API {_taxonomy_version}".strip(),
-    description="Browse and query species metadata for BirdNET models.",
+    description=(
+        "Browse and query species metadata for BirdNET models.\n\n"
+        "[Privacy](https://birdnet.cornell.edu/privacy/) · "
+        "[Legal notice](https://birdnet.cornell.edu/legal/)"
+    ),
     version="1.0.0",
     lifespan=lifespan,
     root_path=_root_path,
-    docs_url="/docs",
+    docs_url=None,
     redoc_url=None,
     openapi_url="/openapi.json",
 )
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+@app.middleware("http")
+async def privacy_middleware(request: FRequest, call_next):
+    """Keep browsers on this site, and print a request line to the console.
+
+    The line goes to stdout only and leaves out everything about the visitor:
+    no address, user agent, or query string. Image and static requests appear
+    only when they fail.
+    """
+    started = time.perf_counter()
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _CONTENT_SECURITY_POLICY
+    response.headers["Referrer-Policy"] = "same-origin"
+    path = request.scope["path"]
+    if response.status_code >= 400 or not path.startswith(_UNLOGGED_PATHS):
+        elapsed = (time.perf_counter() - started) * 1000
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {response.status_code} {request.method} "
+              f"{quote(path, safe='/ ')[:200]} ({elapsed:.0f} ms)", flush=True)
+    return response
 
 
 @app.middleware("http")
@@ -706,6 +742,20 @@ async def download_page(request: FRequest):
 async def about_page(request: FRequest):
     """About page."""
     return templates.TemplateResponse("about.html", _template_context(request))
+
+
+@app.get("/docs", response_class=HTMLResponse, include_in_schema=False)
+async def api_docs(request: FRequest):
+    """Swagger UI from our own static files, with its online validator off."""
+    base = request.scope.get("root_path") or _root_path
+    return get_swagger_ui_html(
+        openapi_url=f"{base}{app.openapi_url}",
+        title=app.title,
+        swagger_js_url=f"{base}/static/swagger-ui-bundle.js",
+        swagger_css_url=f"{base}/static/swagger-ui.css",
+        swagger_favicon_url=f"{base}/static/logo.png",
+        swagger_ui_parameters={"validatorUrl": None},
+    )
 
 
 @app.get("/species/{scientific_name:path}", response_class=HTMLResponse,
@@ -1332,6 +1382,7 @@ def main():
         port=args.port,
         reload=args.reload,
         workers=args.workers if args.workers > 1 else None,
+        ws="none",  # no WebSocket routes; uvicorn logs client addresses on rejected upgrades
     )
 
 

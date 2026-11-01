@@ -441,6 +441,6 @@ utils/
     images.py              # Image download, crop, cache-state, and WebP helpers
 web/
     server.py              # FastAPI app serving HTML, REST API, and image endpoints
-    static/                # Static web assets
+    static/                # Static web assets, including the bundled Swagger UI
     templates/             # Jinja2 templates (home, species, about, download)
 ```

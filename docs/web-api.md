@@ -42,6 +42,31 @@ the reverse proxy either preserves the prefix or strips it before forwarding.
 
 `HOST_NAME` is used for absolute image URLs in built metadata and API responses. With the example above, JSON image URLs and CSV `image_url` values are emitted under `https://birdnet.cornell.edu/taxonomy/api/image/...`.
 
+## Privacy
+
+The site is part of the main BirdNET website, so the footer links its
+[privacy policy](https://birdnet.cornell.edu/privacy/) and
+[legal notice](https://birdnet.cornell.edu/legal/) rather than keeping its own. The server
+is built so that visitors talk to it and nobody else:
+
+- **No third-party requests.** Pages, styles, and scripts come from this server. Swagger UI
+  5.34.1 is bundled in `web/static/` (Apache-2.0, `swagger-ui-LICENSE.txt`) with its online
+  validator off, and species images go through the image proxy, which fetches them from the
+  server, not the visitor's browser. External URLs appear only as plain links.
+- **Enforced by the browser.** Every response carries a `Content-Security-Policy` that allows
+  loading from this site only, and `Referrer-Policy: same-origin`, so a clicked link does not
+  tell the other site where the visitor came from.
+- **No cookies or browser storage.** The linked policy says the site uses no cookies and
+  names only two uses of browser storage, neither of them here.
+- **No visitor data in logs.** `python -m web.server` prints one line per request to the
+  console, for example `2026-11-01 10:15:02 200 GET /species/Turdus merula (3 ms)`: time,
+  status, method, path, duration. It has no address, user agent, or query string, and
+  nothing is written to disk. Image and static requests appear only when they fail. The
+  output lasts as long as the terminal or `screen` scrollback keeps it.
+
+The gateway in front of the server is separate and keeps its own access logs, as described
+in the linked policy.
+
 ## Species Lookup
 
 **Species lookup** supports multiple identifier types. The `/species/{name}` and `/api/species/{name}` endpoints accept any of:
