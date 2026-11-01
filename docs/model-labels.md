@@ -21,7 +21,9 @@ build warns, and species kept only for a model label are dropped.
 | `note` | Optional specifics that replace the code's standard wording |
 
 `redirect_to` says which class a label should end up in, and `status` says when:
-`remove` merges it now, `keep` leaves it an output until a future model. The target
+`remove` merges it now, `keep` leaves it an output until a future model. A label AviList
+treats as a subspecies of its record has reason `subspecies`: it stays an output while it
+has training samples. Reason `duplicate` is for another name of the same taxon. The target
 must be a surviving label with training samples that does not redirect itself. Each
 `alias` goes on the record of the redirect target, or on the label's own record, and
 stays one-way. A record that redirects keeps winning lookups of its own name, so a

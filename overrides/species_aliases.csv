@@ -26,6 +26,7 @@ Anser rossii,Chen rossii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms s
 Anurolimnas castaneiceps,Rufirallus castaneiceps,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Apalis flavida,Apalis flavocincta,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Ardea coromanda,Bubulcus coromandus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Ardea intermedia,Egretta intermedia,AviList v2026,"Older genus of this species, not of its split Ardea brachyrhyncha"
 Arizelocichla striifacies,Arizelocichla olivaceiceps,manual,AviList v2026 subspecies
 Arremon flavirostris,Arremon polionotus,raw_data/label_v05_reconciled.csv,Labels_v05 scientific_name synonym; taxonomy_synonym
 Astur atricapillus,Accipiter atricapillus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
@@ -53,7 +54,7 @@ Calidris falcinellus,Limicola falcinellus,raw_data/label_v05_reconciled.csv,Labe
 Campylorhamphus probatus,Campylorhamphus cardosoi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Carpodacus sibiricus,Uragus sibiricus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Catharus ustulatus,Catharus swainsoni,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Cecropis rufula,Cecropis striolata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Cecropis daurica,Cecropis striolata,AviList v2026,Subspecies Cecropis daurica striolata
 Cercopithecus mitis,Cercopithecus albogularis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Chalcites megarhynchus,Rhamphomantis megarhynchus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Chalcites meyerii,Chrysococcyx meyeri,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
@@ -67,6 +68,7 @@ Chloropsis hardwickii,Chloropsis lazulina,raw_data/label_v05_reconciled.csv,Labe
 Chordeiles nacunda,Podager nacunda,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Chordeiles pusillus,Nannochordeiles pusillus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Chroicocephalus philadelphia,Larus philadelphia,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Cincloramphus whitneyi,Megalurulus whitneyi,AviList v2026,"Older genus of this species, not of its split Cincloramphus turipavae"
 Cinnyris stuhlmanni,Cinnyris whytei,manual,AviList v2026 subspecies
 Circaetus spectabilis,Dryotriorchis spectabilis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Cnephaeus nilssonii,Eptesicus nilssonii,https://github.com/birdnet-team/birdnet-taxonomy/issues/2,GBIF backbone accepts Eptesicus nilssonii (7261816); iNat/XC use the Cnephaeus combination
@@ -134,7 +136,6 @@ Gallirallus owstoni,Hypotaenidia owstoni,raw_data/label_v05_reconciled.csv,Label
 Gallirallus philippensis,Hypotaenidia philippensis,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Gallirallus rovianae,Hypotaenidia rovianae,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Gallirallus sylvestris,Hypotaenidia sylvestris,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Gallirallus woodfordi,Nesoclopeus poecilopterus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Gallus lafayettii,Gallus lafayetii,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Geokichla gurneyi,Zoothera gurneyi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Glossoptilus goldiei,Psitteuteles goldiei,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
@@ -290,7 +291,7 @@ Sporophila americana,Sporophila murallae,raw_data/label_v05_reconciled.csv,Label
 Sporophila fringilloides,Dolospingus fringilloides,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Stenobothrus rubicundulus,Stenobothrus rubicundus,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Stephanoaetus coronatus,Urubitinga coronata,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
-Stiphrornis mabirae,Stiphrornis xanthogaster,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
+Stiphrornis erythrothorax,Stiphrornis xanthogaster,AviList v2026,Subspecies Stiphrornis erythrothorax xanthogaster
 Stizorhina finschi,Neocossyphus finschi,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Stizorhina fraseri,Neocossyphus fraseri,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name
 Streptopelia roseogrisea,Streptopelia risoria,raw_data/label_v05_reconciled.csv,Labels_v05 synonyms synonym; taxonomy_name

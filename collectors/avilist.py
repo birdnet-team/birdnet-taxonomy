@@ -64,7 +64,7 @@ def normalize_header(name) -> str:
     return "_".join([words[0].capitalize(), *(w.lower() for w in words[1:])])
 
 
-def download_xlsx(url: str) -> bytes:
+def download_xlsx(url: str, xlsx_path: Path) -> bytes:
     """Download the AviList XLSX file."""
     print(f"  Downloading {url}...")
     req = Request(url, headers={"User-Agent": USER_AGENT})
@@ -73,6 +73,8 @@ def download_xlsx(url: str) -> bytes:
             data = resp.read()
     except (HTTPError, URLError, TimeoutError) as e:
         print(f"  ERROR: {e}")
+        print("  avilist.org can refuse automated downloads. Download the file in a browser,")
+        print(f"  save it as {xlsx_path}, and run this again.")
         raise SystemExit(1)
     print(f"  Downloaded {len(data) / 1024 / 1024:.1f} MB")
     return data
@@ -145,13 +147,15 @@ def main():
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-    xlsx_data = download_xlsx(url)
-
-    # Also save the xlsx for reference
-    xlsx_name = url.rsplit("/", 1)[-1]
-    xlsx_path = RAW_DIR / xlsx_name
-    xlsx_path.write_bytes(xlsx_data)
-    print(f"  Saved XLSX as {xlsx_path.name}")
+    xlsx_path = RAW_DIR / url.rsplit("/", 1)[-1]
+    if xlsx_path.exists() and not args.force:
+        print(f"  Using {xlsx_path.name}")
+        xlsx_data = xlsx_path.read_bytes()
+    else:
+        xlsx_data = download_xlsx(url, xlsx_path)
+        # Also save the xlsx for reference
+        xlsx_path.write_bytes(xlsx_data)
+        print(f"  Saved XLSX as {xlsx_path.name}")
 
     xlsx_to_csv(xlsx_data, csv_path)
     print("Done!")

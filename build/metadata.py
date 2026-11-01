@@ -42,6 +42,7 @@ import unicodedata
 import zipfile
 from collections import Counter
 from pathlib import Path
+from string import Template
 
 from urllib.parse import quote, unquote
 from config import RELEASE_PREFIX, load_config, image_url_prefix, release_file, LOCALE_NAMES
@@ -82,6 +83,7 @@ MANUAL_COMMON_ALIASES_FILE = ROOT / "overrides" / "common_name_aliases.csv"
 MANUAL_SPLITS_FILE = ROOT / "overrides" / "bird_splits.csv"
 PRIORITY_SPECIES_FILE = ROOT / "overrides" / "priority_species.csv"
 MODEL_LABELS_DIR = ROOT / "overrides" / "model_labels"
+MODEL_HANDOVER_DIR = RAW_DIR / "model_handover"
 BN_IDS_FILE = ROOT / "bn_ids.json"
 
 MODEL_LABEL_COLUMNS = ("mario_id", "model_label", "train_count", "status", "scientific_name",
@@ -147,6 +149,8 @@ NON_LATIN_LOCALES = {
     "mr", "my", "ne", "or", "pa", "ps", "ru", "sd", "si", "ta", "te", "th", "ti",
     "uk", "ur", "yi", "zh",
 }
+# NCBI records for samples rather than species.
+_NCBI_PLACEHOLDER_RE = re.compile(r"\b(?:sp|cf|aff)\.\s")
 _LATIN_ONLY_RE = re.compile(r"[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F '’.\-]*")
 
 # Taxon groups Xeno-Canto can filter by; other groups only accept exact or
@@ -247,6 +251,39 @@ def _parse_image_author(attribution: str, source: str = "") -> str:
 
 
 
+# Rights notes in iNat attributions, in languages _parse_image_author misses.
+_RIGHTS_TAIL_RE = re.compile(
+    r",?\s*(?:ei tunnettuja tekijänoikeusrajoituksia|osa oikeuksista pidätetään"
+    r"|bilinen telif kısıtlaması yok|keine bekannten Copyrightbeschränkungen"
+    r"|geen gekende copyright beperkingen|สงวนลิขสิทธิ์บางประการ).*$",
+    re.IGNORECASE,
+)
+_ACCOUNT_PREFIX_RE = re.compile(
+    r"(?:\ben:)?\b[Uu]ser:|^[Cc]reator:|^Photographer:\s*|^(?:iNaturalist|NaturaLista) user:\s*"
+    r"|^No machine-readable author provided\.\s*|^See more at:\s*")
+_AUTHOR_TAIL_RE = re.compile(
+    r"\s+(?:assumed\b.*|Uploaded by .*|You can contact me .*|This is a retouched picture.*)$")
+# Attribution URLs, whole or with the slashes already stripped.
+_FLICKR_CREDIT_RE = re.compile(r"https?:/*(?:www\.)?flickr\.com/*(?:photos|people)/*([\w@-]+)\S*")
+_INAT_CREDIT_RE = re.compile(r"\s*https?:/*(?:www\.)?inaturalist\.org/*people/*(\S+)")
+_DOI_CREDIT_RE = re.compile(r"https?:/*doi\.org/*(10\.\d+)/*(\S+)")
+_SITE_CREDIT_RE = re.compile(
+    r"https?:/*(?:www\.)?([\w-]+(?:\.[\w-]+)*?\.(?:org|com|net|edu|gov|pl|de|au|uk))\S*")
+
+
+def _tidy_image_author(author: str) -> str:
+    """Reduce an image credit to the name: no rights notes, account prefixes,
+    upload notes or raw URLs (a URL alone becomes its account or site)."""
+    text = _RIGHTS_TAIL_RE.sub("", re.sub(r"\s+", " ", author)).strip(" ,")
+    text = _AUTHOR_TAIL_RE.sub("", _ACCOUNT_PREFIX_RE.sub("", text)).strip()
+    inat = _INAT_CREDIT_RE.search(text)
+    if inat:
+        text = _INAT_CREDIT_RE.sub("", text).strip() or inat.group(1)
+    text = _FLICKR_CREDIT_RE.sub(r"\1", text)
+    text = _DOI_CREDIT_RE.sub(r"doi:\1/\2", text)
+    return _SITE_CREDIT_RE.sub(r"\1", text).strip(" ,")
+
+
 def _attributable(author: str, license_name: str) -> bool:
     """An image can be credited: it has an author, or its license (public
     domain, CC0) needs none."""
@@ -290,6 +327,8 @@ def _normalize_license(value: str) -> str:
     low = text.lower()
     if low in ("public domain", "pd", "no restrictions"):
         return "pd"
+    if low.startswith("cc0"):
+        return "cc0"
     if low.startswith("cc") or low.startswith("gfdl"):
         return re.sub(r"[\s_]+", "-", low)
     return text
@@ -402,6 +441,7 @@ def load_avilist(cfg: dict) -> tuple[list[dict], dict[tuple[str, str], set[str]]
                 rows.append({
                     "scientific_name": sci,
                     "ebird_code": code,
+                    "avibase_id": (row.get("AvibaseID") or "").strip().removeprefix("avibase-"),
                     "common_name_clements": en_clements,
                     "common_name_avilist": en_avilist,
                     "extinct": status in AVILIST_EXTINCT,
@@ -748,6 +788,68 @@ def write_model_label_exports(exports: dict[str, list[dict]], out_dir: Path) -> 
               f"{', '.join(f'{n} {status}' for status, n in counts.most_common())})")
 
 
+def _handover_counts(rows: list[dict], unlabelled: list[dict]) -> dict[str, str]:
+    """Counts for a model's notes, taken from its export and unlabelled species."""
+    statuses = Counter(row["status"] for row in rows)
+    samples = {status: sum(int(row["train_count"] or 0) for row in rows if row["status"] == status)
+               for status in statuses}
+    total = sum(samples.values())
+    redirected = Counter(row["status"] for row in rows if row["redirect_to"])
+    changes = Counter(row["change"] for row in unlabelled)
+    return {key: f"{value:,}" for key, value in {
+        "keep": statuses["keep"], "remove": statuses["remove"],
+        "renames": sum(1 for row in rows if row["rename_to"]),
+        "redirects": sum(redirected.values()), "redirects_now": redirected["remove"],
+        "redirects_later": redirected["keep"],
+        "subspecies": sum(1 for row in rows
+                          if row["reason"] == "subspecies" and row["status"] == "keep"),
+        "kept_samples": samples.get("keep", 0), "total_samples": total,
+        "unlabelled": len(unlabelled), "splits": changes["split"],
+        "new_species": changes["new species"],
+        "with_source": sum(1 for row in unlabelled if row["split_from"]),
+    }.items()} | {"kept_share": f"{100 * samples.get('keep', 0) / total:.1f}" if total else "0"}
+
+
+def write_model_handover(exports: dict[str, list[dict]], records: list[dict],
+                         out_dir: Path) -> None:
+    """Write what goes to a model's developer beside its CSV, from the local
+    raw_data/model_handover/<model>/ folder, if there is one.
+
+    unlabelled_splits.csv lists species new to the taxonomy that the model has no
+    label for; they get their current names and IDs here. notes.md is a template
+    whose counts come from the export, so neither can go stale.
+    """
+    by_name = {rec["scientific_name"]: rec for rec in records}
+    for model, rows in exports.items():
+        folder = MODEL_HANDOVER_DIR / model
+        unlabelled: list[dict] = []
+        splits = folder / "unlabelled_splits.csv"
+        if splits.exists():
+            labelled = {row["scientific_name"] for row in rows if row["status"] == "keep"}
+            with open(splits, encoding="utf-8", newline="") as f:
+                reviewed = list(csv.DictReader(f))
+            for row in reviewed:
+                sci = row["scientific_name"]
+                if sci not in by_name or sci in labelled or (
+                        row["split_from"] and row["split_from"] not in by_name):
+                    raise ValueError(f"{splits}: '{sci}' is not a record, already has a label, "
+                                     "or names an unknown parent")
+                rec = by_name[sci]
+                unlabelled.append({"scientific_name": sci, "common_name": rec["common_name"],
+                                   "birdnet_id": rec["birdnet_id"], "ebird_code": rec["ebird_code"],
+                                   "change": row["change"], "split_from": row["split_from"]})
+            with open(out_dir / "model_labels" / f"{model}_unlabelled_splits.csv", "w",
+                      encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=list(unlabelled[0]), lineterminator="\n")
+                writer.writeheader()
+                writer.writerows(unlabelled)
+        notes = folder / "notes.md"
+        if notes.exists():
+            text = Template(notes.read_text(encoding="utf-8")).substitute(
+                _handover_counts(rows, unlabelled))
+            (out_dir / "model_labels" / f"{model}_notes.md").write_text(text, encoding="utf-8")
+
+
 def is_sound_class_record(record: dict) -> bool:
     return record.get("record_type") == "sound_class"
 
@@ -773,20 +875,23 @@ def load_sound_classes() -> dict[str, dict]:
     """Load reviewed non-species sound classes collected offline.
 
     Cached classes no longer listed in overrides/sound_classes.csv are
-    skipped (the collector keeps them in its cache).
+    skipped (the collector keeps them in its cache). The cache holds what the
+    collector fetched (labels, image); reviewed fields come from the CSV, since
+    a rerun skips classes it already holds.
     """
     classes = load_json(SOUND_CLASSES_FILE)
-    configured = {row["name"] for row in load_manual_sound_classes()}
+    configured = {row["name"]: row for row in load_manual_sound_classes()}
     result: dict[str, dict] = {}
     for name, rec in classes.items():
         sci = str(rec.get("scientific_name") or name).strip()
         if not is_clean_sound_class_name(sci) or sci not in configured:
             continue
+        reviewed = configured[sci]
         common_name = str(rec.get("common_name") or sci).strip()
         result[sci] = {
             "inat_id": None,
-            "taxon_group": rec.get("taxon_group", ""),
-            "iconic_taxon_name": rec.get("taxon_group", ""),
+            "taxon_group": reviewed["group"],
+            "iconic_taxon_name": reviewed["group"],
             "preferred_common_name": common_name if is_clean_common_name(common_name) else sci,
             "common_name_alt": "",
             "common_names": {
@@ -794,7 +899,7 @@ def load_sound_classes() -> dict[str, dict]:
                 for k, v in (rec.get("common_names", {}) or {}).items()
                 if is_clean_common_name(str(v))
             },
-            "common_name_aliases": clean_common_aliases(rec.get("common_name_aliases", [])),
+            "common_name_aliases": clean_common_aliases(reviewed["aliases"]),
             "observations_count": 0,
             "ebird_code": "",
             "gbif_id": "",
@@ -809,14 +914,12 @@ def load_sound_classes() -> dict[str, dict]:
             "image_license": _normalize_license(rec.get("image_license", "")),
             "image_source": rec.get("image_source", ""),
             "match_source": "sound_class",
-            "scientific_name_aliases": clean_common_aliases(
-                rec.get("scientific_name_aliases", [])
-            ),
+            "scientific_name_aliases": clean_common_aliases(reviewed["scientific_aliases"]),
             "record_type": "sound_class",
-            "wikidata_qid": rec.get("wikidata_qid", ""),
-            "audioset_id": rec.get("audioset_id", ""),
-            "parent": rec.get("parent", ""),
-            "description": rec.get("description", ""),
+            "wikidata_qid": reviewed.get("wikidata_qid", ""),
+            "audioset_id": reviewed.get("audioset_id", ""),
+            "parent": reviewed.get("parent", ""),
+            "description": reviewed.get("description", ""),
         }
         result[sci]["common_names"].setdefault("en", sci)
     return result
@@ -1079,12 +1182,52 @@ def _resolve_shared_identifiers(taxonomy: dict, sources: dict[str, dict]) -> dic
     return dropped
 
 
+def _current_ncbi_ids(taxonomy: dict, wikidata: dict) -> tuple[int, int]:
+    """Replace merged NCBI IDs by the surviving ID, and drop IDs that are not
+    this species' record: unknown to NCBI, a sample placeholder ("Hyperolius
+    cf. platyceps JK-2009", "Lepidoptera sp. BOLD:BIN16703"), or named for
+    another species here (Wikidata items can hold the wrong ID). An ID that
+    still belongs to another species is dropped too. Returns (updated, dropped).
+    """
+    current_ids: dict[str, str] = {}
+    dropped = 0
+    for sci, entry in taxonomy.items():
+        key = entry.get("ncbi_id")
+        status = next((wikidata[n]["ncbi_status"] for n in _entry_names(sci, entry)
+                       if (wikidata.get(n, {}).get("ncbi_status") or {}).get("key") == key), None)
+        if not key or not status:
+            continue
+        name = status["name"]
+        own = {*_entry_names(sci, entry), *entry.get("scientific_name_aliases", [])}
+        if (not status["current_id"] or _NCBI_PLACEHOLDER_RE.search(name)
+                or (name in taxonomy and name not in own)):
+            entry["ncbi_id"] = ""
+            dropped += 1
+        else:
+            current_ids[sci] = status["current_id"]
+    held = Counter(e.get("ncbi_id") for e in taxonomy.values() if e.get("ncbi_id"))
+    updated = 0
+    for sci, current in current_ids.items():
+        if current == taxonomy[sci]["ncbi_id"]:
+            continue
+        if held[current]:
+            taxonomy[sci]["ncbi_id"] = ""
+            dropped += 1
+        else:
+            taxonomy[sci]["ncbi_id"] = current
+            held[current] += 1
+            updated += 1
+    return updated, dropped
+
+
 def _accept_gbif_keys(taxonomy: dict, wikidata: dict) -> int:
-    """Replace GBIF synonym keys with the accepted key of the same taxon.
+    """Replace GBIF keys that are not accepted with the accepted key of the taxon.
 
     Wikidata often carries the key of a GBIF synonym usage (GBIF still lists
     the species under an older genus, or as a subspecies), which returns few
-    occurrences. The accepted key is used when its name keeps the species'
+    occurrences. A doubtful, misapplied, synonym or empty usage of a name yields
+    to the accepted usage of that same name holding its occurrences. Otherwise
+    the accepted key of a synonym is used when its name keeps the species'
     epithet (same taxon) and neither that key nor that species name belongs
     to another species here (a GBIF lump). Returns the number replaced.
     """
@@ -1094,7 +1237,15 @@ def _accept_gbif_keys(taxonomy: dict, wikidata: dict) -> int:
         key = entry.get("gbif_id")
         status = next((wikidata[n]["gbif_status"] for n in _entry_names(sci, entry)
                        if (wikidata.get(n, {}).get("gbif_status") or {}).get("key") == key), None)
-        if not key or not status or "SYNONYM" not in status.get("status", ""):
+        if not key or not status:
+            continue
+        same_name_key = status.get("same_name_key", "")
+        if same_name_key and same_name_key not in held:
+            entry["gbif_id"] = same_name_key
+            held[same_name_key] += 1
+            replaced += 1
+            continue
+        if "SYNONYM" not in status.get("status", ""):
             continue
         accepted_key, accepted = status.get("accepted_key", ""), status.get("accepted_name", "")
         words = accepted.split()
@@ -1563,6 +1714,7 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
     # or a validated Xeno-Canto name).
     id_counts = {k: 0 for k in WIKIDATA_ID_FIELDS}
     wd_coverage = 0
+    name_owner = {n: sci for sci, entry in taxonomy.items() for n in _entry_names(sci, entry)}
     for sci, entry in taxonomy.items():
         names = _entry_names(sci, entry)
         wd_recs = [wikidata[n] for n in names if wikidata.get(n)]
@@ -1578,19 +1730,27 @@ def build_taxonomy(inat: dict, avilist_rows: list[dict],
             for wd in wd_recs:
                 val = wd.get(key, "")
                 # Collector records which Wikidata name supplied each ID; an ID
-                # reached through a name we no longer trust is discarded.
+                # reached through a name we no longer trust, or that is another
+                # species' own name, is discarded.
                 via = (wd.get("id_sources") or {}).get(key)
-                if not val or (via and via not in trusted):
+                if not val or (via and (via not in trusted or name_owner.get(via, sci) != sci)):
                     continue
                 entry[key] = val
                 id_sources.setdefault(sci, {})[key] = via or sci
                 id_counts[key] += 1
                 break
+    # AviList gives every species its Avibase concept. Wikidata can hold another
+    # concept of the name (before a split), in the long form of the ID.
+    for sci, entry in taxonomy.items():
+        if entry["taxon_group"] == "Aves":
+            entry["avibase_id"] = ((avi_by_sci.get(sci) or {}).get("avibase_id")
+                                   or entry.get("avibase_id", ""))[:8]
     stats["wikidata_ids"] = id_counts
     stats["wikidata_coverage"] = wd_coverage
     stats["gbif_accepted"] = _accept_gbif_keys(taxonomy, wikidata)
 
     stats["shared_ids_dropped"] = _resolve_shared_identifiers(taxonomy, id_sources)
+    stats["ncbi_updated"], stats["ncbi_dropped"] = _current_ncbi_ids(taxonomy, wikidata)
 
     # Localized names: every source offers candidates per locale, ranked
     # AviList > eBird > iNat > Wikidata; conflicts are resolved below.
@@ -1794,7 +1954,9 @@ def print_taxonomy_stats(taxonomy: dict, stats: dict):
     print(f"\n  Wikidata identifiers ({wd_cov}/{total} entries found):")
     for key, count in wd_ids.items():
         print(f"    {key}: {count}")
-    print(f"    GBIF synonym keys replaced by the accepted key: {stats.get('gbif_accepted', 0)}")
+    print(f"    GBIF keys replaced by the accepted key: {stats.get('gbif_accepted', 0)}")
+    print(f"    NCBI IDs updated after a merge: {stats.get('ncbi_updated', 0)}, "
+          f"dropped: {stats.get('ncbi_dropped', 0)}")
     dropped = stats.get("shared_ids_dropped", {})
     if dropped:
         print(f"    dropped as shared by several species: "
@@ -2089,23 +2251,63 @@ ID_FORMATS = {
     "ncbi_id": re.compile(r"\d+"),
     "birdlife_id": re.compile(r"\d+"),
     "observationorg_id": re.compile(r"\d+"),
-    "avibase_id": re.compile(r"[0-9A-F]{16}"),
+    "avibase_id": re.compile(r"[0-9A-F]{8}"),
     "ebird_code": re.compile(r"[a-z0-9]+"),
     "wikidata_qid": re.compile(r"Q\d+"),
 }
 _BINOMIAL_SHAPE_RE = re.compile(r"[A-Z][a-z]+ [a-z][a-z-]+")
 # Localized "names" that are file names, catalogue numbers, or carry a
 # disambiguation number ("कालो धनेश २") (Wikidata labels).
-_JUNK_NAME_RE = re.compile(r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}|\s\d+$|\bspp?\.(?:$|\s)", re.IGNORECASE)
+_JUNK_NAME_RE = re.compile(
+    r"\.(?:jpe?g|png|gif|svg|tiff?)\b|\d{3,}|\s\d+$|\b(?:spp?|ssp|subsp)\.(?:$|\s)|\s(?:spp?|ssp)$"
+    r"|^[^\s:]+:\S",  # a wiki page in a namespace ("Category:...")
+    re.IGNORECASE)
 _SMALL_WORDS = {"a", "an", "and", "of", "the", "in", "on", "or", "de", "del", "des", "du", "la", "le",
                 "el", "al", "von", "van", "der", "den", "di", "da", "do", "dos", "das", "y"}
 
 
+# Latin letters that look like Cyrillic or Greek ones, and the reverse: typing
+# slips in sources ("Cкоморох" with a Latin C, "Тessaratoma" with a Cyrillic T).
+_TO_CYRILLIC = str.maketrans("aceopxyABCEHKMOPTXY", "асеорхуАВСЕНКМОРТХУ")
+_TO_GREEK = str.maketrans("oABEHIKMNOPTXYZvu", "οΑΒΕΗΙΚΜΝΟΡΤΧΥΖνυ")
+_TO_LATIN = str.maketrans("аеорсухАВСЕНКМОРТХ", "aeopcyxABCEHKMOPTX")
+
+
+def _repair_homoglyphs(name: str) -> str:
+    """Repair words that mix look-alike letters of two scripts, towards the
+    script most of the name is written in."""
+    latin = len(re.findall(r"[A-Za-z]", name))
+    cyrillic = len(re.findall(r"[\u0400-\u04ff]", name))
+    greek = len(re.findall(r"[\u0370-\u03ff]", name))
+    if cyrillic > latin:
+        table, foreign = _TO_CYRILLIC, r"[\u0400-\u04ff]"
+    elif greek > latin:
+        table, foreign = _TO_GREEK, r"[\u0370-\u03ff]"
+    elif cyrillic:
+        table, foreign = _TO_LATIN, r"[\u0400-\u04ff]"
+    else:
+        return name
+    return " ".join(
+        word.translate(table)
+        if re.search(r"[A-Za-z]", word) and re.search(foreign, word) else word
+        for word in name.split(" "))
+
+
+def _first_alternative(name: str) -> str:
+    """A display name is one name: strip list quotes, keep the first of a comma
+    list. A comma before a year is an author citation, left for the junk filter."""
+    name = name.strip('"')
+    first, _, rest = name.partition(",")
+    return name if re.search(r"\d", rest) else first.strip()
+
+
 def _foreign_script_name(loc: str, name: str, sound_class: bool) -> bool:
     """A sound class label left in Latin script, or a Latin word inside an
-    Arabic or Hebrew name, is an untranslated fragment."""
+    Arabic, Hebrew or kana name, is an untranslated fragment."""
     primary = re.split(r"[-_]", loc)[0]
     if primary in ("ar", "fa", "he") and re.search(r"[A-Za-z]", name):
+        return True
+    if primary == "ja" and re.search(r"[\u30a0-\u30ff][A-Za-z][\u30a0-\u30ff]", name):
         return True
     return sound_class and primary in NON_LATIN_LOCALES and bool(_LATIN_ONLY_RE.fullmatch(name.strip()))
 
@@ -2131,8 +2333,8 @@ def _title_case(name: str) -> str:
 _GENUS_TEXT_RE = re.compile(
     r"^[^.\n]{0,70}(?:\b(?:is|are) a genus of\b|\bist eine (?:\w+ )?Gattung\b"
     r"|\best un genre\b|\bes un género\b|\bè un genere\b|\bé um género\b|\bé um gênero\b"
-    r"|\bis een geslacht\b|\bär ett (?:\w+ )?släkte\b|\b(?:on|ovat) [^.\n]{0,40}\bsuku\b"
-    r"|\bто род\b|— род\b|下的一个属|属の総称|\bjest rodzajem\b|\bje rod\b|\bbir cinsidir\b)",
+    r"|\bis een geslacht\b|\bär ett (?:\w+ )?släkte\b|\b(?:on|ovat) [^.\n]{0,40}suku\b"
+    r"|\bто род\b|— род\b|下的一个属|属の総称|\bjest rodzajem\b|\bje rod\b|\bcinsidir\b)",
 )
 
 
@@ -2245,6 +2447,8 @@ def _dedupe_images(records: list[dict]) -> int:
         for rec in recs[1:]:
             rec.update(image=None, image_author="", image_license="", image_source="",
                        image_crop_anchor=None)
+            score, flags, _ = _metadata_quality(rec)
+            rec.update(metadata_quality_score=score, metadata_quality_flags=flags)
             removed += 1
     return removed
 
@@ -2483,6 +2687,11 @@ def build_metadata(taxonomy: dict, wiki: dict,
     wrong_article = 0
     invalid_ids = 0
     avicommons_rejected: list[str] = []
+    rejected_english = {sci for sci, locales in rejected_articles().items() if "en" in locales}
+    # Photos under a code eBird has retired (a split gives the parent a new
+    # code): Avicommons still follows the older taxonomy.
+    retired_codes = set(avicommons) - set(load_json(EBIRD_TAXONOMY_FILE).get("species", {}))
+    avicommons_by_name = {avicommons[code]["sci"]: avicommons[code] for code in retired_codes}
     canonical_set = set(taxonomy)
     # An English article linked from several species stays with the species
     # it names first (the others are usually splits linking the parent).
@@ -2573,6 +2782,9 @@ def build_metadata(taxonomy: dict, wiki: dict,
             fallback_locales.update(cl_extracts)
         translated = cl.get("translated_from", {}) or {}
         for loc, text in cl_extracts.items():
+            # Translations of a rejected English article carry its errors.
+            if loc in translated and sci_name in rejected_english:
+                continue
             # A machine translation made while Wikipedia lacked this locale
             # yields to native Wikipedia text added since.
             native = descriptions.get(loc, "")
@@ -2605,7 +2817,7 @@ def build_metadata(taxonomy: dict, wiki: dict,
         override = manual_overrides.get(sci_name, {})
         image_url = override.get("image_url") or tax.get("image_url", "")
         image_author = override.get("image_author") or tax.get("image_author", "")
-        image_author = re.sub(r"\s+", " ", image_author).strip()
+        image_author = _tidy_image_author(image_author)
         image_license = override.get("image_license") or tax.get("image_license", "")
         image_source = override.get("image_source") or tax.get("image_source", "")
         image = None
@@ -2632,11 +2844,13 @@ def build_metadata(taxonomy: dict, wiki: dict,
         common_names = {
             loc: name
             for loc, name in (
-                (loc, " ".join(str(name).replace("\xa0", " ").split()))
+                (loc, _repair_homoglyphs(_first_alternative(
+                    " ".join(str(name).replace("\xa0", " ").split()))))
                 for loc, name in (tax.get("common_names", {}) or {}).items()
             )
             if is_clean_common_name(name) and not _JUNK_NAME_RE.search(name)
             and not _foreign_script_name(loc, name, is_sound_class_record(tax))
+            and (name != sci_name or is_sound_class_record(tax))
         }
         common_names = {loc: unicodedata.normalize("NFC", n) for loc, n in common_names.items()}
         # The English entry is the display name (none when that falls back to
@@ -2717,7 +2931,8 @@ def build_metadata(taxonomy: dict, wiki: dict,
         # Avicommons photo for the eBird code, kept only if it names this
         # species: its scientific name is ours or an alias (Avicommons follows
         # eBird, which can lag an AviList genus move), or its English name is ours.
-        av = avicommons.get(record["ebird_code"])
+        av = avicommons.get(record["ebird_code"]) or (
+            avicommons_by_name.get(sci_name) if tax.get("taxon_group") == "Aves" else None)
         if av:
             if av["sci"] in identity_names or av["name"].casefold() in {
                     common_name.casefold(), common_name_alt.casefold()}:
@@ -3039,6 +3254,7 @@ def main():
     csv_size = csv_path.stat().st_size
     print(f"  CSV:  {csv_path} ({csv_size / 1024 / 1024:.1f} MB)")
     write_model_label_exports(model_exports, out_dir)
+    write_model_handover(model_exports, records, out_dir)
 
     # Zip
     if not args.no_zip:

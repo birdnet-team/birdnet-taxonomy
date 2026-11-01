@@ -25,10 +25,12 @@ import csv
 import hashlib
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from xml.etree import ElementTree
 
 from config import load_config
 from collectors._common import (
@@ -46,6 +48,11 @@ _COMMONS_API = "https://commons.wikimedia.org/w/api.php"
 GBIF_MATCH_URL = "https://api.gbif.org/v1/species/match"
 GBIF_SPECIES_URL = "https://api.gbif.org/v1/species"
 GBIF_SYNONYMS_URL = "https://api.gbif.org/v1/species/{key}/synonyms"
+GBIF_SEARCH_URL = "https://api.gbif.org/v1/species/search"
+GBIF_OCCURRENCE_URL = "https://api.gbif.org/v1/occurrence/count"
+NCBI_FETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+NCBI_BATCH = 200
+GBIF_BACKBONE = "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c"
 
 _SPARQL_BATCH = 150
 _COMMONS_BATCH = 50
@@ -461,11 +468,36 @@ def gbif_match_id(scientific_name: str) -> tuple[str, str] | None:
     return "", ""
 
 
+def update_ncbi_status(existing: dict, target_names: list[str]) -> None:
+    """Record the current NCBI ID and name of each stored NCBI ID (ncbi_status)."""
+    need = [sci for sci in target_names
+            if existing.get(sci, {}).get("ncbi_id")
+            and (existing[sci].get("ncbi_status") or {}).get("key") != existing[sci]["ncbi_id"]]
+    print(f"\nPhase 2f: NCBI ID status ({len(need)} species)...")
+    merged = unknown = 0
+    for start in range(0, len(need), NCBI_BATCH):
+        batch = need[start:start + NCBI_BATCH]
+        records = ncbi_current_records([existing[sci]["ncbi_id"] for sci in batch])
+        if records is None:
+            continue  # request failed: retried on the next run
+        for sci in batch:
+            key = existing[sci]["ncbi_id"]
+            record = records.get(key, {})
+            existing[sci]["ncbi_status"] = {"key": key, "current_id": record.get("current_id", ""),
+                                            "name": record.get("name", "")}
+            merged += bool(record) and record["current_id"] != key
+            unknown += not record
+        time.sleep(0.4)
+    print(f"  Merged IDs: {merged}; unknown to NCBI: {unknown}")
+    save_json(existing, OUTPUT_FILE)
+
+
 def gbif_key_status(key: str) -> dict | None:
     """GBIF backbone status of a taxon key: {key, status, accepted_key,
     accepted_name}. Wikidata often holds the key of a synonym usage (GBIF
     still under an older genus); the build maps it to the accepted key of
-    the same taxon. Returns None when the request fails."""
+    the same taxon. Phase 2e adds occurrences, and same_name_key where a key is
+    not accepted or empty. Returns None when the request fails."""
     req = urllib.request.Request(f"{GBIF_SPECIES_URL}/{key}", headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -482,6 +514,72 @@ def gbif_key_status(key: str) -> dict | None:
         "accepted_key": str(usage.get("acceptedKey") or ""),
         "accepted_name": accepted.group(0) if accepted else "",
     }
+
+
+def gbif_occurrences(key: str) -> int | None:
+    """GBIF occurrence count of a taxon key (None when the request fails)."""
+    params = urllib.parse.urlencode({"taxonKey": key})
+    req = urllib.request.Request(f"{GBIF_OCCURRENCE_URL}?{params}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return int(resp.read())
+    except Exception:
+        return None
+
+
+def gbif_same_name_key(scientific_name: str, key: str) -> str | None:
+    """Accepted backbone usage of this exact name holding its occurrences.
+
+    A name can have several usages: Wikidata may hold a doubtful, misapplied or
+    empty one while another has every occurrence. Returns the other accepted
+    usage with the most occurrences, "" if there is none, or None when a
+    request fails.
+    """
+    params = urllib.parse.urlencode({
+        "datasetKey": GBIF_BACKBONE, "q": scientific_name, "rank": "SPECIES",
+        "status": "ACCEPTED", "limit": 20,
+    })
+    req = urllib.request.Request(f"{GBIF_SEARCH_URL}?{params}", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            results = json.loads(resp.read()).get("results", [])
+    except Exception:
+        return None
+    best, best_count = "", 0
+    for usage in results:
+        if (usage.get("canonicalName") != scientific_name
+                or usage.get("kingdom") != "Animalia" or str(usage["key"]) == key):
+            continue
+        count = gbif_occurrences(str(usage["key"]))
+        if count is None:
+            return None
+        if count > best_count:
+            best, best_count = str(usage["key"]), count
+    return best
+
+
+def ncbi_current_records(ids: list[str]) -> dict[str, dict] | None:
+    """Current NCBI record of taxon IDs: {id: {current_id, name}}.
+
+    NCBI merges taxa and keeps the old ID as an alias of the surviving record,
+    so Wikidata often holds an outdated ID. An ID NCBI no longer knows is
+    absent. Returns None when the request fails.
+    """
+    data = urllib.parse.urlencode({
+        "db": "taxonomy", "id": ",".join(ids), "retmode": "xml",
+    }).encode()
+    req = urllib.request.Request(NCBI_FETCH_URL, data=data, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            root = ElementTree.fromstring(resp.read())
+    except Exception:
+        return None
+    records: dict[str, dict] = {}
+    for taxon in root.findall("Taxon"):
+        current = taxon.findtext("TaxId", "")
+        for known in [current, *(aka.text for aka in taxon.findall("AkaTaxIds/TaxId"))]:
+            records[known] = {"current_id": current, "name": taxon.findtext("ScientificName", "")}
+    return records
 
 
 def gbif_aliases(scientific_name: str) -> list[str]:
@@ -813,22 +911,43 @@ def main():
     save_json(existing, OUTPUT_FILE)
 
     # Phase 2e: GBIF backbone status of each stored GBIF key
+    def status_outdated(entry: dict) -> bool:
+        status = entry.get("gbif_status") or {}
+        return status.get("key") != entry["gbif_id"] or "occurrences" not in status
+
+    def key_status(sci: str) -> dict | None:
+        key = existing[sci]["gbif_id"]
+        status = gbif_key_status(key)
+        if not status:
+            return None
+        status["occurrences"] = gbif_occurrences(key)
+        if status["occurrences"] is None:
+            return None
+        if status["status"] != "ACCEPTED" or not status["occurrences"]:
+            status["same_name_key"] = gbif_same_name_key(sci, key)
+            if status["same_name_key"] is None:
+                return None
+        return status
+
     need_status = [sci for sci in target_names
-                   if existing.get(sci, {}).get("gbif_id")
-                   and (existing[sci].get("gbif_status") or {}).get("key") != existing[sci]["gbif_id"]]
+                   if existing.get(sci, {}).get("gbif_id") and status_outdated(existing[sci])]
     print(f"\nPhase 2e: GBIF key status ({len(need_status)} species)...")
-    synonyms = 0
+    synonyms = same_names = 0
     with ThreadPoolExecutor(max_workers=8) as pool:
-        statuses = pool.map(lambda sci: gbif_key_status(existing[sci]["gbif_id"]), need_status)
-        for idx, (sci, status) in enumerate(zip(need_status, statuses), start=1):
+        for idx, (sci, status) in enumerate(zip(need_status, pool.map(key_status, need_status)),
+                                            start=1):
             if status is None:
                 continue  # request failed: retried on the next run
             existing[sci]["gbif_status"] = status
             synonyms += "SYNONYM" in status["status"]
+            same_names += bool(status.get("same_name_key"))
             if idx % 1000 == 0:
                 save_json(existing, OUTPUT_FILE)
-    print(f"  Synonym keys: {synonyms}")
+    print(f"  Synonym keys: {synonyms}; replaced by the accepted usage of the name: {same_names}")
     save_json(existing, OUTPUT_FILE)
+
+    # Phase 2f: current NCBI record of each stored NCBI ID
+    update_ncbi_status(existing, target_names)
 
     # Phase 2c: Wikipedia sitelinks (articles iNat does not link)
     wiki_locales = [str(loc) for loc in cfg.get("wikipedia", {}).get("locales", [])]

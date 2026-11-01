@@ -26,9 +26,11 @@ Steps 1–2 collect taxonomy. Steps 3–4 enrich species with common names, exte
 
 Downloads the AviList Global Avian Checklist (XLSX), converts to CSV. Provides authoritative bird taxonomy and AviList IDs. The checklist sheet is picked by its header, and v2026's upper-case headers (`SCIENTIFIC NAME`, `SPECIES CODE CORNELL LAB`, …) are normalized to the v2025 column names (`Scientific_name`, `Species_code_Cornell_Lab`, …) the pipeline reads. Set the release URL and CSV name under `avilist` in `config.yml`.
 
+avilist.org can refuse automated downloads (HTTP 403). The collector then stops and says what to do: download the file at `avilist.url` in a browser, save it in `raw_data/` under the name in that URL, and run the step again. A file already there is used without downloading.
+
 | Flag | Description |
 |------|-------------|
-| `--force` | Re-download even if CSV already exists |
+| `--force` | Download again, even if the CSV or XLSX already exists |
 
 ## Step 2 — iNaturalist
 
@@ -64,7 +66,7 @@ Then runs an **observation photo fallback** phase: for any species whose default
 
 Collects eBird species data in two phases:
 
-- **Phase 1 — Scraper:** Scrapes eBird species pages for Macaulay Library images (`og:image`). It also stores the English description (`og:description`), which is never published. Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps). Only for bird species with an eBird code; codes come from the built `raw_data/taxonomy.json` when present (validated against eBird), and each code is scraped once.
+- **Phase 1 — Scraper:** Scrapes eBird species pages for Macaulay Library images (`og:image`). It also stores the English description (`og:description`), which is never published. Parallel fetching with configurable workers (default 4) and rate limiting (default 5 rps). Only for bird species with an eBird code; codes come from the built `raw_data/taxonomy.json` when present (validated against eBird), and each code is scraped once. A species whose code changes is scraped again and keeps its earlier photo if the new page has none: eBird gives the parent of a split a new code, and those pages start without a photo. A new eBird taxonomy therefore needs `python -m collectors.ebird --names-only`, a build, and a scrape.
 - **Phase 2 — Common names:** Downloads the eBird taxonomy CSV for 63 locales to collect common names in all available languages, and saves `raw_data/ebird_taxonomy.json` (eBird code → scientific name). Downloads are cached per eBird taxonomy version, so a new eBird release is fetched on the next run.
 
 The build only assigns eBird codes that exist in `ebird_taxonomy.json`. AviList can carry codes eBird has not published yet, and it leaves the code empty where its species concept has no 1:1 eBird match; the build then falls back to eBird's own scientific name (e.g. `Tyto furcata` → `brnowl`) and finally Wikidata, never giving one code to two species.
@@ -86,7 +88,8 @@ Fetches species identifiers, common name labels, and images from Wikidata and Wi
 - **Phase 2 — Identifiers:** Fetches external identifiers: GBIF (P846), NCBI (P685), Avibase (P2026), BirdLife (P5257), and the matched Wikidata item (`wikidata_qid`: the item behind the GBIF ID, else the NCBI ID, else the first match; lexeme senses are ignored, duplicate items resolve to the one with more identifiers). Stored IDs are kept; only gaps are filled. Identifier lookup tries reviewed aliases from `overrides/species_aliases.csv` and taxonomy-derived aliases. A species' own name wins over an alias, aliases shared by several species are skipped, and `id_sources` records which Wikidata taxon name supplied each ID so the build can reject IDs reached through an untrusted alias.
 - **Phase 2c — Wikipedia sitelinks:** Records each species' Wikipedia article titles in the configured `wikipedia.locales` (`wikipedia_sitelinks`), so the Wikipedia collector can fetch articles iNat does not link.
 - **Phase 2d — GBIF backbone match:** For species Wikidata has no GBIF ID for, queries the GBIF species match API (exact, species rank). An accepted match is the species' own ID; a synonym match records GBIF's accepted name in `id_sources`, so the build keeps it only when that name is a trusted alias. Misses are remembered (`gbif_match_checked`).
-- **Phase 2e — GBIF key status:** Looks up each stored GBIF key in the GBIF backbone (`gbif_status`: status, accepted key and name). Wikidata often holds the key of a GBIF synonym usage, e.g. GBIF still lists *Curruca nisoria* as *Sylvia nisoria*; such keys return few occurrences.
+- **Phase 2e — GBIF key status:** Looks up each stored GBIF key in the GBIF backbone (`gbif_status`: status, accepted key and name, occurrence count). Wikidata often holds the key of a GBIF synonym usage, e.g. GBIF still lists *Curruca nisoria* as *Sylvia nisoria*, or of a doubtful usage of the right name, e.g. *Falco sparverius* has an empty doubtful key next to its accepted one; such keys return few or no occurrences. For a key that is not accepted or has no occurrences, `same_name_key` records the accepted usage of the same name that holds them, which the build uses instead.
+- **Phase 2f — NCBI ID status:** Looks up each stored NCBI ID in the NCBI taxonomy (`ncbi_status`: current ID and name). NCBI merges taxa and keeps the old ID as an alias, so Wikidata often holds an outdated one. The build uses the current ID and drops IDs NCBI no longer knows, that name a sample rather than a species, or that NCBI gives to another species of the taxonomy.
 - **Phase 3 — Labels:** Fetches `rdfs:label` common names in all available languages.
 - **Phase 4 — Images:** Fetches Wikidata P18 images and checks Wikimedia Commons licenses (CC, PD, GFDL).
 
@@ -213,7 +216,7 @@ Downloads the full JSON index of [Avicommons](https://avicommons.org), a hand-pi
 
 The build never uses an Avicommons photo as the species image: our own image selection is unchanged, and the matching Avicommons photo is referenced alongside it in `avicommons_image` (see [Image fields](metadata.md#image-fields)). Matching:
 
-- by the bird's validated `ebird_code`, so each Avicommons photo goes to at most one species;
+- by the bird's validated `ebird_code`, so each Avicommons photo goes to at most one species. A code eBird has since retired (a split gives the parent a new code) is matched by scientific name instead, since Avicommons follows an older eBird taxonomy;
 - only if Avicommons names the same species: its scientific name is the species' own name or one of its aliases (Avicommons follows eBird, which can lag an AviList genus move, e.g. *Emberiza schoeniclus* → *Schoeniclus schoeniclus*), or its English name equals the species' `common_name` or `common_name_alt`. Mismatches are reported by the build and dropped;
 - species AviList lumps get no reference from the lumped taxa's photos, since those codes are not the species' own;
 - a photo Avicommons lists under several species codes is dropped, as are photos whose license needs attribution but have no photographer.
@@ -244,7 +247,9 @@ individual classes in the `Human` group, and redirect to the species record *Hom
 sapiens* (Mammalia) in the model crosswalk. *Homo sapiens* keeps search aliases such as
 `human vocal` and `speech` from `overrides/common_name_aliases.csv`; a class's own name
 still wins an exact lookup. The build includes only classes listed in the CSV; a class
-removed there is dropped from the build even though the collector's cache keeps it.
+removed there is dropped from the build even though the collector's cache keeps it. A
+rerun skips classes it already holds, so the build reads reviewed fields from the CSV and
+only labels and images from the cache.
 
 | Flag | Description |
 |------|-------------|
@@ -313,7 +318,7 @@ Merges all pre-collected data into the final metadata file. Runs purely offline 
 **Taxonomy phase:**
 1. Cross-references iNaturalist, AviList, Wikidata, and the reviewed sound classes to build a canonical entry list (see [Taxonomy Rules](taxonomy.md): retired iNat taxa are dropped, birds take their AviList name, lumped/subspecies taxa are folded into aliases)
 2. Resolves eBird codes from AviList, eBird's own scientific names, and Wikidata, validated against `raw_data/ebird_taxonomy.json` and unique per species
-3. Loads external identifiers from Wikidata (GBIF, NCBI, Avibase, BirdLife, Wikidata QID), Macaulay Library, Xeno-Canto (validated against other species' names), and observation.org; an identifier claimed by several species stays only with the species whose own name carries it
+3. Loads external identifiers from AviList (Avibase), Wikidata (GBIF, NCBI, BirdLife, Wikidata QID), Macaulay Library, Xeno-Canto (validated against other species' names), and observation.org; an identifier claimed by several species stays only with the species whose own name carries it
 4. Collects common names from iNaturalist, eBird (63 locales), and Wikidata labels; names shared between species in a locale stay with the most authoritative source
 5. Raw data collected under an older name (e.g. Wikipedia text keyed by the iNat name of a bird AviList renamed) is found through the species' source names
 6. Selects the best image for each species through a priority chain:
