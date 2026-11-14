@@ -95,6 +95,7 @@ wikipedia:
     - cs         # Czech (CZ)
     - zh         # Chinese (CN)
     - ru         # Russian (RU)
+    - uk         # Ukrainian (UA)
     - ar         # Arabic (North Africa, Middle East)
     - ja         # Japanese (JP)
     - ko         # Korean (KR)
@@ -220,6 +221,7 @@ llm:
     - cs         # Czech
     - pt         # Portuguese
     - ru         # Russian
+    - uk         # Ukrainian
     - pl         # Polish
     - nl         # Dutch
   batch_size: 12          # max species per API call (char budget may reduce this)

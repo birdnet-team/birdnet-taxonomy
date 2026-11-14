@@ -2343,7 +2343,7 @@ def _resolve_localized_name_collisions(records: list[dict]) -> int:
 # Locales whose LLM texts open with "[article] Name (Binomial)" in Latin or
 # Cyrillic script, so the species' name can be aligned with common_names.
 _NAME_ALIGN_LOCALES = {"de", "fr", "es", "pt", "it", "nl", "pl", "sv", "da", "no", "fi",
-                       "cs", "ru", "tr", "sw"}
+                       "cs", "ru", "uk", "tr", "sw"}
 _LEAD_ARTICLE_RE = r"(?:Der|Die|Das|Le|La|Les|L['’]|El|Los|Las|Il|Lo|Gli|I|O|A|Os|As|De|Het|Een)"
 _VOWEL_START_RE = re.compile(r"[AEIOUÀ-ÆÈ-ÏÒ-ÖÙ-Ü]", re.IGNORECASE)
 

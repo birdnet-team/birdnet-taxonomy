@@ -110,7 +110,7 @@ Fetches multilingual Wikipedia data in these phases:
 - **Article lookup by name:** Species without a usable English article — none linked, or the linked one fails the build's identity check (iNat often links a split's parent species or the genus, e.g. "Vermilion flycatcher" for *Pyrocephalus rubinus*) — are looked up under their Wikidata English sitelink, scientific name, older names with the same epithet (genus transfers, e.g. *Litoria caerulea* for *Pelodryas caerulea*), and English name. A page is accepted only if its title or the binomial its intro opens with is the species or the same epithet in another genus that is not another species here (a split's name often redirects to the parent's article, which opens with the parent's name; an alias with another epithet is not enough), it passes the build's identity checks, and no other species already uses it. A replaced article's record is refetched, and LLM texts made from the old article are dropped from `translate_data.json` so `collectors.translate` redoes them. The stored article then stays the species' article on later runs.
 - **Non-English-only articles:** Species without any English article but with articles in other configured locales (Wikidata sitelinks) get those intro extracts directly (identity-checked against the scientific name; disambiguation pages skipped).
 - **Phase 1b — Extract backfill:** Scans existing data for species that have an English Wikipedia URL but are missing the English extract (can happen due to API glitches during bulk fetching). Re-fetches just the extracts for those species with redirect resolution.
-- **Phase 2 — Locale extracts:** For each target language (20 configured locales), batch-fetches intro extracts from the corresponding Wikipedia. Runs locales concurrently with a thread pool. Skips species that already have extracts for a given locale.
+- **Phase 2 — Locale extracts:** For each target language (21 configured locales), batch-fetches intro extracts from the corresponding Wikipedia. Runs locales concurrently with a thread pool. Skips species that already have extracts for a given locale.
 - **Phase 3 — Image licenses:** Batch-fetches license metadata (artist, license, license URL) from Wikimedia Commons for all page images found in Phase 1.
 - **Quality refetch — description depth:** Optional `--quality-refetch` pass for missing or too-short extracts in all configured Wikipedia locales. It fetches richer plain-text article content from the matching language wiki (one title per request: whole-page extracts are limited to one page per API call), validates that the article title/text contains the canonical scientific name or a clean alias, stores per-locale retry/status metadata, and avoids retrying indefinitely. The text is the lead plus early sections about the animal (taxonomy/etymology sections are skipped, references end the selection, headings are never kept), capped at `descriptions.max_words`. Disambiguation pages ("Ruff may refer to:") are retried under the scientific name; the build drops any disambiguation text and stray section headings from stored descriptions. The selector can keep multiple early paragraphs through `descriptions.wikipedia_min_paragraphs`. Use `--quality-locales en` to restrict this to the English release gate.
 
@@ -139,7 +139,7 @@ For LibreTranslate, use `--provider libretranslate --endpoint <instance URL>`, w
 a key, name its variable in `translation.api_key_env` (e.g.
 `LIBRETRANSLATE_API_KEY`) and set it in `.env`.
 
-**Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, ar, ja, ko, tr, sw
+**Wikipedia locales:** en, de, fr, es, pt, it, nl, pl, sv, da, no, fi, cs, zh, ru, uk, ar, ja, ko, tr, sw
 
 | Flag | Description |
 |------|-------------|
@@ -288,7 +288,7 @@ python -m collectors.translate --provider gemini
 python -m collectors.translate --provider openai --model gpt-4o
 ```
 
-**Target locales:** de, fr, it, es, cs, pt, ru, pl, nl (configurable under `llm.locales` in `config.yml`; English fallbacks are written separately).
+**Target locales:** de, fr, it, es, cs, pt, ru, uk, pl, nl (configurable under `llm.locales` in `config.yml`; English fallbacks are written separately).
 
 LLM descriptions are merged into the build while `llm.enabled` is true in `config.yml` (as in the current configuration and the v0.5 release); set it to `false` to build from Wikipedia texts only.
 
